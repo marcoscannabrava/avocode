@@ -20,8 +20,7 @@ Issues/PRs).
    evidence in `evidence/`.
 6. **Commit** one focused increment, push, open a PR (merge only if CI-green and low-risk).
 7. **Hand off.** Update `PLAN.md`. Append one JSON line to `PROGRESS.jsonl`:
-   `{iter, date, task, done[], verification, next, blocker?}`. File anything
-   noticed-but-not-done as an Issue. Exit.
+   `{iter, date, task, done[], verification, next, blocker?}`. As the project grows, document. File anything noticed-but-not-done as an Issue. Exit.
 
 ## Rules
 
