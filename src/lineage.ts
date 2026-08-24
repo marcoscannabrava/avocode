@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
 import { loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
+import { MEMORY_PATH, remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
 import { runScore, spawnRunner, type Attempt, type RunResult, type Runner, type ScoreOptions } from "./score.ts";
 
 /** Rendered, human- and qmd-readable record of each committed version. */
@@ -15,6 +16,17 @@ export const LINEAGE_DIR = "lineage";
  */
 export const TRAJECTORY_PATHS: readonly string[] = [".avo/attempts.jsonl", ".avo/worktrees"];
 const TRAJECTORY_IGNORE = ".avo/.gitignore";
+/**
+ * Everything avo writes *by itself*. None of it may make the working tree read as a candidate
+ * change: the trajectory log and the harness gitignore are ours, and so is the memory log, which
+ * `avo commit` appends to *after* committing. Without this, the memory written for v1 would make
+ * the next run see a change the agent never made — scoring an unchanged tree, refusing it as no
+ * improvement, and remembering that refusal, which dirties the tree again.
+ *
+ * Unlike TRAJECTORY_PATHS these are not unstaged: `.avo/.gitignore` and `lineage/memory.jsonl`
+ * belong in the repository, they are just not evidence of a variation.
+ */
+export const HARNESS_PATHS: readonly string[] = [...TRAJECTORY_PATHS, TRAJECTORY_IGNORE, MEMORY_PATH];
 /** `git notes --ref=avo` carries the full attempt; trailers carry only what the comparator needs. */
 export const NOTES_REF = "avo";
 export const VERSION_TRAILER = "Avo-Version";
@@ -95,7 +107,7 @@ export async function git(runner: Runner, cwd: string, args: readonly string[]):
   return await runner("git", args, { cwd, timeoutMs: 60_000 });
 }
 
-/** Untracked-and-ignorable noise from a scoring run, so a clean repo still reads as clean. */
+/** Drops what avo wrote itself, so a repo the agent did not touch still reads as clean. */
 export function withoutTrajectory(porcelain: string): string[] {
   return porcelain
     .split("\n")
@@ -104,7 +116,7 @@ export function withoutTrajectory(porcelain: string): string[] {
       // porcelain v1: XY <path>, where a rename is "XY old -> new".
       const path = l.slice(3).split(" -> ").pop() ?? "";
       const clean = path.replace(/^"|"$/g, "");
-      return !TRAJECTORY_PATHS.some((t) => clean === t || clean.startsWith(`${t}/`));
+      return !HARNESS_PATHS.some((t) => clean === t || clean.startsWith(`${t}/`));
     });
 }
 
@@ -520,6 +532,64 @@ async function writeCommit(
   };
 }
 
+/**
+ * Mirrors the decision into memory (S3): a committed version becomes a bead linked to its parent,
+ * a refused candidate becomes an insight so the agent stops re-trying that dead end across
+ * sessions. Memory is a cache of *why*, never the source of truth — a failure here is a warning on
+ * an otherwise good commit, never a failed commit.
+ */
+export async function recordDecisionMemory(
+  opts: CommitOptions,
+  d: CommitDecision,
+  runner: Runner,
+  now: () => Date,
+): Promise<string[]> {
+  // --no-record and --dry-run both mean "write nothing about this run"; a no-op ran no variation,
+  // and a harness error (no attempt) taught us nothing about the candidate.
+  if (!opts.record || opts.dryRun || d.attempt === null) return [];
+  if (d.action !== "committed" && d.action !== "refused") return [];
+  if (d.action === "refused" && d.errors.length > 0) return [];
+
+  const backend = await resolveBackend(runner, opts.cwd);
+  const a = d.attempt;
+  const vector = Object.entries(a.scores)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+
+  let input: MemoryInput;
+  if (d.action === "committed" && d.version !== null) {
+    const detail = [`score ${fmt(a.primary, a.unit)}`, vector === "" ? "" : `scores ${vector}`, d.reason]
+      .filter((s) => s !== "")
+      .join("\n");
+    input = {
+      kind: "version",
+      key: `avo-v${d.version}`,
+      text: `avo v${d.version}: ${fmt(a.primary, a.unit)}`,
+      version: d.version,
+      detail,
+      // The lineage is a chain: version N descends from the version it beat.
+      parentVersion: d.best?.version ?? null,
+    };
+  } else {
+    const from = d.best === null ? "the empty lineage" : `v${d.best.version}`;
+    const detail = [`from ${from}`, vector === "" ? "" : `scores ${vector}`, opts.why ?? ""]
+      .filter((s) => s !== "")
+      .join("\n");
+    input = {
+      kind: "failure",
+      // Keyed by content, so re-attempting the same dead end updates one record instead of piling
+      // up — which is the whole point of remembering it.
+      key: `avo-dead-end-${shortHash(`${d.reason}${vector}`)}`,
+      text: `dead end from ${from}: ${d.reason}`,
+      version: d.best?.version ?? null,
+      detail,
+    };
+  }
+
+  const w = await remember(runner, opts.cwd, backend, input, now);
+  return [...backend.warnings, ...w.warnings, ...(w.error === null ? [] : [w.error])];
+}
+
 /** Exit codes mirror `avo score`: 0 committed or no-op, 1 refused, 2 harness error. */
 export async function commitCommand(
   argv: readonly string[],
@@ -533,6 +603,7 @@ export async function commitCommand(
     return 2;
   }
   const decision = await decideCommit(parsed, runner, now);
+  decision.warnings.push(...(await recordDecisionMemory(parsed, decision, runner, now)));
   io.out(parsed.json ? `${JSON.stringify(decision)}\n` : renderDecision(decision));
   if (decision.errors.length > 0) return 2;
   return decision.action === "refused" ? 1 : 0;

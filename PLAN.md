@@ -91,6 +91,8 @@ avocode/
     config.ts              # .avo/config.json — the reduction, the floor, declared configs
     compare.ts             # the commit rule's comparator over the score vector
     lineage.ts             # Pt — git trailers, notes, lineage/*.md, beads mirror
+    mem.ts                 # memory — bd (beads) with a lineage/memory.jsonl fallback
+    init.ts                # avo init — idempotent scaffolding, including bd init
     knowledge.ts           # K  — qmd wrapper + Firecrawl ingest
     fan.ts                 # concurrency — worktrees + headless agent procs
     supervise.ts           # stagnation detection + steering directive
@@ -160,6 +162,11 @@ everything (`git add -A`) *except* the trajectory paths `.avo/attempts.jsonl` an
 which it also writes into `.avo/.gitignore`: committing the attempt log would put the record of how
 a version was reached inside the version itself, and would leave the tree permanently dirty — which
 would in turn defeat the no-op check that makes `avo commit` idempotent.
+
+A wider set — `HARNESS_PATHS` = the trajectory plus `.avo/.gitignore` and `lineage/memory.jsonl` —
+is excluded from the *dirtiness* check but still staged. Those files belong in the repository; they
+are simply not evidence of a variation, and counting them would make avo's own writes look like a
+candidate the agent never produced (S3).
 
 The lineage is therefore monotone by construction, so **`avo best` is simply the
 highest-numbered version**; there is no separate ranking pass.
@@ -249,13 +256,32 @@ Each slice: build → verify with the stated command → commit → update `PROG
   Also closed #4 (declared `configs` skip the `--configs` probe) and fixed CI, which was running
   only `test/e2e.sh` and so had never executed the S1 or S2 e2e suites.
 
-### S3 — beads memory `[ ]`
-- `bd init` on `avo init`. `avo mem add "<insight>"` → `bd remember`; `avo mem` → `bd prime`.
+### S3 — beads memory `[x]`
+- `bd init` on `avo init`. `avo mem add "<insight>"` → `bd remember`; `avo mem` → the memories,
+  `avo mem prime` → `bd prime`.
 - Each committed version gets a bead linked to its parent (`bd dep add`); each *failed* attempt
   gets an insight bead so the agent stops re-trying dead ends across sessions.
 - Graceful degradation: if `bd` is absent, fall back to `lineage/memory.jsonl` and warn once.
 - **Verify:** `avo mem add` then `avo mem | grep` the insight; lineage beads show correct parent
   chain via `bd show`; the no-`bd` fallback path has a test.
+- **Shipped (iter 4):** `src/mem.ts` (the memory layer) and `src/init.ts` (`avo init`). One `bd
+  context --json` call answers both "is bd installed" and "does this repo have a database", which is
+  what makes *installed-but-uninitialized* degrade instead of fail. Both backends return the same
+  `Memory` shape, so `avo mem --json` does not change with the environment — an agent must not have
+  to know whether `bd` was installed. Ids are deterministic (`<prefix>-v<N>` for a version,
+  `<prefix>-x<hash8>` for a dead end keyed by content), so re-recording updates one record instead
+  of piling up. `avo commit` mirrors its own decision: a commit writes a version bead linked to its
+  parent, a refusal writes a dead end; `--dry-run`/`--no-record`/a no-op/a harness error write
+  nothing, because there is no candidate to learn from.
+  Deviation from the sketch above, recorded because code wins: `avo mem` lists the memories rather
+  than shelling out to `bd prime`, whose bulk is the bd command reference; `bd prime` is
+  `avo mem prime`. The list is the parseable, stable thing an agent wants mid-loop.
+  The bug this slice caught is worth remembering: **avo's own writes must not read as a variation.**
+  `lineage/memory.jsonl` is written *after* a commit, so with only `TRAJECTORY_PATHS` filtered, the
+  next `avo commit` saw a change the agent never made — it scored an unchanged tree, refused it as
+  no improvement, and remembered *that* refusal, which dirtied the tree again. `HARNESS_PATHS`
+  (trajectory + `.avo/.gitignore` + the memory log) now covers the dirtiness check, while staying
+  *staged*: those files belong in the repo, they are just not evidence of a variation.
 
 ### S4 — `K`: knowledge `[ ]`
 - `avo know init` — `qmd collection add knowledge/ --name knowledge`, same for `lineage/`, plus
