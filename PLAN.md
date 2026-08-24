@@ -308,7 +308,7 @@ Each slice: build → verify with the stated command → commit → update `PROG
      `qmd embed` only vectorizes documents the index already knows about, so a doc written *after*
      `qmd collection add` stays invisible — `qmd ls` reports "No files found" and every search
      returns nothing — until `qmd update` re-scans. `avo commit` writes into `lineage/` without
-     going through `avo know add`, so the lineage collection needs the same re-scan (#13).
+     going through `avo know add`, so the lineage collection needs the same re-scan (#14).
   2. **`.qmd/` is gitignored with a `*`.** `index.yml` records collection paths as *absolute*
      paths, so a committed index is wrong on every other machine; `index.sqlite` is a
      multi-megabyte binary. Ignoring the whole directory also keeps it out of the tree-dirtiness
