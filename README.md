@@ -9,9 +9,9 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 ## Status
 
 S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory), S4 (`K` —
-knowledge) and S5 (agent-agnostic skills) are done. `avo init`, `avo install`, `avo doctor`,
-`avo score`, `avo commit`, `avo lineage`, `avo best`, `avo mem` and `avo know` work, and the four
-skills in `.agents/skills/` are wired for `pi`, Claude Code and Codex.
+knowledge), S5 (agent-agnostic skills) and S6 (concurrency) are done. `avo init`, `avo install`,
+`avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`, `avo mem`, `avo know` and
+`avo fan` work, and the five skills in `.agents/skills/` are wired for `pi`, Claude Code and Codex.
 
 ## Quickstart
 
@@ -32,6 +32,10 @@ avo commit --why "hoisted the bounds check out of the loop"
 avo lineage                  # P_t so far
 avo best --json              # what the next candidate must beat
 avo mem                      # what the loop learned, including the dead ends
+
+# explore several directions at once, one worktree and one small-model agent each
+avo fan --n 4 --prompt-file probe.md --json
+avo fan --promote 2          # bring the winner into the working tree, then score and commit it
 
 # K — what the agent may consult before it varies anything
 avo know add ./docs/tuning.md          # or a url, with FIRECRAWL_API_KEY set
@@ -193,6 +197,56 @@ because it is the only one that returns page content, which is what `--ingest` n
 links and snippets. With nothing configured, `avo know search` names all three and how to enable
 them — it never throws a stack trace at the agent.
 
+## `avo fan` — N directions at once
+
+One variation step, N independent attempts. Each probe gets its own `git worktree` off `HEAD`, its
+own headless agent process, and its own `avo score`. Nothing a probe does can reach your working
+tree until you promote one.
+
+```sh
+avo fan --n 4 --prompt-file probe.md            # four probes, four worktrees
+avo fan --n 3 --prompt "try X, Y or Z" --json   # the JSON is what an agent reads
+avo fan --agent pi --model groq/llama-3.3-70b   # the agent, and the probe model
+avo fan --timeout 300                           # kill a probe's process group after 300s
+```
+
+Each probe comes back as `{i, ok, score, diffstat, summary, worktree, tokens, wall_s, log_path}`.
+`ok` describes the *process*, `score` describes the *candidate* — a probe can finish cleanly and
+still fail `f`. `best` names the highest-scoring probe that passed; it is a hint, never a decision.
+
+```sh
+avo fan --promote 2 --run <id>   # apply that probe's diff to the working tree — and stop
+avo score                        # verify it in the real tree
+avo commit --why "…"             # the only thing that writes a version (invariant 1)
+```
+
+Probes are meant to run on a **small model** (`$AVO_PROBE_MODEL` — Groq, Cerebras, Haiku): N cheap
+probes tell you which direction is worth the expensive model. Exploration is a small-model job.
+
+Four guards, all from `pi-subagent`'s pattern, because a probe is itself an agent that can call
+`avo fan`:
+
+| Guard | Default | What happens |
+| --- | --- | --- |
+| depth | `AVO_FAN_DEPTH=3` | a probe at the limit is refused (exit 1) and must do the work itself |
+| cycles | — | a prompt already in the chain (`AVO_FAN_CHAIN`) is refused |
+| concurrency | `min(8, cpus-2)` | `--n 20` is allowed; the rest queue |
+| timeout | `--timeout 900` | the probe's whole process group is killed, benchmarks included |
+
+Each built-in agent template carries the flag that stops it asking a human for permission —
+`pi --approve`, `claude --permission-mode bypassPermissions`, `codex --sandbox workspace-write`.
+Without them a headless probe reads and never writes, and exits 0 having done nothing. `avo fan`
+reports which one it used in `approval`. Drive something else by declaring it in `.avo/config.json`:
+
+```json
+{"agent": {"name": "myagent", "command": "my-cli", "args": ["--headless", "--model={model}", "{prompt}"]}}
+```
+
+Everything lives under `.avo/worktrees/<run-id>/`, which is gitignored trajectory. Worktrees no
+probe changed are removed automatically; changed ones stay, because they are the only copy of that
+work. `avo fan --list`, `--clean <id|all>`, and `--resume <id>` — the run manifest is rewritten
+after every probe, so a killed fan-out resumes from what it had.
+
 ## `avo install` — the agent-agnostic layer
 
 The skills are the layer that makes `avo` agent-agnostic. They live in `.agents/skills/`, the
@@ -250,7 +304,7 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
 
@@ -271,11 +325,14 @@ src/steps.ts      the created/unchanged/skipped step report init and know init s
 src/init.ts       avo init — idempotent scaffolding, including bd init
 src/install.ts    avo install — wires pi | claude | codex to .agents/skills without copying
 src/skills.ts     the Agent Skills frontmatter parser and spec validator
+src/agents.ts     headless agent command templates: pi | claude | codex | custom
+src/fan.ts        avo fan — worktrees, probes, the four guards, promote and resume
 src/io.ts         injectable output sink, so commands are unit-testable
-.agents/skills/   THE agent-agnostic layer: avo-vary, avo-score, avo-lineage, avo-knowledge
+.agents/skills/   THE agent-agnostic layer: avo-vary, avo-score, avo-lineage, avo-knowledge,
+                  avo-fanout
 AGENTS.md         the always-on rules + the skills index (managed block, hand edits preserved)
 templates/score/  reference scorers + the authoring guide
-test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install}.sh
+test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install,-fan}.sh
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

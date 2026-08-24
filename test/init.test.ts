@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { CONFIG_PATH, loadConfig } from "../src/config.ts";
+import { CONFIG_PATH, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
 import { initCommand, parseInitArgs, renderInit, runInit, type InitResult } from "../src/init.ts";
 import { bufferIo } from "../src/io.ts";
 import type { RunOpts, Runner, RunResult } from "../src/score.ts";
@@ -97,7 +97,9 @@ test("avo init scaffolds the config, the gitignore and lineage/, and is a no-op 
     // The scaffolded config must load as the defaults it claims to be.
     const { config, warnings, present } = loadConfig(cwd);
     assert.deepEqual({ present, warnings }, { present: true, warnings: [] });
-    assert.deepEqual(config, { reduce: "dominate", floor: 0, weights: {}, configs: null });
+    // Compared against DEFAULT_CONFIG rather than a literal, so a field added later must still be
+    // scaffolded to its default instead of quietly failing this test.
+    assert.deepEqual(config, DEFAULT_CONFIG);
 
     const before = readFileSync(join(cwd, CONFIG_PATH), "utf8");
     writeFileSync(join(cwd, CONFIG_PATH), JSON.stringify({ reduce: "mean", floor: 0.02 }));

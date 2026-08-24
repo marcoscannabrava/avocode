@@ -95,6 +95,8 @@ export interface RunResult {
 export interface RunOpts {
   cwd: string;
   timeoutMs: number;
+  /** Extra environment for the child, merged over `process.env`. Used by `avo fan`'s guards. */
+  env?: Record<string, string>;
 }
 
 /** Runs one child process. Injected so the command is testable without real scorers. */
@@ -112,7 +114,7 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
     // --cwd <other-repo>` came to write a qmd index into this repo (S4).
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
-      env: { ...process.env, PWD: resolvePath(opts.cwd) },
+      env: { ...process.env, ...opts.env, PWD: resolvePath(opts.cwd) },
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });

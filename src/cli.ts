@@ -1,4 +1,5 @@
 import { doctorCommand } from "./doctor.ts";
+import { fanCommand } from "./fan.ts";
 import { initCommand } from "./init.ts";
 import { installCommand } from "./install.ts";
 import type { Io } from "./io.ts";
@@ -22,6 +23,7 @@ commands:
   lineage [...]     list P_t; 'show <n>' one version; 'diff <a> <b>' two of them
   best [--json]     the version every candidate is ranked against
   mem [...]         what the loop remembers; 'add "<insight>"' writes one; 'prime' for a session
+  fan [options]     explore N directions at once, one git worktree + headless agent each
   know [...]        K: 'init', 'query "<q>"', 'add <url|path>', 'search "<q>"', 'reindex'
   version           print the version
   help              print this message
@@ -64,6 +66,22 @@ avo know:
   --json --cwd <dir> --timeout <s>
   exit codes        0 = ran, 1 = refused, 2 = harness error
 
+avo fan:
+  --n <k>           how many probes (default 3); they run min(8, cpus-2) at a time
+  --prompt-file <f> | --prompt "<text>"   the task every probe is given
+  --agent <a>       pi | claude | codex | a custom one from .avo/config.json
+                    (default: $AVO_AGENT, the config, then the first on PATH)
+  --model <m>       the probe model (default $AVO_PROBE_MODEL); small models are the point
+  --timeout <s>     kill a probe's process group after s seconds (default 900, 0 = no limit)
+  --keep            keep every worktree; by default the ones nothing changed are removed
+  --no-score        do not run .avo/score in each worktree
+  --promote <i>     apply probe i's diff to the working tree (--run <id> to pick an older run)
+  --resume <id>     re-run the probes an interrupted fan-out never finished
+  --list            the runs that survived; --clean <id|all> removes their worktrees
+  --json --cwd <dir>
+  exit codes        0 = ran, 1 = a guard refused or every probe failed, 2 = harness error
+  guards            AVO_FAN_DEPTH (default 3) caps nesting; a repeated prompt is refused as a cycle
+
 avo commit:
   --why <text>      the agent's rationale; lands in the commit body and lineage/vNNN.md
   --dry-run         report the decision without writing anything
@@ -95,6 +113,8 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
       return await memCommand(rest, io);
     case "know":
       return await knowCommand(rest, io);
+    case "fan":
+      return await fanCommand(rest, io);
     case "doctor":
       return doctorCommand(rest, io, VERSION);
     case "score":

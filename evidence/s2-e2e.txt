@@ -1,4 +1,4 @@
-# avo S2 e2e — 2026-08-24T14:52:48Z
+# avo S2 e2e — 2026-08-24T15:17:15Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 # fixture: candidate must print 42; metric = code size in bytes, lower is better
 
@@ -37,10 +37,10 @@ $ avo lineage
 avo lineage
 
   ver  commit   primary                    *
-  v1   a25e203  34 bytes                  34
-  v2   314cbb3  8 bytes                    8
+  v1   0d6ce12  34 bytes                  34
+  v2   9559853  8 bytes                    8
 
-best: v2 (314cbb3); reduce: dominate, floor: 0
+best: v2 (9559853); reduce: dominate, floor: 0
 
 PASS  avo best names the version a candidate is ranked against
 PASS  avo lineage diff shows the patch between two versions

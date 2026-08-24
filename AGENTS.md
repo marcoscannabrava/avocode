@@ -23,6 +23,7 @@ Full instructions live in `.agents/skills/<name>/SKILL.md`. Read the one that ma
 
 | Skill | Read this when |
 | --- | --- |
+| `avo-fanout` | Explore several variation directions at once with `avo fan` — N git worktrees, N headless agent processes on a small model, each scored, one promoted. |
 | `avo-knowledge` | Search and grow `K`, an avocode repo's knowledge base — `avo know query` for hybrid search over local docs and the repo's own lineage, `avo know search` for the web, and `avo know add` to ingest a page or file with provenance. |
 | `avo-lineage` | Read and extend `P_t`, the committed lineage of an avocode repo — `avo lineage`, `avo lineage show/diff`, `avo best`, and the commit rule that governs what gets kept. |
 | `avo-score` | The `f` contract in avocode — run `avo score` to measure a candidate, read its JSON, and author or repair a `.avo/score` scorer. |
