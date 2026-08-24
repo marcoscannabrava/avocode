@@ -1,0 +1,64 @@
+# avo S1 e2e — 2026-08-24T13:22:34Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+# fixture: a repo whose candidate must print 42; the metric is code size (lower is better)
+
+$ avo score --init hyperfine -> exit 0 {"ok":true,"action":"created","template":"hyperfine","path":".avo/score"}
+PASS  --init scaffolds .avo/score
+PASS  the scaffolded scorer is executable
+$ avo score --init hyperfine (again) -> {"ok":true,"action":"unchanged","template":"hyperfine","path":".avo/score"}
+PASS  --init is idempotent (invariant 5)
+PASS  --init refuses to clobber an edited scorer
+PASS  template hyperfine answers --configs (default)
+PASS  template pytest answers --configs (all)
+PASS  template vitest answers --configs (all)
+
+$ avo score --json -> exit 0
+{"ts":"2026-08-24T13:22:35.005Z","ok":true,"correct":true,"pass":true,"primary":8,"normalized":-8,"unit":"bytes","higher_is_better":false,"scores":{"bytes":8,"lines":1,"words":2},"duration_s":0.01,"configs":["*"],"parallel":false,"errors":[],"warnings":[],"log":null,"exit_code":0,"git":{"head":"483926606ed4dcfa7a2de221541e8e008380f5a3","dirty":true}}
+{"ok":true,"correct":true,"pass":true,"primary":8,"normalized":-8,"unit":"bytes","scores":{"bytes":8,"lines":1,"words":2},"configs":["*"]}
+PASS  a correct candidate exits 0 and passes
+PASS  normalized flips a lower-is-better metric
+PASS  the attempt records the git head and dirty state
+PASS  score --json is one line
+
+$ echo 41 > impl.sh; avo score --json -> exit 1
+{"ts":"2026-08-24T13:22:35.206Z","ok":true,"correct":false,"pass":false,"primary":null,"normalized":null,"unit":"bytes","higher_is_better":false,"scores":{},"duration_s":0,"configs":["*"],"parallel":false,"errors":[],"warnings":[],"log":"expected 42, got '41'","exit_code":0,"git":{"head":"483926606ed4dcfa7a2de221541e8e008380f5a3","dirty":true}}
+{"correct":false,"pass":false,"primary":null,"log":"expected 42, got '41'","errors":[]}
+PASS  acceptance: avo score --json | jq -e '.correct == false' passes
+PASS  a failing candidate exits 1 (a result, not an error)
+PASS  a failing candidate gets the null sentinel with no harness errors
+PASS  the scorer's diagnosis reaches the agent in .log
+
+$ avo score --json --parallel -> exit 0
+{"ts":"2026-08-24T13:22:35.425Z","ok":true,"correct":true,"pass":true,"primary":3.6666666666666665,"normalized":-3.6666666666666665,"unit":"bytes","higher_is_better":false,"scores":{"bytes":8,"lines":1,"words":2},"duration_s":0,"configs":["bytes","lines","words"],"parallel":true,"errors":[],"warnings":[],"log":null,"exit_code":0,"git":{"head":"483926606ed4dcfa7a2de221541e8e008380f5a3","dirty":true}}
+{"parallel":true,"configs":["bytes","lines","words"],"scores":{"bytes":8,"lines":1,"words":2},"primary":3.6666666666666665,"warnings":[]}
+PASS  --parallel discovers 3 configs and merges their scores
+PASS  --parallel exits 0 when every config passes
+$ avo score --parallel against a scorer with no --configs -> exit 0
+PASS  --parallel degrades to serial with one warning (invariant 4)
+
+$ avo score --json against a scorer emitting primary:"fast" -> exit 2
+{"ts":"2026-08-24T13:22:35.840Z","ok":false,"correct":false,"pass":false,"primary":null,"normalized":null,"unit":"","higher_is_better":true,"scores":{},"duration_s":0,"configs":["*"],"parallel":false,"errors":["*: field 'primary': expected union value (got \"fast\") (it also exited 3)"],"warnings":[],"log":"linking...\n{\"ok\":true,\"correct\":true,\"primary\":\"fast\",\"unit\":\"bytes\",\"higher_is_better\":false}","exit_code":3,"git":{"head":"483926606ed4dcfa7a2de221541e8e008380f5a3","dirty":true}}
+{"ok":false,"pass":false,"errors":["*: field 'primary': expected union value (got \"fast\") (it also exited 3)"]}
+PASS  malformed scorer output exits 2 (harness error)
+PASS  the error names the offending field and the value received
+$ avo score --timeout 1 against a sleeping scorer -> exit 2 in 2s
+PASS  --timeout kills a hanging scorer and reports it (2s)
+PASS  the timeout actually bounded the run
+
+$ wc -l .avo/attempts.jsonl -> 6
+PASS  every scoring run appended exactly one attempt (6 runs, 6 lines)
+PASS  every recorded attempt has the Attempt shape
+PASS  --no-record appends nothing
+{"ts":"2026-08-24T13:22:35.005Z","pass":true,"primary":8,"unit":"bytes","configs":["*"]}
+{"ts":"2026-08-24T13:22:35.206Z","pass":false,"primary":null,"unit":"bytes","configs":["*"]}
+{"ts":"2026-08-24T13:22:35.425Z","pass":true,"primary":3.6666666666666665,"unit":"bytes","configs":["bytes","lines","words"]}
+{"ts":"2026-08-24T13:22:35.627Z","pass":true,"primary":3,"unit":"bytes","configs":["*"]}
+{"ts":"2026-08-24T13:22:35.840Z","pass":false,"primary":null,"unit":"","configs":["*"]}
+{"ts":"2026-08-24T13:22:37.041Z","pass":false,"primary":null,"unit":"","configs":["*"]}
+
+$ avo score in a repo with no .avo/score -> exit 2
+    avo score: no executable .avo/score in /tmp/tmp.hXvjDQWA7s — scaffold one with 'avo score --init <hyperfine|pytest|vitest>' (or 'chmod +x .avo/score' if it exists but is not executable)
+PASS  a missing scorer exits 2
+PASS  the missing-scorer message says how to scaffold one
+
+e2e-score: all checks passed
