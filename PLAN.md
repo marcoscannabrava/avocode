@@ -114,16 +114,36 @@ share `src/` verbatim — write the lineage/score logic once.
 
 ### The `f` contract (frozen in Slice 1, never break it)
 
-`.avo/score` is any executable. It **always exits 0**; failures are reported *in* the JSON so the
-agent receives a diagnosable payload instead of a crash. stdout, one line:
+Full authoring guide: [templates/score/README.md](templates/score/README.md).
+
+`.avo/score` is any executable, run from the repo root. It **always exits 0**; failures are
+reported *in* the JSON so the agent receives a diagnosable payload instead of a crash. stdout,
+one line:
 
 ```json
 {"ok":true,"correct":true,"primary":1668.2,"unit":"TFLOPS","higher_is_better":true,
  "scores":{"b1_s4096":1668.2,"b8_s1024":1421.7},"log":"...","duration_s":42.1}
 ```
 
-`correct:false` ⇒ `primary` is forced to the failing sentinel regardless of measured value
-(paper §3.1: "a candidate that fails correctness is assigned zero score").
+Required: `ok` (the scorer itself worked), `correct` (**the gate**), `primary` (`number|null`),
+`unit` (non-empty), `higher_is_better`. Optional: `scores`, `log`, `duration_s`. Unknown fields are
+allowed but warned about, so a misspelled `higherIsBetter` reads as both "required field missing"
+and "unknown field".
+
+Two optional invocations enable `avo score --parallel`: `--configs` lists config names (one per
+line, `[A-Za-z0-9][A-Za-z0-9._-]*`), `--config <name>` scores one of them. Anything else printed by
+`--configs` means "unsupported" and degrades to a single serial run with one warning.
+
+`ok:false` or `correct:false` ⇒ `primary` is forced to the failing sentinel, which is **`null`**,
+regardless of the measured value (paper §3.1: "a candidate that fails correctness is assigned zero
+score"). `null` rather than literal zero because zero is the *best* possible value for a
+lower-is-better metric, so it cannot also mean failure. `avo score` additionally emits
+`normalized` — `primary` flipped so higher is always better, `null` compares worse than any number
+— so no consumer branches on direction.
+
+`avo score` exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed
+output, timeout). Every run appends one normalized attempt to `.avo/attempts.jsonl`; attempts are
+not commits.
 
 ### The commit rule (paper §3.2)
 
@@ -171,7 +191,7 @@ Each slice: build → verify with the stated command → commit → update `PROG
   optional gaps are reported without failing. Dep probing is injected (`Prober`), so the
   missing-dependency paths are unit-tested without touching the filesystem.
 
-### S1 — `f`: scoring `[ ]`
+### S1 — `f`: scoring `[x]`
 - `avo score [--parallel] [--json]` — runs `.avo/score`, validates against the typebox schema,
   normalizes, records the attempt (not a commit).
 - Schema violation ⇒ actionable error naming the offending field.
@@ -179,6 +199,17 @@ Each slice: build → verify with the stated command → commit → update `PROG
   `README.md` on authoring one. `avo score --init <template>` scaffolds `.avo/score`.
 - **Verify:** unit tests for the validator incl. malformed/`correct:false`/non-zero-exit cases; a
   fixture repo where `avo score --json | jq -e '.correct == false'` passes.
+- **Shipped (iter 2):** `src/score.ts` — typebox schema + semantic checks (`primary` must be finite
+  when passing; every `scores` value finite), normalization into an `Attempt` appended to
+  `.avo/attempts.jsonl`, `--parallel` fan-out over `--configs` at `min(8, cpus-2)`, `--timeout <s>`,
+  `--init <template>`, `--no-record`, `--cwd <dir>`. Also `--json` everywhere and a pretty renderer.
+  `main()` is now `async` (every later slice needs it). Contract details moved into §3 above and
+  [templates/score/README.md](templates/score/README.md).
+  Two things worth remembering: stdout parsing takes the *last* JSON-object line and warns about the
+  rest, because scorers that echo build noise are too common to reject; and the scorer is spawned
+  `detached` so a `--timeout` kills its whole process group — killing only the scorer leaves its
+  benchmark children holding our stdio pipes and we wait out the full run anyway (caught by e2e,
+  regression-tested in `test/score.test.ts`).
 
 ### S2 — `P_t`: lineage `[ ]`
 - `avo commit` — atomic: score → compare vs best → on pass, `git commit` with trailers
@@ -298,9 +329,16 @@ MAP-Elites archive gets a second look — read it, don't depend on it.
 
 ## 6. Open questions (resolve in-slice, record the answer here)
 
-- **Q1 (S1):** vector `f` — how to reduce `{cfg: score}` to a commit decision? Default: dominate-or-
-  tie on all configs. Alternative: weighted mean with a per-config regression floor. Pick one, make
-  it configurable, document why.
+- **Q1 (S1) — answered:** `f` is a vector; the commit decision compares `scores`, never the scalar
+  `primary` (which is just their mean, for humans). Default reduction is **dominate-or-tie**: a
+  candidate commits iff `normalized` is `>=` the best version on *every* config they share and `>`
+  on at least one. Why not a weighted mean: a mean lets a large win on one config pay for a
+  regression on another, which is precisely the silent regression the commit rule exists to stop.
+  Configurable in `.avo/config.json` — `{"reduce":"mean","floor":0.02,"weights":{...}}` — for the
+  real case where configs genuinely trade off. Two anti-gaming rules come with it: a config present
+  in the best version but *missing* from the candidate blocks the commit (you cannot improve by
+  measuring less), while a *new* config does not. The comparator itself lands in S2 with
+  `avo commit`, which is the only code that needs it.
 - **Q2 (S4):** does Firecrawl have a usable free tier? Not stated in its API docs. Determine before
   making it the default; if not, promote `searxng`/`ddgs` to default and Firecrawl to opt-in.
 - **Q3 (S7):** stall threshold N — the paper doesn't publish theirs. Start at 5 (the value in
