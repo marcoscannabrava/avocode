@@ -26,6 +26,18 @@ export const ConfigSchema = Type.Object(
     /** Declares the scorer's configs so `avo score --parallel` skips the `--configs` probe. */
     configs: Type.Optional(Type.Array(Type.String())),
     /**
+     * When the supervisor intervenes (S7). `stall` is how many attempts may go by with no committed
+     * improvement before it steers; `thrash` is how many consecutive failures with the *same*
+     * signature count as re-trying the same broken thing. Repo policy, not a per-call choice: a
+     * scorer that takes an hour wants a smaller `stall` than one that takes a second.
+     */
+    supervise: Type.Optional(
+      Type.Object({
+        stall: Type.Optional(Type.Integer({ minimum: 1 })),
+        thrash: Type.Optional(Type.Integer({ minimum: 2 })),
+      }),
+    ),
+    /**
      * A custom headless agent for `avo fan`, so the harness drives something other than the three
      * built-ins without a code change (PLAN §2: agent-agnostic is the point). `{prompt}` and
      * `{model}` are substituted per argument; an argument mentioning `{model}` is dropped when no
@@ -55,9 +67,32 @@ export interface AvoConfig {
   configs: string[] | null;
   /** `null` = no custom agent declared; `avo fan` offers only the built-ins. */
   agent: CustomAgent | null;
+  /** Thresholds `avo supervise` fires at. A flag overrides them; the defaults apply otherwise. */
+  supervise: { stall: number; thrash: number };
 }
 
-export const DEFAULT_CONFIG: AvoConfig = { reduce: "dominate", floor: 0, weights: {}, configs: null, agent: null };
+/** Attempts with no committed improvement before the supervisor calls it a stall. */
+export const DEFAULT_STALL = 5;
+/** Consecutive same-signature failures before it calls it thrash. */
+export const DEFAULT_THRASH = 3;
+
+export const DEFAULT_CONFIG: AvoConfig = {
+  reduce: "dominate",
+  floor: 0,
+  weights: {},
+  configs: null,
+  agent: null,
+  supervise: { stall: DEFAULT_STALL, thrash: DEFAULT_THRASH },
+};
+
+/**
+ * A fresh copy every time. Spreading `DEFAULT_CONFIG` is shallow, so every caller would share one
+ * `weights` and one `supervise` object — the same class of bug as S4's shared `args` array, which
+ * let two `avo know` calls in one process accumulate each other's arguments.
+ */
+function defaults(): AvoConfig {
+  return { ...DEFAULT_CONFIG, weights: {}, supervise: { ...DEFAULT_CONFIG.supervise } };
+}
 
 export interface LoadedConfig {
   config: AvoConfig;
@@ -76,7 +111,7 @@ export function loadConfig(cwd: string): LoadedConfig {
   try {
     raw = readFileSync(join(cwd, CONFIG_PATH), "utf8");
   } catch {
-    return { config: { ...DEFAULT_CONFIG }, warnings: [], present: false };
+    return { config: defaults(), warnings: [], present: false };
   }
 
   let parsed: unknown;
@@ -84,7 +119,7 @@ export function loadConfig(cwd: string): LoadedConfig {
     parsed = JSON.parse(raw);
   } catch (e) {
     return {
-      config: { ...DEFAULT_CONFIG },
+      config: defaults(),
       warnings: [`${CONFIG_PATH} is not valid JSON (${(e as Error).message}); using defaults`],
       present: true,
     };
@@ -95,7 +130,7 @@ export function loadConfig(cwd: string): LoadedConfig {
     const field = e.path.replace(/^\//, "").replaceAll("/", ".");
     warnings.push(`${CONFIG_PATH}: field '${field}' ${e.message.toLowerCase()} (got ${JSON.stringify(e.value)})`);
   }
-  if (warnings.length > 0) return { config: { ...DEFAULT_CONFIG }, warnings, present: true };
+  if (warnings.length > 0) return { config: defaults(), warnings, present: true };
 
   const file = parsed as ConfigFile;
   const config: AvoConfig = {
@@ -104,6 +139,10 @@ export function loadConfig(cwd: string): LoadedConfig {
     weights: file.weights ?? {},
     configs: null,
     agent: null,
+    supervise: {
+      stall: file.supervise?.stall ?? DEFAULT_STALL,
+      thrash: file.supervise?.thrash ?? DEFAULT_THRASH,
+    },
   };
 
   if (file.agent !== undefined) {

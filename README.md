@@ -9,9 +9,11 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 ## Status
 
 S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory), S4 (`K` —
-knowledge), S5 (agent-agnostic skills) and S6 (concurrency) are done. `avo init`, `avo install`,
-`avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`, `avo mem`, `avo know` and
-`avo fan` work, and the five skills in `.agents/skills/` are wired for `pi`, Claude Code and Codex.
+knowledge), S5 (agent-agnostic skills) and S6 (concurrency) are done, and S7's detector
+(`avo supervise`) with it. `avo init`, `avo install`, `avo doctor`, `avo score`, `avo commit`,
+`avo lineage`, `avo best`, `avo mem`, `avo know`, `avo fan` and `avo supervise` work, and the five
+skills in `.agents/skills/` are wired for `pi`, Claude Code and Codex. `avo run` — the continuous
+driver that calls the supervisor between agent turns — is the rest of S7.
 
 ## Quickstart
 
@@ -36,6 +38,10 @@ avo mem                      # what the loop learned, including the dead ends
 # explore several directions at once, one worktree and one small-model agent each
 avo fan --n 4 --prompt-file probe.md --json
 avo fan --promote 2          # bring the winner into the working tree, then score and commit it
+
+# is the loop still making progress? exit 1 means it printed a directive to follow
+avo supervise
+avo supervise --json | jq -r .directive
 
 # K — what the agent may consult before it varies anything
 avo know add ./docs/tuning.md          # or a url, with FIRECRAWL_API_KEY set
@@ -247,6 +253,46 @@ probe changed are removed automatically; changed ones stay, because they are the
 work. `avo fan --list`, `--clean <id|all>`, and `--resume <id>` — the run manifest is rewritten
 after every probe, so a killed fan-out resumes from what it had.
 
+## `avo supervise` — stall and thrash detection
+
+A variation operator with no supervisor plateaus and keeps plateauing: from inside one turn, an
+agent re-deriving an idea it already tried looks exactly like an agent making progress. `avo
+supervise` reads the lineage and `.avo/attempts.jsonl` — nothing it does not already record — and
+fires on the two things one turn cannot see:
+
+| Signal | Fires when | Default | Why that is the signal |
+| --- | --- | --- | --- |
+| `stall` | N attempts since the last committed improvement | 5 | `P_t` is monotone, so the newest version *is* the last improvement. An attempt that passed `f` and still did not beat it counts: it did not move `P_t` |
+| `thrash` | K consecutive attempts failed *the same way* | 3 | the same error K times means the diagnosis is wrong, not the edit |
+
+```bash
+avo supervise                       # 0 = still making progress, 1 = a directive was emitted, 2 = usage
+avo supervise --json | jq -r .directive
+avo supervise --stall 3 --thrash 2  # or set supervise.stall / supervise.thrash in .avo/config.json
+```
+
+Thresholds belong in `.avo/config.json` because they are repo policy: a scorer that takes an hour
+wants a smaller `stall` than one that takes a second. A flag overrides it.
+
+The exit code is the interface — `avo supervise || inject_directive` is the whole integration for a
+shell loop, and `avo run` (the rest of S7) will use the same two codes.
+
+**The directive cites.** "Try something else" is worthless: the agent already believes it is trying
+something else. So the directive names prior versions with their scores and rationales, the dead ends
+memory holds, and the docs in `K` that no version has ever mentioned — that last list is computed by
+matching each doc's title against every `--why` and every memory, so a doc appears precisely because
+nothing in the lineage talks about it. This is what S3 and S4 were for: without a lineage and a
+knowledge base there is nothing concrete to cite.
+
+Which attempts count as "since the best version" is decided by the sha each attempt recorded, not by
+its clock: an attempt scored *on top of* v3 carries v3's sha, while the attempt that *became* v3 was
+scored before that commit existed. Timestamps cannot do it — git truncates author dates to the
+second, so with a fast scorer the two are indistinguishable by time.
+
+`avo supervise` only ever reads. It writes nothing, moves nothing, and leaves the working tree
+byte-identical, because a supervisor that dirtied the tree would make the harness's own output part
+of the next candidate's diff.
+
 ## `avo install` — the agent-agnostic layer
 
 The skills are the layer that makes `avo` agent-agnostic. They live in `.agents/skills/`, the
@@ -266,6 +312,7 @@ avo install --force                # replace a symlink or file in the way
 | `avo-score` | authoring or repairing `.avo/score`; the frozen `f` contract |
 | `avo-lineage` | reading `P_t`, or understanding why a candidate was refused |
 | `avo-knowledge` | searching `K` and growing it from the web |
+| `avo-fanout` | exploring several directions at once when reading cannot tell you which is best |
 
 What each agent gets:
 
@@ -304,7 +351,7 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
 
@@ -327,12 +374,14 @@ src/install.ts    avo install — wires pi | claude | codex to .agents/skills wi
 src/skills.ts     the Agent Skills frontmatter parser and spec validator
 src/agents.ts     headless agent command templates: pi | claude | codex | custom
 src/fan.ts        avo fan — worktrees, probes, the four guards, promote and resume
+src/supervise.ts  avo supervise — the stall/thrash detector and the directive it cites with
 src/io.ts         injectable output sink, so commands are unit-testable
 .agents/skills/   THE agent-agnostic layer: avo-vary, avo-score, avo-lineage, avo-knowledge,
                   avo-fanout
 AGENTS.md         the always-on rules + the skills index (managed block, hand edits preserved)
 templates/score/  reference scorers + the authoring guide
-test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install,-fan}.sh
+test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install,-fan,
+                  -supervise}.sh
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

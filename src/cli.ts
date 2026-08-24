@@ -8,6 +8,7 @@ import { knowCommand } from "./knowledge.ts";
 import { bestCommand, commitCommand, lineageCommand } from "./lineage.ts";
 import { memCommand } from "./mem.ts";
 import { scoreCommand } from "./score.ts";
+import { superviseCommand } from "./supervise.ts";
 import { VERSION } from "./version.ts";
 
 export const USAGE = `avo — an AVO-inspired agent harness
@@ -25,6 +26,7 @@ commands:
   mem [...]         what the loop remembers; 'add "<insight>"' writes one; 'prime' for a session
   fan [options]     explore N directions at once, one git worktree + headless agent each
   know [...]        K: 'init', 'query "<q>"', 'add <url|path>', 'search "<q>"', 'reindex'
+  supervise [...]   detect a stall or a thrash and emit a steering directive that cites P_t and K
   version           print the version
   help              print this message
 
@@ -82,6 +84,14 @@ avo fan:
   exit codes        0 = ran, 1 = a guard refused or every probe failed, 2 = harness error
   guards            AVO_FAN_DEPTH (default 3) caps nesting; a repeated prompt is refused as a cycle
 
+avo supervise:
+  --stall <n>       attempts with no committed improvement before it steers
+                    (default: .avo/config.json 'supervise.stall', then 5)
+  --thrash <k>      consecutive failures with the same signature before it steers (default 3)
+  --json --cwd <dir>
+  exit codes        0 = no intervention needed, 1 = a signal fired and a directive was emitted,
+                    2 = harness error
+
 avo commit:
   --why <text>      the agent's rationale; lands in the commit body and lineage/vNNN.md
   --dry-run         report the decision without writing anything
@@ -119,6 +129,8 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
       return doctorCommand(rest, io, VERSION);
     case "score":
       return await scoreCommand(rest, io);
+    case "supervise":
+      return await superviseCommand(rest, io);
     case "commit":
       return await commitCommand(rest, io);
     case "lineage":

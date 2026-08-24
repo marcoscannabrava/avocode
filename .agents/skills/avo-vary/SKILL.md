@@ -63,12 +63,33 @@ because the reason is what stops the next session from repeating it.
 
 ## When you are stuck
 
-Three refusals on the same idea means the idea is wrong, not the implementation. Go back to `K`:
+Ask, rather than deciding for yourself that you are not stuck:
+
+```bash
+avo supervise      # exit 0 = still making progress; exit 1 = it printed a directive, follow it
+```
+
+It reads the same lineage and the same attempt log you do, and it fires on the two things you
+cannot see from inside one turn:
+
+- **stall** — N attempts since the last committed improvement. Not "N failures": an attempt that
+  passed `f` and still did not beat the best version counts too, because it did not move `P_t`.
+- **thrash** — the last K attempts failed *the same way*. The same error three times means your
+  diagnosis is wrong, not your edit; a smaller version of the same change fails identically.
+
+The directive it prints cites specific versions, the dead ends memory already holds, and the docs in
+`K` that no version has ever mentioned. Treat that last list as your candidate directions — it is
+computed, not guessed: a doc is listed precisely because nothing in the lineage talks about it.
+
+Then go back to `K`:
 
 ```bash
 avo know query "<the sub-problem you keep failing at>"
 avo know search "<the sub-problem>" --ingest    # pull new material into K, with provenance
 ```
+
+If every direction you can name is already in the lineage, stop guessing and let `f` choose — see
+[avo-fanout](../avo-fanout/SKILL.md).
 
 See [avo-score](../avo-score/SKILL.md) for the `f` contract, [avo-lineage](../avo-lineage/SKILL.md)
 for reading `P_t`, and [avo-knowledge](../avo-knowledge/SKILL.md) for growing `K`.
