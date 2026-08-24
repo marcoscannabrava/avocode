@@ -31,11 +31,12 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      # test/e2e.sh needs jq (present on ubuntu-latest) and at least one agent CLI
-      # for `doctor` to report ok; the acceptance case deliberately runs without them.
-      - run: ./test/e2e.sh
+      - uses: extractions/setup-just@v2
+      # The e2e scripts need git and jq (both present on ubuntu-latest) and at least one agent CLI
+      # for `doctor` to report ok; that acceptance case deliberately runs without them.
+      - run: just e2e
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: s0-e2e-evidence
+          name: e2e-evidence
           path: evidence/

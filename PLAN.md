@@ -88,6 +88,8 @@ avocode/
   src/
     cli.ts                 # dispatcher
     score.ts               # f  — run + validate .avo/score
+    config.ts              # .avo/config.json — the reduction, the floor, declared configs
+    compare.ts             # the commit rule's comparator over the score vector
     lineage.ts             # Pt — git trailers, notes, lineage/*.md, beads mirror
     knowledge.ts           # K  — qmd wrapper + Firecrawl ingest
     fan.ts                 # concurrency — worktrees + headless agent procs
@@ -147,9 +149,20 @@ not commits.
 
 ### The commit rule (paper §3.2)
 
-Persist a new version **only** when it passes correctness **and** matches-or-beats the best
-committed version. Failed attempts stay in the agent's trajectory and in beads (as insight beads),
-never in the committed lineage. `avo commit` enforces this atomically — it is the only writer.
+Persist a new version **only** when it passes correctness **and** beats the best committed version
+under the configured reduction (§6 Q1: no config regresses, at least one improves). Failed attempts
+stay in the agent's trajectory and in beads (as insight beads), never in the committed lineage.
+`avo commit` enforces this — it is the only writer.
+
+A committed version is a commit carrying `Avo-Version: N` and `Avo-Score: <compact json>` trailers,
+with the full attempt in `git notes --ref=avo` and a rendered `lineage/vNNN.md`. `avo commit` stages
+everything (`git add -A`) *except* the trajectory paths `.avo/attempts.jsonl` and `.avo/worktrees/`,
+which it also writes into `.avo/.gitignore`: committing the attempt log would put the record of how
+a version was reached inside the version itself, and would leave the tree permanently dirty — which
+would in turn defeat the no-op check that makes `avo commit` idempotent.
+
+The lineage is therefore monotone by construction, so **`avo best` is simply the
+highest-numbered version**; there is no separate ranking pass.
 
 ### Where small models and concurrency are mandatory, not optional
 
@@ -211,7 +224,7 @@ Each slice: build → verify with the stated command → commit → update `PROG
   benchmark children holding our stdio pipes and we wait out the full run anyway (caught by e2e,
   regression-tested in `test/score.test.ts`).
 
-### S2 — `P_t`: lineage `[ ]`
+### S2 — `P_t`: lineage `[x]`
 - `avo commit` — atomic: score → compare vs best → on pass, `git commit` with trailers
   `Avo-Version: N` / `Avo-Score: <compact json>`, write `git notes --ref=avo`, render
   `lineage/vNNN.md` (score table, diffstat, agent's rationale from `--why`), print the decision.
@@ -220,6 +233,21 @@ Each slice: build → verify with the stated command → commit → update `PROG
 - Idempotent: re-running `avo commit` with no working-tree change is a no-op, not a duplicate.
 - **Verify:** integration test on a throwaway git repo — commit v1, attempt a regression (must be
   refused), commit an improvement (v2), `avo lineage --json | jq 'length == 2'`.
+- **Shipped (iter 3):** `src/config.ts` (`.avo/config.json`: `reduce`, `floor`, `weights`,
+  `configs`; malformed ⇒ defaults + a warning naming the field, never a disabled gate),
+  `src/compare.ts` (the Q1 comparator, pure and unit-tested at every branch), `src/lineage.ts`
+  (`avo commit`, `avo lineage [show|diff]`, `avo best`). `avo commit` gained `--why`, `--dry-run`
+  (action `would-commit`, writes nothing) and the `avo score` flags; exit codes 0 committed/no-op,
+  1 refused, 2 harness error. `runScore` was extracted from `scoreCommand` so commit and score share
+  one scoring path — you cannot commit a score you did not measure.
+  Three things worth remembering: **trajectory must not enter the lineage** — committing
+  `.avo/attempts.jsonl` left the tree permanently dirty and turned every no-op into a real commit,
+  so the trajectory paths are gitignored *and* explicitly unstaged after `git add -A`; a refused or
+  failed commit **rolls back the rendered `lineage/vNNN.md`**, so a refusal leaves nothing behind;
+  and the direction check (`higher_is_better` flipping between versions) is refused outright rather
+  than compared as if it had not, which the vector comparison alone would silently get backwards.
+  Also closed #4 (declared `configs` skip the `--configs` probe) and fixed CI, which was running
+  only `test/e2e.sh` and so had never executed the S1 or S2 e2e suites.
 
 ### S3 — beads memory `[ ]`
 - `bd init` on `avo init`. `avo mem add "<insight>"` → `bd remember`; `avo mem` → `bd prime`.
@@ -337,8 +365,10 @@ MAP-Elites archive gets a second look — read it, don't depend on it.
   Configurable in `.avo/config.json` — `{"reduce":"mean","floor":0.02,"weights":{...}}` — for the
   real case where configs genuinely trade off. Two anti-gaming rules come with it: a config present
   in the best version but *missing* from the candidate blocks the commit (you cannot improve by
-  measuring less), while a *new* config does not. The comparator itself lands in S2 with
-  `avo commit`, which is the only code that needs it.
+  measuring less), while a *new* config does not. **Landed in S2** as `src/compare.ts`, with two
+  details the sketch left open: `floor` is a *symmetric* relative band (a change inside it counts as
+  neither better nor worse, so noise cannot commit and cannot block), and a candidate whose
+  `higher_is_better` differs from the best version's is refused as incomparable rather than ranked.
 - **Q2 (S4):** does Firecrawl have a usable free tier? Not stated in its API docs. Determine before
   making it the default; if not, promote `searxng`/`ddgs` to default and Firecrawl to opt-in.
 - **Q3 (S7):** stall threshold N — the paper doesn't publish theirs. Start at 5 (the value in

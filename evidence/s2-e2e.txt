@@ -1,0 +1,53 @@
+# avo S2 e2e — 2026-08-24T13:40:50Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+# fixture: candidate must print 42; metric = code size in bytes, lower is better
+
+$ avo lineage --json (empty) -> []
+PASS  an un-evolved repo has an empty lineage
+PASS  avo best exits 1 when there is no best version
+$ avo commit (v1) -> exit 0
+  {"action":"committed","version":1,"reason":"no committed version yet; this becomes v1"}
+PASS  the first passing candidate becomes v1
+PASS  the commit carries an Avo-Version trailer
+PASS  the commit carries an Avo-Score trailer
+PASS  --why lands in the commit body
+PASS  git notes --ref=avo carries the full attempt
+PASS  lineage/v001.md was rendered and committed
+$ avo commit (clean tree, after a score) -> exit 0 "noop"
+PASS  re-running with no change is a no-op, not a duplicate (invariant 5)
+PASS  the attempt log stays out of the lineage (trajectory, not P_t)
+$ avo commit (bigger file) -> exit 1
+  {"action":"refused","reason":"'*' regressed (worst: * -47.06%)"}
+PASS  a regression is refused with a reason that names the config
+PASS  a refused commit leaves no commit behind
+PASS  a refused commit leaves no lineage file
+$ avo commit (smaller but wrong) -> exit 1
+  {"action":"refused","reason":"the candidate failed correctness; a failing f never yields a commit"}
+PASS  a failing f never yields a commit, however good the metric (invariant 2)
+$ avo commit --dry-run -> exit 0 {"action":"would-commit","version":2}
+PASS  --dry-run reports the decision and writes nothing
+$ avo commit (smaller and correct) -> exit 0
+  {"action":"committed","version":2,"lineage_file":"lineage/v002.md","reason":"'*' improved (best: * +76.47%) and nothing regressed"}
+PASS  an improvement becomes v2
+$ avo lineage --json | jq 'length' -> 2
+PASS  S2 acceptance: two committed versions after v1, a refused regression, and v2
+PASS  the lineage is ordered and monotone under the metric's own direction
+
+$ avo lineage
+avo lineage
+
+  ver  commit   primary                    *
+  v1   079b8a9  34 bytes                  34
+  v2   8fe8126  8 bytes                    8
+
+best: v2 (8fe8126); reduce: dominate, floor: 0
+
+PASS  avo best names the version a candidate is ranked against
+PASS  avo lineage diff shows the patch between two versions
+PASS  avo lineage show recovers the agent's rationale
+PASS  avo lineage show exits non-zero for a version that does not exist
+
+Avo-Version trailers in git: 2; versions reported: 2
+PASS  invariant 1: every committed version came from avo commit, and none was lost
+
+all checks passed
