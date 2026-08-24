@@ -1,0 +1,24 @@
+{
+  "name": "avocode",
+  "version": "0.1.0",
+  "description": "An AVO-inspired agent harness: scoring, lineage, knowledge, and concurrency for autonomous coding agents.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "avo": "bin/avo"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src test",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "oxlint": "^0.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

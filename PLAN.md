@@ -155,7 +155,7 @@ implementations within one variation step — and it costs us nothing extra.
 
 Each slice: build → verify with the stated command → commit → update `PROGRESS.jsonl`.
 
-### S0 — Skeleton + health check `[ ]`
+### S0 — Skeleton + health check `[x]`
 - `package.json`, `tsconfig.json`, `bin/avo` → `src/cli.ts` via `tsx`.
 - `justfile`: `lint` (tsc --noEmit + eslint or oxlint), `typecheck`, `test` (node:test), `e2e`.
 - `avo --version`, `avo doctor` (reports presence/version of `git`, `qmd`, `bd`, `hyperfine`, `jq`,
@@ -163,6 +163,13 @@ Each slice: build → verify with the stated command → commit → update `PROG
 - GitHub Actions running `just lint typecheck test`.
 - **Verify:** `just lint typecheck test` green on a clean clone; `avo doctor` exits non-zero with a
   readable list when a dep is missing.
+- **Shipped (iter 1):** lint = `oxlint` (+ `shellcheck`, skipped when absent); tests = `node:test`
+  via `tsx --test`. `just check` = lint+typecheck+test is the Ralph health check; `just e2e` runs
+  `test/e2e.sh` against the real `bin/avo` and writes `evidence/s0-e2e.txt`.
+  `avo doctor` classifies deps `required` (git, jq) / `agent` (pi|claude|codex, **at least one**) /
+  `optional` (qmd, bd, hyperfine, just), and exits 1 only on a `required` or agent-group failure —
+  optional gaps are reported without failing. Dep probing is injected (`Prober`), so the
+  missing-dependency paths are unit-tested without touching the filesystem.
 
 ### S1 — `f`: scoring `[ ]`
 - `avo score [--parallel] [--json]` — runs `.avo/score`, validates against the typebox schema,

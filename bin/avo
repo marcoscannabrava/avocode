@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# avo entrypoint. Runs the TypeScript CLI through tsx, no build step.
+set -euo pipefail
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+tsx="$root/node_modules/.bin/tsx"
+if [[ ! -x "$tsx" ]]; then
+  echo "avo: $tsx not found — run 'npm install' in $root" >&2
+  exit 127
+fi
+exec "$tsx" "$root/src/main.ts" "$@"
