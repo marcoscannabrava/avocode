@@ -1,0 +1,61 @@
+# avo S7a e2e — 2026-08-24T15:38:05Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+
+## 0. fixture
+PASS  repo at HEAD 70de02d, an f that can fail on demand, 2 docs in K
+
+## 1. nothing to steer
+PASS  exit 0 with no attempts and no versions
+PASS  it says so in words
+PASS  no directive with nothing to steer
+
+## 2. a real lineage and a real attempt log
+PASS  avo commit wrote v1
+PASS  the attempt log has 5 records (1 from avo commit + 4 from avo score)
+PASS  since_best is 4: the attempt that became v1 is not counted as one made since v1
+PASS  4 < the default stall of 5, so nothing fired
+
+## 3. the stall
+PASS  exit 1 once a signal fires, so a shell loop can branch on it
+PASS  it fires at exactly 5, the fifth attempt since v1
+PASS  one signal, and it is the stall
+PASS  the directive names the version it stalled against
+PASS  it points at the version to read, by number
+PASS  it cites the lineage file avo commit wrote
+PASS  it quotes the rationale the agent gave for v1
+PASS  it cites a doc in K that no version has mentioned
+PASS  it says how to explore, not just that it should
+
+## 4. progress resets the counter
+PASS  exit 0 again: an improvement is not a stall
+PASS  since_best is back to 0 and v2 is the version to beat
+
+## 5. the thrash
+PASS  exit 1 on a thrash with the stall well out of reach
+PASS  the thrash fired on its own, with no stall to help it
+PASS  3 consecutive failures, all 3 the same failure
+PASS  the signature is the scorer's own error line (kernel.txt:N: undefined symbol foo)
+PASS  a thrash directive says to read the failure, not to try harder
+
+## 6. a pass clears the thrash
+PASS  one passing attempt ends the streak
+
+## 7. thresholds and the working tree
+PASS  a threshold in .avo/config.json is repo policy and applies with no flag
+PASS  a flag beats the config
+PASS  two runs leave the working tree byte-identical: the supervisor only reads
+PASS  HEAD is untouched: avo commit is still the only writer of a version
+
+## 8. degradation
+PASS  a directory that is not a git repo is exit 0, not a crash
+PASS  and it says which half of the input it could not read
+PASS  a truncated last line still leaves a usable log
+PASS  the unreadable line is reported, not hidden
+PASS  a threshold that could never fire is a usage error (exit 2)
+
+## 9. --json is the agent's interface
+PASS  one JSON object, every field typed as documented, every citation has a ref
+PASS  it is a single line of JSON on stdout
+
+## summary
+all checks passed (36 of them)

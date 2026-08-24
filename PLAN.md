@@ -435,19 +435,58 @@ Each slice: build → verify with the stated command → commit → update `PROG
   memory-log bug, same fix: filter through `withoutTrajectory`, and write `.avo/.gitignore` on the
   way in the way `avo commit` does, since `avo fan` may well be the first avo command a repo sees.
 
-### S7 — Supervisor + continuous loop `[ ]`
-- `avo supervise [--json]` — reads lineage + attempt log, detects:
-  (a) **stall**: ≥N attempts with no committed improvement; (b) **thrash**: repeated
-  failing edits touching the same region. Emits a steering directive that cites specific prior
-  versions and unexplored directions drawn from `K` and the beads insight beads.
-- `avo run` — the continuous evolution driver: prompt → agent turn → `avo score`/`avo commit` →
+### S7 — Supervisor + continuous loop `[~]` (`avo supervise` shipped; `avo run` is next)
+- `avo supervise [--json]` `[x]` — reads lineage + attempt log, detects (a) **stall**: ≥N attempts
+  with no committed improvement; (b) **thrash**: ≥K consecutive attempts that failed the *same way*
+  (the signature, not the file region — see the deviation below and #24). Emits a steering directive
+  citing specific prior versions, the dead ends in memory, and the docs in `K` no version has
+  mentioned.
+- `avo run` `[ ]` — the continuous evolution driver: prompt → agent turn → `avo score`/`avo commit` →
   `avo supervise` → inject directive if triggered → repeat. Replaces the hand-rolled `ralph.sh`
   polling for the AVO loop specifically (`ralph.sh` stays as the *meta* loop building `avocode`).
 - Every intervention is logged (lineage + bead) so the trajectory is auditable — the paper's 7-day
-  run is only interpretable because interventions are recorded.
+  run is only interpretable because interventions are recorded. **Not built yet:** `avo supervise`
+  only reads; the *writing* of an intervention belongs to whoever injects the directive, which is
+  `avo run`.
 - **Verify:** unit tests driving the detector off synthetic lineage fixtures (stall fires at exactly
-  N, resets on improvement, thrash fires on repeated same-file failures); `avo run --dry-run
-  --max-iters 3` against the stub agent produces the expected transcript.
+  N, resets on improvement, thrash fires on repeated same-signature failures) `[x]`; `avo run
+  --dry-run --max-iters 3` against the stub agent produces the expected transcript `[ ]`.
+- **Shipped (iter 8) — the detector half.** `src/supervise.ts`: `readAttempts` (the first reader of
+  `.avo/attempts.jsonl` — until now only `avo score` wrote it), the pure `detect`, the citation
+  builder and `avo supervise`. Split from `avo run` on this plan's own instruction to build the
+  detector first and separately: it is pure, testable off fixtures, and shippable on its own, while
+  `avo run` needs the stub agent and a crash-safe iteration log. Recorded deviations, each with its
+  reason:
+  - **Thrash is "the same failure signature", not "the same file region".** `Attempt` records no file
+    list, and adding one meant moving `withoutTrajectory`/`HARNESS_PATHS` out of `lineage.ts` to
+    break a `score.ts` → `lineage.ts` cycle — a refactor across four modules for a slice that is
+    already two commands. The signature (harness errors first, else the scorer's own first log line,
+    with temp paths, shas and numbers folded to placeholders) is the region information the scorer
+    already reports: a compiler error names the file. Filed as an issue rather than done quietly.
+  - **Which attempts count as "since the best version" is decided by `attempt.git.head`, not by the
+    clock.** An attempt scored *on top of* v3 carries v3's sha; the attempt that *became* v3 was
+    scored before that commit existed and carries its parent's. Time cannot separate them: git
+    truncates author dates to the second, so the committing attempt's millisecond `ts` can read as
+    *later* than the commit it produced. This was a real bug, caught by the e2e failing
+    intermittently — flooring to the second (the first fix) made a fast scorer's attempts vanish into
+    the commit's own second instead. The clock stays as the fallback for an attempt whose head
+    matches neither, with a full second of margin.
+  - **Exit 1 means "a signal fired", not "refused".** `avo supervise || inject` is then the whole
+    integration for a shell loop, and `avo run` will read the same two codes. Note it makes the
+    command unusable at the head of a `set -o pipefail` pipeline, which cost two e2e checks before
+    the output was captured first.
+  - **Thresholds live in `.avo/config.json` (`supervise.stall`, `supervise.thrash`)**, because they
+    are repo policy: a scorer that takes an hour wants a smaller `stall` than one that takes a
+    second. A flag overrides. `loadConfig` now hands out a *fresh* defaults object — spreading
+    `DEFAULT_CONFIG` is shallow and would have shared one `supervise` object across every caller,
+    which is exactly S4's shared-`args` bug.
+  - **`avo supervise` reads memory and `K` only when a signal has already fired.** Nothing to steer
+    means no `bd` call, no directory walk, and no directive at all — the command a loop runs every
+    iteration must be cheap in the common case.
+  - **No sixth skill.** `avo supervise` went into `avo-vary`'s "when you are stuck" section instead:
+    it is a step in a variation turn, not a separate capability, and the plan's skill list has five.
+  - `knowledge.ts` gained `listDocs`: "what is in `K` at all" is a different question from "what
+    matches this query", and a search cannot find what nobody thought to query for.
 
 ### S8 — Pi implementation `[ ]`
 - `pi/extensions/avo/index.ts` — `pi.registerTool` for `avo_score`, `avo_commit`, `avo_lineage`,

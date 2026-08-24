@@ -202,6 +202,38 @@ function walkMarkdown(dir: string, out: string[]): void {
   }
 }
 
+export interface DocRef {
+  /** Repo-relative path, so an agent can read the doc straight from it. */
+  file: string;
+  title: string | null;
+  collection: string;
+}
+
+/**
+ * Every doc in a collection, unranked. `localSearch` answers "what matches this query"; this answers
+ * "what is in `K` at all", which is the question the supervisor asks when it wants a direction the
+ * lineage has never mentioned — a search cannot find what nobody thought to query for.
+ */
+export function listDocs(cwd: string, collection: string | null = null): DocRef[] {
+  const docs: DocRef[] = [];
+  for (const c of COLLECTIONS) {
+    if (collection !== null && c.name !== collection) continue;
+    const files: string[] = [];
+    walkMarkdown(join(cwd, c.dir), files);
+    for (const full of files) {
+      let title: string | null = null;
+      try {
+        title = firstHeading(readFileSync(full, "utf8").split("\n"));
+      } catch {
+        continue;
+      }
+      docs.push({ file: relative(cwd, full).split(sep).join("/"), title, collection: c.name });
+    }
+  }
+  docs.sort((a, b) => a.file.localeCompare(b.file));
+  return docs;
+}
+
 /**
  * The keyless fallback: term-coverage search over the same files qmd would index.
  *
