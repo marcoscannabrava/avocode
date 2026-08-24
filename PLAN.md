@@ -96,6 +96,8 @@ avocode/
     knowledge.ts           # K  — qmd wrapper, local-scan fallback, ingest with provenance
     websearch.ts           # K  — the three web-search backends behind one Fetcher seam
     steps.ts               # the created/unchanged/skipped step report shared by init and know init
+    skills.ts              # the Agent Skills frontmatter parser + spec validator
+    install.ts             # avo install — wires pi | claude | codex to .agents/skills, no copying
     fan.ts                 # concurrency — worktrees + headless agent procs
     supervise.ts           # stagnation detection + steering directive
     agents.ts              # agent command templates (pi | claude | codex | custom)
@@ -103,8 +105,9 @@ avocode/
     avo-vary/SKILL.md      #   how to perform one variation step
     avo-lineage/SKILL.md   #   how to read/extend Pt
     avo-knowledge/SKILL.md #   how to search K and grow it from the web
-    avo-fanout/SKILL.md    #   when and how to parallelize with small models
     avo-score/SKILL.md     #   the f contract, how to author a scorer
+    avo-fanout/SKILL.md    #   when and how to parallelize with small models (S6, with `avo fan`)
+  AGENTS.md                # always-on rules + the skills index; only the marked block is managed
   pi/extensions/
     avo/index.ts           # native Pi tools (thin wrappers over src/)
     avo-supervisor/index.ts# event-interception supervisor
@@ -322,8 +325,8 @@ Each slice: build → verify with the stated command → commit → update `PROG
   found only by running the e2e against a real qmd. `spawnRunner` now sets `PWD` alongside `cwd`,
   which fixes it for every child avo spawns (`bd`, git, and every scorer), with a regression test.
 
-### S5 — Agent-agnostic skills `[ ]`
-- Author the five `SKILL.md` files against the **agentskills.io spec** (valid frontmatter: `name`,
+### S5 — Agent-agnostic skills `[x]`
+- Author the `SKILL.md` files against the **agentskills.io spec** (valid frontmatter: `name`,
   `description`; progressive disclosure; relative paths to scripts).
 - `avo install --agent pi|claude|codex|all` — wires discovery without copying:
   - Pi: `.agents/skills/` is discovered natively; also write `.pi/settings.json`
@@ -333,8 +336,46 @@ Each slice: build → verify with the stated command → commit → update `PROG
 - `AGENTS.md` at repo root: the always-on rules (use `avo`, use `bd`, never markdown TODOs).
 - **Verify:** a validator test asserting every `SKILL.md` parses and has a non-empty description;
   `avo install --agent all` twice produces no diff on the second run (idempotency).
+- **Shipped (iter 6):** `src/skills.ts` (the spec's frontmatter subset, parsed without a YAML
+  dependency, plus the validator) and `src/install.ts`. Four skills — `avo-vary`, `avo-score`,
+  `avo-lineage`, `avo-knowledge` — each holding the judgement an agent needs and not just the flags
+  (one idea per candidate; never edit `.avo/score` to pass; a refusal is a measurement).
+  `avo install` is one command for all three agents: nothing to install for Pi beyond
+  `.pi/settings.json`, one directory symlink for Claude Code, the `AGENTS.md` index for Codex.
+  Recorded deviations, each with its reason:
+  - **Four skills, not five.** `avo-fanout` moved to S6, where `avo fan` actually lands. A skill
+    that tells an agent to run a command that does not exist is worse than no skill — and the
+    concurrency guidance is not writable before the guards it describes exist. S6 now owns it.
+  - **`.pi/settings.json` does not declare `skills`.** Pi discovers project `.agents/skills/`
+    natively *and* warns on a name collision between two skill locations, so declaring it again
+    buys a warning and nothing else. What Pi needs from us is `bash` in `defaultTools` — `avo`,
+    `bd` and `qmd` are CLIs, which is the whole reason the harness is agent-agnostic (§2).
+  - **`AGENTS.md` is unconditional, not Codex-only.** Every agent here reads it, and it carries the
+    rules that hold whether or not a skill got loaded. Codex's *wiring* is the skills index inside
+    it: Codex has no discovery mechanism, so naming the files is the mechanism.
+  - **An existing real `.claude/skills` gets avo's skills linked inside it** rather than a bare
+    refusal — the shape `qmd skill install` also uses, verified against qmd 2.8.3. Replacing the
+    directory would delete skills a human wrote. `avo install` deletes nothing, ever; a symlink or
+    file in the way needs `--force`, and a real directory is never touched even with it.
+  - **Cross-repo links are absolute, in-repo links relative.** A relative link reaching *out* of the
+    repo encodes the repo's own location and breaks the moment it is checked out elsewhere —
+    including into the `git worktree`s S6 creates. `.claude/skills → ../.agents/skills` stays
+    relative so the pair survives cloning.
+  - **No skill links outside `.agents/skills/`.** The first draft of `avo-score` pointed at
+    `../../../templates/score/README.md`; in a repo that symlinks the skill in, that resolves
+    against *that* repo and is missing. A test now enforces the rule for every skill.
+- **The trap S6 must handle:** Pi ignores project-local skills and settings until the project is
+  trusted, and headless runs (`-p`, `--mode json`) never prompt — without a saved decision they
+  ignore `.agents/skills/` and `.pi/settings.json` entirely. So `avo fan`'s `pi` template must pass
+  `--approve`, or the skills silently do not load in exactly the mode it drives. `avo install`
+  warns about this every time it wires pi.
 
 ### S6 — Concurrency: `avo fan` `[ ]`
+- Author `.agents/skills/avo-fanout/SKILL.md` (deferred from S5) alongside the command, so the skill
+  and the guards it documents ship together. `src/skills.ts` validates it; `avo install` picks it up
+  with no change — that is what the one-directory symlink for Claude Code buys.
+- The `pi` command template must pass `--approve`: headless pi never prompts for project trust, and
+  without it the skills `avo install` wired do not load at all (recorded in S5).
 - `avo fan --n <k> --prompt-file <f> [--model <m>] [--agent <name>] [--timeout <s>]`
   → k `git worktree`s under `.avo/worktrees/<runid>/<i>`, k headless agent processes, JSON array of
   `{i, ok, score, diffstat, summary, worktree, tokens, wall_s}`.

@@ -8,9 +8,10 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 
 ## Status
 
-S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory) and S4 (`K` —
-knowledge) are done. `avo init`, `avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`,
-`avo mem` and `avo know` work.
+S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory), S4 (`K` —
+knowledge) and S5 (agent-agnostic skills) are done. `avo init`, `avo install`, `avo doctor`,
+`avo score`, `avo commit`, `avo lineage`, `avo best`, `avo mem` and `avo know` work, and the four
+skills in `.agents/skills/` are wired for `pi`, Claude Code and Codex.
 
 ## Quickstart
 
@@ -21,6 +22,7 @@ just check          # lint + typecheck + test
 
 cd /your/repo
 avo init                     # .avo/, lineage/, beads — safe to re-run
+avo install                  # wire avo's skills + AGENTS.md for pi | claude | codex
 avo score --init hyperfine   # scaffold .avo/score (or: pytest, vitest)
 avo score                    # run it
 avo score --json | jq .      # the normalized attempt an agent reads
@@ -191,6 +193,50 @@ because it is the only one that returns page content, which is what `--ingest` n
 links and snippets. With nothing configured, `avo know search` names all three and how to enable
 them — it never throws a stack trace at the agent.
 
+## `avo install` — the agent-agnostic layer
+
+The skills are the layer that makes `avo` agent-agnostic. They live in `.agents/skills/`, the
+[Agent Skills](https://agentskills.io/specification) shared location, and `avo install` wires each
+agent's discovery to them **without copying** — one source of truth, no drift.
+
+```bash
+avo install                        # all three agents (the default)
+avo install --agent pi             # or one; repeatable, and --agent pi,codex works too
+avo install --agent all --json
+avo install --force                # replace a symlink or file in the way
+```
+
+| Skill | Read it when |
+| --- | --- |
+| `avo-vary` | performing one variation step: read the past, change the code, score it, commit it |
+| `avo-score` | authoring or repairing `.avo/score`; the frozen `f` contract |
+| `avo-lineage` | reading `P_t`, or understanding why a candidate was refused |
+| `avo-knowledge` | searching `K` and growing it from the web |
+
+What each agent gets:
+
+| Agent | Wiring | Why |
+| --- | --- | --- |
+| pi | nothing to install — project `.agents/skills/` is discovered natively. `.pi/settings.json` gets `defaultTools` (including `bash`) and `enableSkillCommands` | `avo`, `bd` and `qmd` are CLIs; an agent without `bash` cannot drive any of them |
+| claude | `.claude/skills` → `.agents/skills`, one directory symlink | a skill added later needs no re-install |
+| codex | the `AGENTS.md` skills index | Codex has no skill-discovery mechanism; naming the files *is* the wiring |
+
+`AGENTS.md` is written for every agent, not just Codex: it carries the rules that hold whether or
+not a skill was loaded (`avo commit` is the only writer of a version; measure before you claim;
+`bd` for task state, never markdown TODO lists). Only the block between
+`<!-- BEGIN avo -->` and `<!-- END avo -->` belongs to `avo install` — anything you write outside it
+survives every re-run, and an `AGENTS.md` that already exists is appended to, never rewritten.
+
+**One trap worth knowing:** pi ignores project-local skills and settings until the project is
+trusted, and headless runs (`-p`, `--mode json`) never prompt. Pass `--approve`, run `pi` once
+interactively and answer the prompt, or set `defaultProjectTrust: "always"` in
+`~/.pi/agent/settings.json` — otherwise an installed harness silently does nothing in exactly the
+mode `avo fan` will drive it in. `avo install` says so every time it wires pi.
+
+`avo install` never deletes anything. A real directory in the way is reported and left alone: an
+existing `.claude/skills` full of your own skills gets avo's linked *inside* it instead. A symlink
+or file in the way needs `--force`.
+
 ## `avo doctor`
 
 `avo doctor` exits 1 when a required dependency (`git`, `jq`) is missing, or when no coding agent
@@ -204,7 +250,7 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
 
@@ -223,9 +269,13 @@ src/knowledge.ts  K — qmd collections, a local-scan fallback, ingest with prov
 src/websearch.ts  K — firecrawl | searxng | ddgs behind one injectable Fetcher
 src/steps.ts      the created/unchanged/skipped step report init and know init share
 src/init.ts       avo init — idempotent scaffolding, including bd init
+src/install.ts    avo install — wires pi | claude | codex to .agents/skills without copying
+src/skills.ts     the Agent Skills frontmatter parser and spec validator
 src/io.ts         injectable output sink, so commands are unit-testable
+.agents/skills/   THE agent-agnostic layer: avo-vary, avo-score, avo-lineage, avo-knowledge
+AGENTS.md         the always-on rules + the skills index (managed block, hand edits preserved)
 templates/score/  reference scorers + the authoring guide
-test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know}.sh
+test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install}.sh
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

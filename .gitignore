@@ -1,3 +1,4 @@
 logs/
 node_modules/
 .avo/worktrees/
+.claude/settings.local.json
