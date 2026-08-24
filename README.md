@@ -8,8 +8,8 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 
 ## Status
 
-S0 (skeleton + health check), S1 (`f` — scoring) and S2 (`P_t` — lineage) are done. `avo doctor`,
-`avo score`, `avo commit`, `avo lineage` and `avo best` work.
+S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage) and S3 (memory) are done.
+`avo init`, `avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best` and `avo mem` work.
 
 ## Quickstart
 
@@ -19,6 +19,7 @@ just check          # lint + typecheck + test
 ./bin/avo doctor    # dependency and API-key status
 
 cd /your/repo
+avo init                     # .avo/, lineage/, beads — safe to re-run
 avo score --init hyperfine   # scaffold .avo/score (or: pytest, vitest)
 avo score                    # run it
 avo score --json | jq .      # the normalized attempt an agent reads
@@ -27,7 +28,20 @@ avo score --json | jq .      # the normalized attempt an agent reads
 avo commit --why "hoisted the bounds check out of the loop"
 avo lineage                  # P_t so far
 avo best --json              # what the next candidate must beat
+avo mem                      # what the loop learned, including the dead ends
 ```
+
+## `avo init`
+
+Scaffolds `.avo/config.json`, `.avo/.gitignore` (the trajectory exclusion), `lineage/`, and — when
+`bd` is installed — a beads database. Every step reports `created` / `unchanged` / `skipped`, and a
+second run creates nothing (invariant 5); an edited config is never overwritten. `--scorer <t>`
+also scaffolds `.avo/score`, `--prefix <p>` sets the beads issue prefix. Outside a git repository it
+refuses and writes nothing: the lineage lives in git.
+
+One side effect worth knowing: `bd init` makes a git commit of its own config files. avo runs it with
+`--skip-agents` (`AGENTS.md` belongs to `avo install`, S5) and `--skip-hooks` (a git hook that writes
+during `avo commit` would dirty the tree the commit rule reasons about).
 
 ## `avo score` — the `f` contract
 
@@ -110,6 +124,27 @@ indexes it as a qmd collection so the agent can semantically search its own hist
 `.avo/attempts.jsonl` and `.avo/worktrees/` are **trajectory, not lineage** — `avo commit`
 gitignores them and keeps them out of every version it writes.
 
+## `avo mem` — what the loop remembers
+
+Memory is how the agent stops re-deriving what it already knows and stops re-trying what already
+failed. `avo mem add "<insight>"` remembers one thing; `avo mem` lists everything; `avo mem prime`
+prints the session-start context.
+
+`avo commit` writes to memory by itself: a committed version becomes a record linked to its parent
+(so the chain of *why* parallels the lineage), and a refused candidate becomes a **dead end**, keyed
+by content so re-attempting it updates one record instead of piling up.
+
+Two backends, one shape. With beads (`bd`, npm `@beads/bd`) installed,
+insights go to `bd remember`, versions become beads with deterministic ids (`<prefix>-v<N>`) linked
+by `bd dep add`, and dead ends become insight beads. Without it — the common case — everything lands
+in `lineage/memory.jsonl` with one warning. `avo mem --json` looks the same either way: an agent must
+not have to know whether `bd` was installed.
+
+Memory is a cache of *why*, never the source of truth. A memory write that fails is a warning on an
+otherwise good commit, and avo's own writes (`lineage/memory.jsonl`, `.avo/.gitignore`) never count
+as a working-tree change — otherwise the memory written for v1 would make the next run look like a
+candidate the agent never produced.
+
 ## `avo doctor`
 
 `avo doctor` exits 1 when a required dependency (`git`, `jq`) is missing, or when no coding agent
@@ -123,7 +158,7 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
 
@@ -137,9 +172,11 @@ src/score.ts      f — run, validate and normalize .avo/score
 src/config.ts     .avo/config.json — the reduction, the floor, declared configs
 src/compare.ts    the commit rule's comparator over the score vector
 src/lineage.ts    Pt — avo commit, avo lineage, avo best
+src/mem.ts        memory — bd (beads) with a lineage/memory.jsonl fallback
+src/init.ts       avo init — idempotent scaffolding, including bd init
 src/io.ts         injectable output sink, so commands are unit-testable
 templates/score/  reference scorers + the authoring guide
-test/             node:test unit tests + e2e.sh, e2e-score.sh, e2e-lineage.sh
+test/             node:test unit tests + e2e{,-score,-lineage,-mem}.sh
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

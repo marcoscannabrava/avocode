@@ -73,6 +73,11 @@ test("withoutTrajectory hides the attempt log so a scored-but-unedited tree stil
   assert.deepEqual(withoutTrajectory(""), []);
 });
 
+test("withoutTrajectory also hides what avo writes for itself: the gitignore and the memory log", () => {
+  const porcelain = "?? .avo/.gitignore\n?? lineage/memory.jsonl\n M impl.sh\n";
+  assert.deepEqual(withoutTrajectory(porcelain), [" M impl.sh"]);
+});
+
 test("withoutTrajectory does not mistake a look-alike path for the attempt log", () => {
   assert.deepEqual(withoutTrajectory("?? .avo/attempts.jsonl.bak\n"), ["?? .avo/attempts.jsonl.bak"]);
   assert.deepEqual(withoutTrajectory(" M src/.avo/attempts.jsonl\n"), [" M src/.avo/attempts.jsonl"]);

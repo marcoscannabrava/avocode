@@ -1,7 +1,9 @@
 import { doctorCommand } from "./doctor.ts";
+import { initCommand } from "./init.ts";
 import type { Io } from "./io.ts";
 import { processIo } from "./io.ts";
 import { bestCommand, commitCommand, lineageCommand } from "./lineage.ts";
+import { memCommand } from "./mem.ts";
 import { scoreCommand } from "./score.ts";
 import { VERSION } from "./version.ts";
 
@@ -10,11 +12,13 @@ export const USAGE = `avo — an AVO-inspired agent harness
 usage: avo <command> [options]
 
 commands:
+  init [options]    scaffold .avo/, lineage/ and beads in this repo (safe to re-run)
   doctor [--json]   report dependency and API-key status; exits 1 if anything required is missing
   score [options]   run .avo/score (the f contract), validate it, record the attempt
   commit [options]  score, compare against the best version, persist it only if it wins
   lineage [...]     list P_t; 'show <n>' one version; 'diff <a> <b>' two of them
   best [--json]     the version every candidate is ranked against
+  mem [...]         what the loop remembers; 'add "<insight>"' writes one; 'prime' for a session
   version           print the version
   help              print this message
 
@@ -26,6 +30,17 @@ avo score:
   --no-record       do not append to .avo/attempts.jsonl
   --cwd <dir>       treat dir as the repo root
   exit codes        0 = pass, 1 = ran but failed, 2 = harness error
+
+avo init:
+  --prefix <p>      beads issue prefix (default: the directory name)
+  --scorer <t>      also scaffold .avo/score from templates/score/<t>.sh
+  --json --cwd <dir>
+
+avo mem:
+  add "<insight>"   remember it (bd remember, or lineage/memory.jsonl without bd)
+  --key <k>         explicit memory key, so re-writing it updates in place
+  prime             the session-start context (bd prime, or our own digest)
+  --json --cwd <dir>
 
 avo commit:
   --why <text>      the agent's rationale; lands in the commit body and lineage/vNNN.md
@@ -50,6 +65,10 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
     case "--version":
       io.out(`${VERSION}\n`);
       return 0;
+    case "init":
+      return await initCommand(rest, io);
+    case "mem":
+      return await memCommand(rest, io);
     case "doctor":
       return doctorCommand(rest, io, VERSION);
     case "score":

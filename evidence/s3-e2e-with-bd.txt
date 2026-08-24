@@ -1,0 +1,36 @@
+# avo S3 e2e — 2026-08-24T13:59:23Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+# bd on PATH: yes (bd version 1.2.2 (6c124203e))
+
+$ avo init --json -> {"ok":true,"cwd":"/tmp/tmp.llIzDoybeb","steps":[{"name":"git","action":"unchanged","detail":"/tmp/tmp.llIzDoybeb is a git repository"},{"name":".avo/.gitignore","action":"created","detail":"keeps the trajectory (attempts, worktrees) out of the lineage"},{"name":".avo/config.json","action":"created","detail":"reduce: dominate, floor: 0"},{"name":"lineage/","action":"created","detail":"rendered versions and, without bd, the memory log"},{"name":".avo/score","action":"skipped","detail":"no scorer yet — 'avo init --scorer <hyperfine|pytest|vitest>' or 'avo score --init <t>' writes one"},{"name":"beads","action":"created","detail":"bd initialized (prefix 'tmp_llIzDoybeb'); bd commits .beads config files to git"}],"warnings":[],"errors":[]}
+PASS  avo init succeeds in a git repo
+PASS  avo init created .avo/.gitignore
+PASS  avo init created .avo/config.json
+PASS  avo init created lineage/
+PASS  avo init reports the missing scorer instead of guessing one
+PASS  a second avo init creates nothing
+PASS  avo init leaves an edited .avo/config.json alone
+PASS  avo init in a non-repo exits 2 and writes nothing
+$ avo mem add -> remembered [shared-memory-beats-registers-on-b8] via beads: shared memory beats registers on b8
+PASS  avo mem add reports the key it wrote
+PASS  avo mem shows the insight back (the slice's acceptance case)
+PASS  avo mem --json holds exactly the one memory
+PASS  the backend is warned about at most once per command (invariant 4)
+PASS  avo mem prime carries the insight into a session
+PASS  avo mem add with no insight exits 2
+backend in use: beads
+PASS  with bd installed and initialized, memory goes to beads
+PASS  the insight is readable straight from bd memories
+PASS  v1 committed
+PASS  v2 committed
+version memories: 0
+bd show tmp_llIzDoybeb-v2 -> parent tmp_llIzDoybeb-v1
+PASS  the version beads carry the parent chain (bd show tmp_llIzDoybeb-v2 -> tmp_llIzDoybeb-v1)
+PASS  a regression is refused (exit 1)
+PASS  the dead end is recorded as an insight bead
+PASS  re-trying the same dead end updates one record instead of piling up
+$ avo commit (nothing changed) -> {"action":"noop","reason":"the working tree holds no change to score; there is nothing to commit"}
+PASS  avo's own memory writes do not make the next run look like a candidate
+PASS  invariant 1 holds: memory added no versions to the lineage
+
+all checks passed

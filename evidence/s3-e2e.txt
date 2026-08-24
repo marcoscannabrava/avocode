@@ -1,0 +1,38 @@
+# avo S3 e2e — 2026-08-24T13:59:29Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+# bd on PATH: no
+
+$ avo init --json -> {"ok":true,"cwd":"/tmp/tmp.dUc0o3HFDb","steps":[{"name":"git","action":"unchanged","detail":"/tmp/tmp.dUc0o3HFDb is a git repository"},{"name":".avo/.gitignore","action":"created","detail":"keeps the trajectory (attempts, worktrees) out of the lineage"},{"name":".avo/config.json","action":"created","detail":"reduce: dominate, floor: 0"},{"name":"lineage/","action":"created","detail":"rendered versions and, without bd, the memory log"},{"name":".avo/score","action":"skipped","detail":"no scorer yet — 'avo init --scorer <hyperfine|pytest|vitest>' or 'avo score --init <t>' writes one"},{"name":"beads","action":"skipped","detail":"bd is not installed; memory falls back to lineage/memory.jsonl"}],"warnings":["bd is not installed; memory falls back to lineage/memory.jsonl (invariant 4)"],"errors":[]}
+PASS  avo init succeeds in a git repo
+PASS  avo init created .avo/.gitignore
+PASS  avo init created .avo/config.json
+PASS  avo init created lineage/
+PASS  avo init reports the missing scorer instead of guessing one
+PASS  a second avo init creates nothing
+PASS  avo init leaves an edited .avo/config.json alone
+PASS  avo init in a non-repo exits 2 and writes nothing
+$ avo mem add -> remembered [shared-memory-beats-registers-on-b8] via file: shared memory beats registers on b8
+PASS  avo mem add reports the key it wrote
+PASS  avo mem shows the insight back (the slice's acceptance case)
+PASS  avo mem --json holds exactly the one memory
+PASS  the backend is warned about at most once per command (invariant 4)
+PASS  avo mem prime carries the insight into a session
+PASS  avo mem add with no insight exits 2
+backend in use: file
+SKIP  the beads-backed checks — bd is not on PATH, so the fallback path is what runs here
+PASS  without bd, memory falls back to lineage/memory.jsonl (invariant 4)
+PASS  the degradation is warned about, not hidden
+PASS  v1 committed
+PASS  v2 committed
+version memories: 2
+PASS  both committed versions are remembered
+PASS  the v2 record names v1 as its parent
+PASS  a regression is refused (exit 1)
+PASS  the refused candidate is remembered as a dead end
+PASS  avo mem prime tells the agent which directions are dead
+PASS  re-trying the same dead end updates one record instead of piling up
+$ avo commit (nothing changed) -> {"action":"noop","reason":"the working tree holds no change to score; there is nothing to commit"}
+PASS  avo's own memory writes do not make the next run look like a candidate
+PASS  invariant 1 holds: memory added no versions to the lineage
+
+all checks passed

@@ -8,7 +8,7 @@ check: lint typecheck test
 # Static analysis.
 lint:
     node_modules/.bin/oxlint src test
-    shellcheck -S style bin/avo test/e2e.sh test/e2e-score.sh test/e2e-lineage.sh templates/score/*.sh ralph.sh test/ralph_test.sh || echo "shellcheck: skipped (not installed)"
+    shellcheck -S style bin/avo test/e2e.sh test/e2e-score.sh test/e2e-lineage.sh test/e2e-mem.sh templates/score/*.sh ralph.sh test/ralph_test.sh || echo "shellcheck: skipped (not installed)"
 
 typecheck:
     node_modules/.bin/tsc --noEmit
@@ -21,6 +21,7 @@ e2e:
     ./test/e2e.sh
     ./test/e2e-score.sh
     ./test/e2e-lineage.sh
+    ./test/e2e-mem.sh
 
 # Everything, including the slow end-to-end pass.
 all: check e2e
