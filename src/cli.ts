@@ -1,5 +1,6 @@
 import { doctorCommand } from "./doctor.ts";
 import { initCommand } from "./init.ts";
+import { installCommand } from "./install.ts";
 import type { Io } from "./io.ts";
 import { processIo } from "./io.ts";
 import { knowCommand } from "./knowledge.ts";
@@ -14,6 +15,7 @@ usage: avo <command> [options]
 
 commands:
   init [options]    scaffold .avo/, lineage/ and beads in this repo (safe to re-run)
+  install [...]     wire avo's skills + AGENTS.md into this repo for pi | claude | codex
   doctor [--json]   report dependency and API-key status; exits 1 if anything required is missing
   score [options]   run .avo/score (the f contract), validate it, record the attempt
   commit [options]  score, compare against the best version, persist it only if it wins
@@ -36,6 +38,11 @@ avo score:
 avo init:
   --prefix <p>      beads issue prefix (default: the directory name)
   --scorer <t>      also scaffold .avo/score from templates/score/<t>.sh
+  --json --cwd <dir>
+
+avo install:
+  --agent <a>       pi | claude | codex | all (default all; repeatable, comma-separated)
+  --force           replace a symlink or file in the way; never replaces a real directory
   --json --cwd <dir>
 
 avo mem:
@@ -82,6 +89,8 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
       return 0;
     case "init":
       return await initCommand(rest, io);
+    case "install":
+      return installCommand(rest, io);
     case "mem":
       return await memCommand(rest, io);
     case "know":
