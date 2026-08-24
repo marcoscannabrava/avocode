@@ -2,6 +2,7 @@ import { doctorCommand } from "./doctor.ts";
 import { initCommand } from "./init.ts";
 import type { Io } from "./io.ts";
 import { processIo } from "./io.ts";
+import { knowCommand } from "./knowledge.ts";
 import { bestCommand, commitCommand, lineageCommand } from "./lineage.ts";
 import { memCommand } from "./mem.ts";
 import { scoreCommand } from "./score.ts";
@@ -19,6 +20,7 @@ commands:
   lineage [...]     list P_t; 'show <n>' one version; 'diff <a> <b>' two of them
   best [--json]     the version every candidate is ranked against
   mem [...]         what the loop remembers; 'add "<insight>"' writes one; 'prime' for a session
+  know [...]        K: 'init', 'query "<q>"', 'add <url|path>', 'search "<q>"', 'reindex'
   version           print the version
   help              print this message
 
@@ -41,6 +43,19 @@ avo mem:
   --key <k>         explicit memory key, so re-writing it updates in place
   prime             the session-start context (bd prime, or our own digest)
   --json --cwd <dir>
+
+avo know:
+  init              index knowledge/ and lineage/ as qmd collections (folded into avo init)
+  query "<q>"       search K; hybrid + rerank via qmd, or a local scan without it
+  --lexical         BM25 only (qmd search) — no LLM expansion, no rerank
+  -n <N>            max hits (default 5); -c <name> one collection; --min-score <s>
+  add <url|path>    write knowledge/<slug>.md with provenance frontmatter, then qmd embed
+  --name <slug>     name the doc; --force replace a differing one; --no-embed skip qmd embed
+  reindex           re-scan the collections into qmd; needed after files land in lineage/
+  search "<q>"      web search; --ingest also writes the pages into K (firecrawl only)
+  --backend <b>     firecrawl (FIRECRAWL_API_KEY) | searxng (SEARXNG_URL) | ddgs (keyless)
+  --json --cwd <dir> --timeout <s>
+  exit codes        0 = ran, 1 = refused, 2 = harness error
 
 avo commit:
   --why <text>      the agent's rationale; lands in the commit body and lineage/vNNN.md
@@ -69,6 +84,8 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
       return await initCommand(rest, io);
     case "mem":
       return await memCommand(rest, io);
+    case "know":
+      return await knowCommand(rest, io);
     case "doctor":
       return doctorCommand(rest, io, VERSION);
     case "score":

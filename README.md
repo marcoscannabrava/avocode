@@ -8,8 +8,9 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 
 ## Status
 
-S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage) and S3 (memory) are done.
-`avo init`, `avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best` and `avo mem` work.
+S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory) and S4 (`K` —
+knowledge) are done. `avo init`, `avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`,
+`avo mem` and `avo know` work.
 
 ## Quickstart
 
@@ -29,12 +30,17 @@ avo commit --why "hoisted the bounds check out of the loop"
 avo lineage                  # P_t so far
 avo best --json              # what the next candidate must beat
 avo mem                      # what the loop learned, including the dead ends
+
+# K — what the agent may consult before it varies anything
+avo know add ./docs/tuning.md          # or a url, with FIRECRAWL_API_KEY set
+avo know query "register pressure"     # hybrid search over knowledge/ and lineage/
+avo know search "blackwell occupancy"  # the web; --ingest writes the pages into K
 ```
 
 ## `avo init`
 
-Scaffolds `.avo/config.json`, `.avo/.gitignore` (the trajectory exclusion), `lineage/`, and — when
-`bd` is installed — a beads database. Every step reports `created` / `unchanged` / `skipped`, and a
+Scaffolds `.avo/config.json`, `.avo/.gitignore` (the trajectory exclusion), `knowledge/`, `lineage/`,
+the qmd collections when `qmd` is installed, and a beads database when `bd` is. Every step reports `created` / `unchanged` / `skipped`, and a
 second run creates nothing (invariant 5); an edited config is never overwritten. `--scorer <t>`
 also scaffolds `.avo/score`, `--prefix <p>` sets the beads issue prefix. Outside a git repository it
 refuses and writes nothing: the lineage lives in git.
@@ -145,11 +151,51 @@ otherwise good commit, and avo's own writes (`lineage/memory.jsonl`, `.avo/.giti
 as a working-tree change — otherwise the memory written for v1 would make the next run look like a
 candidate the agent never produced.
 
+## `avo know` — `K`, the knowledge base
+
+`K` is what the agent may consult before it varies anything: reference docs in `knowledge/`, and its
+own history in `lineage/`. Both are indexed as [qmd](https://github.com/tobilu/qmd) collections, so
+"what did I already try about register pressure?" is the same query as "what do the docs say about
+it" — the synergy that costs nothing because `avo commit` is already writing `lineage/vNNN.md`.
+
+```sh
+avo know init                          # folded into avo init; safe to re-run
+avo know add ./notes/tuning.md         # -> knowledge/notes-tuning.md, with provenance frontmatter
+avo know add https://example.com/doc   # needs FIRECRAWL_API_KEY (free tier: 1000 credits/month)
+avo know query "register pressure"     # hybrid BM25 + vector + local rerank
+avo know query "..." --lexical         # BM25 only: no LLM expansion, no rerank, instant
+avo know reindex                       # after avo commit writes a new lineage/vNNN.md
+avo know search "blackwell occupancy"  # the web; --ingest pipes the pages straight into K
+```
+
+Every ingested doc carries `source`, `title`, `fetched-at` and `via` frontmatter: a doc in `K` with
+no provenance is a doc the agent cannot re-check. Re-adding identical content is `unchanged`;
+differing content is refused until `--force`, so ingest is idempotent.
+
+**qmd is optional, and its absence is the common path.** Without it, `avo know query` answers the
+same question by scanning the same files, and returns the identical JSON — same keys, same `Hit`
+shape, and a `score` that means the same thing (0..1, higher is better; qmd's own relevance, or term
+coverage in the fallback). An agent must not have to know whether qmd was installed.
+
+Two things about qmd worth knowing, both verified against 2.8.3 rather than assumed:
+
+- `qmd embed` only vectorizes documents the index already knows about, so `avo know add` runs
+  `qmd update` first. A doc written straight into `lineage/` — which is what `avo commit` does —
+  needs `avo know reindex` before qmd can see it.
+- `.qmd/` is gitignored. `index.yml` records collection paths as *absolute* paths, so a committed
+  index is wrong on every other machine, and `index.sqlite` is a multi-megabyte binary.
+
+Web search has three backends behind one flag. `firecrawl` (`FIRECRAWL_API_KEY`) is the default
+because it is the only one that returns page content, which is what `--ingest` needs; `searxng`
+(`SEARXNG_URL`, instance must enable `format=json`) and `ddgs` (keyless, `pip install ddgs`) return
+links and snippets. With nothing configured, `avo know search` names all three and how to enable
+them — it never throws a stack trace at the agent.
+
 ## `avo doctor`
 
 `avo doctor` exits 1 when a required dependency (`git`, `jq`) is missing, or when no coding agent
 (`pi`, `claude`, `codex`) is on `PATH` — one is required to act as the variation operator. Optional
-dependencies (`qmd`, `bd`, `hyperfine`, `just`) are reported but never fail the check; each slice
+dependencies (`qmd`, `ddgs`, `bd`, `hyperfine`, `just`) are reported but never fail the check; each slice
 that needs one degrades with a named fallback. API keys are reported as present/unset only — their
 values never appear in any output.
 
@@ -158,7 +204,7 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
 
@@ -173,10 +219,13 @@ src/config.ts     .avo/config.json — the reduction, the floor, declared config
 src/compare.ts    the commit rule's comparator over the score vector
 src/lineage.ts    Pt — avo commit, avo lineage, avo best
 src/mem.ts        memory — bd (beads) with a lineage/memory.jsonl fallback
+src/knowledge.ts  K — qmd collections, a local-scan fallback, ingest with provenance
+src/websearch.ts  K — firecrawl | searxng | ddgs behind one injectable Fetcher
+src/steps.ts      the created/unchanged/skipped step report init and know init share
 src/init.ts       avo init — idempotent scaffolding, including bd init
 src/io.ts         injectable output sink, so commands are unit-testable
 templates/score/  reference scorers + the authoring guide
-test/             node:test unit tests + e2e{,-score,-lineage,-mem}.sh
+test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know}.sh
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

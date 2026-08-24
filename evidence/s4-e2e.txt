@@ -1,0 +1,41 @@
+# avo S4 e2e — 2026-08-24T14:32:45Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+# qmd on PATH: no
+
+$ avo know init --json -> {"ok":true,"backend":"files","steps":[{"name":"knowledge/","action":"created","detail":"domain knowledge K: reference docs, papers and notes the agent may consult while varying a candidate"},{"name":"lineage/","action":"created","detail":"the lineage P_t: one rendered file per committed version, with its scores, parent and rationale"},{"name":"qmd","action":"skipped","detail":"qmd is not installed
+PASS  avo know init succeeds
+PASS  avo know init created knowledge/
+PASS  avo know init created lineage/
+PASS  both collections are reported as steps
+PASS  a second avo know init creates nothing
+$ avo know add regs.md --json -> {"ok":true,"action":"created","path":"knowledge/register-pressure.md","bytes":177,"embedded":false}
+PASS  avo know add wrote knowledge/register-pressure.md
+PASS  the doc carries provenance frontmatter (source, fetched-at, via)
+PASS  re-adding identical content is 'unchanged', not a duplicate
+PASS  differing content is refused with exit 1 until --force
+PASS  a refused add leaves the existing doc untouched
+PASS  --force replaces it
+$ avo know query 'register occupancy' --json -> {"backend":"files","n":1,"top":"knowledge/register-pressure.md","score":1}
+PASS  avo know query --json has the same keys whichever backend answered
+PASS  the ingested doc is the top hit, above the 0.5 score threshold
+PASS  a hit carries a line number and a snippet, so the agent can read on
+PASS  --min-score filters hits
+PASS  an empty result is exit 0, not an error
+PASS  lineage/ is searched alongside knowledge/
+PASS  avo know reindex reports itself the same way with or without qmd
+SKIP  qmd is not installed — the qmd index, its gitignore and the qmd query path
+PASS  without qmd the query is answered by the local scan, with the same JSON shape
+PASS  --json carries the degradation warning in the payload, exactly once
+PASS  the pretty form warns about the degradation on stderr, keeping stdout parseable
+PASS  no key configured names all three alternatives instead of throwing
+PASS  an unknown --backend is a usage error naming the valid ones
+PASS  --backend searxng with no SEARXNG_URL names the variable
+PASS  avo know search leaves no stray files in the repo
+PASS  avo know with no subcommand explains itself
+PASS  a usage error exits 2
+PASS  avo help documents the know subcommands
+PASS  avo init scaffolds K too, so one command sets the whole loop up
+PASS  avo init still succeeds with qmd absent (degradation is not failure)
+PASS  ingested docs are ordinary tracked files, visible to git
+
+all checks passed

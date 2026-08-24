@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { accessSync, appendFileSync, constants, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -105,7 +105,17 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
     // detached puts the scorer in its own process group, so a timeout can kill the benchmark
     // processes it spawned too. Killing only the scorer leaves them holding our stdio pipes open,
     // and we would wait out the full benchmark despite having "timed out".
-    const child = spawn(cmd, args, { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    //
+    // PWD is set alongside cwd because `spawn` sets only the real working directory, while a shell
+    // always sets both — and tools that resolve their project root from `$PWD` (qmd is one) would
+    // otherwise act on *avo's* directory instead of the target repo. That is how `avo know init
+    // --cwd <other-repo>` came to write a qmd index into this repo (S4).
+    const child = spawn(cmd, args, {
+      cwd: opts.cwd,
+      env: { ...process.env, PWD: resolvePath(opts.cwd) },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
     let stdout = "";
     let stderr = "";
     let timedOut = false;

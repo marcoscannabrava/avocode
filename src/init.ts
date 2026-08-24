@@ -2,18 +2,13 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_PATH, DEFAULT_CONFIG } from "./config.ts";
 import type { Io } from "./io.ts";
-import { ensureTrajectoryIgnored, isGitRepo, LINEAGE_DIR } from "./lineage.ts";
+import { runKnowInit } from "./knowledge.ts";
+import { ensureTrajectoryIgnored, isGitRepo } from "./lineage.ts";
 import { MEMORY_PATH, resolveBackend } from "./mem.ts";
 import { initScorer, listTemplates, SCORER_PATH, spawnRunner, type Runner } from "./score.ts";
+import type { InitStep } from "./steps.ts";
 
-/** Every step reports what it did, so a second run visibly changes nothing (invariant 5). */
-export type StepAction = "created" | "unchanged" | "skipped" | "failed";
-
-export interface InitStep {
-  name: string;
-  action: StepAction;
-  detail: string;
-}
+export type { InitStep, StepAction } from "./steps.ts";
 
 export interface InitResult {
   ok: boolean;
@@ -86,13 +81,6 @@ export async function runInit(opts: InitOptions, runner: Runner = spawnRunner): 
       `${JSON.stringify({ reduce: DEFAULT_CONFIG.reduce, floor: DEFAULT_CONFIG.floor }, null, 2)}\n`,
     );
     steps.push({ name: CONFIG_PATH, action, detail: `reduce: ${DEFAULT_CONFIG.reduce}, floor: ${DEFAULT_CONFIG.floor}` });
-    const lineageExisted = existsSync(join(opts.cwd, LINEAGE_DIR));
-    mkdirSync(join(opts.cwd, LINEAGE_DIR), { recursive: true });
-    steps.push({
-      name: `${LINEAGE_DIR}/`,
-      action: lineageExisted ? "unchanged" : "created",
-      detail: "rendered versions and, without bd, the memory log",
-    });
   } catch (e) {
     errors.push(`could not scaffold .avo in ${opts.cwd} — ${(e as Error).message}`);
     steps.push({ name: ".avo", action: "failed", detail: (e as Error).message });
@@ -115,6 +103,13 @@ export async function runInit(opts: InitOptions, runner: Runner = spawnRunner): 
       detail: `no scorer yet — 'avo init --scorer <${listTemplates().join("|")}>' or 'avo score --init <t>' writes one`,
     });
   }
+
+  // K next: qmd is optional too, and runKnowInit creates lineage/ and knowledge/ whether or not it
+  // is installed, so the collections exist the moment qmd does.
+  const know = await runKnowInit(opts.cwd, runner);
+  steps.push(...know.steps);
+  warnings.push(...know.warnings);
+  errors.push(...know.errors);
 
   // beads last: it is optional, and everything above must land whether or not it is installed.
   const backend = await resolveBackend(runner, opts.cwd);
