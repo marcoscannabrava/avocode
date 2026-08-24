@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -529,6 +529,22 @@ test("spawnRunner reports a missing binary as a spawn error instead of throwing"
   const r = await spawnRunner("/nonexistent/avo-scorer", [], { cwd: tmpdir(), timeoutMs: 0 });
   assert.ok(r.spawnError !== null);
   assert.match(r.spawnError, /ENOENT/);
+});
+
+test("spawnRunner sets PWD as well as cwd, so a child that trusts $PWD acts on the right repo", async () => {
+  // qmd resolves its project root from $PWD, and `spawn` sets only the real working directory. Left
+  // unset, `avo know init --cwd <other-repo>` wrote a qmd index into *avo's own* repo (S4).
+  const dir = mkdtempSync(join(tmpdir(), "avo-pwd-"));
+  try {
+    const script = join(dir, "echo-pwd.sh");
+    writeFileSync(script, '#!/bin/sh\nprintf "%s\\n%s\\n" "$PWD" "$(pwd -P)"\n', { mode: 0o755 });
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 10_000 });
+    const [pwdVar, realCwd] = r.stdout.trim().split("\n");
+    assert.equal(realpathSync(pwdVar ?? ""), realpathSync(dir), "$PWD is the target directory");
+    assert.equal(realpathSync(realCwd ?? ""), realpathSync(dir), "and it agrees with the real cwd");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("declared configs skip the --configs probe entirely (issue #4)", async () => {

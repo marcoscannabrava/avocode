@@ -93,7 +93,9 @@ avocode/
     lineage.ts             # Pt — git trailers, notes, lineage/*.md, beads mirror
     mem.ts                 # memory — bd (beads) with a lineage/memory.jsonl fallback
     init.ts                # avo init — idempotent scaffolding, including bd init
-    knowledge.ts           # K  — qmd wrapper + Firecrawl ingest
+    knowledge.ts           # K  — qmd wrapper, local-scan fallback, ingest with provenance
+    websearch.ts           # K  — the three web-search backends behind one Fetcher seam
+    steps.ts               # the created/unchanged/skipped step report shared by init and know init
     fan.ts                 # concurrency — worktrees + headless agent procs
     supervise.ts           # stagnation detection + steering directive
     agents.ts              # agent command templates (pi | claude | codex | custom)
@@ -283,7 +285,7 @@ Each slice: build → verify with the stated command → commit → update `PROG
   (trajectory + `.avo/.gitignore` + the memory log) now covers the dirtiness check, while staying
   *staged*: those files belong in the repo, they are just not evidence of a variation.
 
-### S4 — `K`: knowledge `[ ]`
+### S4 — `K`: knowledge `[x]`
 - `avo know init` — `qmd collection add knowledge/ --name knowledge`, same for `lineage/`, plus
   `qmd context add` descriptions (qmd's README calls contexts its key feature — use them).
 - `avo know query "<q>" [--json]` → `qmd query` (hybrid + rerank).
@@ -294,6 +296,31 @@ Each slice: build → verify with the stated command → commit → update `PROG
   No key configured ⇒ clear message naming the alternatives, not a stack trace.
 - **Verify:** ingest a fixed doc, `avo know query` returns it above a score threshold; search
   backend selection unit-tested with a stubbed HTTP layer (no network in CI).
+- **Shipped (iter 5):** `src/knowledge.ts` (K: the qmd wrapper, the fallback, `know init|query|add|
+  reindex`) and `src/websearch.ts` (the three backends behind one injected `Fetcher`, so every one
+  of them is tested with no network). `avo know init` folds into `avo init` the way `bd init` did.
+  qmd is optional, so — as with `bd` in S3 — its absence is the *common* path: `localSearch` answers
+  the same query over the same files, and both backends return the identical `Hit` shape, so an
+  agent never branches on whether qmd was installed. `score` means the same thing in both: 0..1,
+  higher is better (qmd's own relevance; term coverage in the fallback).
+  Three deviations from the sketch above, recorded because code wins:
+  1. **`avo know reindex` exists** (and `avo know add` runs `qmd update` before `qmd embed`).
+     `qmd embed` only vectorizes documents the index already knows about, so a doc written *after*
+     `qmd collection add` stays invisible — `qmd ls` reports "No files found" and every search
+     returns nothing — until `qmd update` re-scans. `avo commit` writes into `lineage/` without
+     going through `avo know add`, so the lineage collection needs the same re-scan (#13).
+  2. **`.qmd/` is gitignored with a `*`.** `index.yml` records collection paths as *absolute*
+     paths, so a committed index is wrong on every other machine; `index.sqlite` is a
+     multi-megabyte binary. Ignoring the whole directory also keeps it out of the tree-dirtiness
+     check `avo commit` reasons about, at no cost to either.
+  3. **`--min-score` is meaningless on `--lexical`.** `qmd search` reports every BM25 hit with
+     `score: 0` (verified against 2.8.3), so a threshold would silently discard all of them; the
+     hits are returned with a warning naming the reason instead.
+  The bug this slice caught is worth remembering: **`spawn` sets `cwd` but not `$PWD`.** A shell
+  always sets both; Node does not, and qmd resolves its project root from `$PWD`. So `avo know init
+  --cwd <target>` reported success while writing the qmd index into **avo's own repo** instead —
+  found only by running the e2e against a real qmd. `spawnRunner` now sets `PWD` alongside `cwd`,
+  which fixes it for every child avo spawns (`bd`, git, and every scorer), with a regression test.
 
 ### S5 — Agent-agnostic skills `[ ]`
 - Author the five `SKILL.md` files against the **agentskills.io spec** (valid frontmatter: `name`,
@@ -395,8 +422,16 @@ MAP-Elites archive gets a second look — read it, don't depend on it.
   details the sketch left open: `floor` is a *symmetric* relative band (a change inside it counts as
   neither better nor worse, so noise cannot commit and cannot block), and a candidate whose
   `higher_is_better` differs from the best version's is refused as incomparable rather than ranked.
-- **Q2 (S4):** does Firecrawl have a usable free tier? Not stated in its API docs. Determine before
-  making it the default; if not, promote `searxng`/`ddgs` to default and Firecrawl to opt-in.
+- **Q2 (S4) — answered:** yes. Firecrawl's free plan is **1,000 credits/month, no card**, and
+  `/v2/search` costs 2 credits per 10 results, so the default is usable without paying. It stays the
+  default for one reason beyond the tier: it is the only backend of the three that returns *page
+  content*, which is what `avo know search --ingest` and `avo know add <url>` need. `searxng`
+  (`SEARXNG_URL`, instance must enable `format=json`) and `ddgs` (keyless) are links-and-snippets
+  fallbacks, and `--ingest` against them warns rather than half-ingesting. **Landed in S4.** One
+  trap worth keeping: `ddgs text -o json` does *not* print to stdout — it writes
+  `text_<query>_<timestamp>.json` into the current directory, so `avo` runs it in a temp dir that is
+  removed either way, or it would litter the working tree with files `avo commit` reads as a
+  variation.
 - **Q3 (S7):** stall threshold N — the paper doesn't publish theirs. Start at 5 (the value in
   [avo-pi.md](avo-pi.md)'s sketch), make it configurable, tune with S9 evidence.
 - **Q4 (S7):** if the loop proves fragile across days, adopt **absurd** (Postgres durable execution)

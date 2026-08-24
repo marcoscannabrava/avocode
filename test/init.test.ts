@@ -14,17 +14,23 @@ interface Call {
   args: string[];
 }
 
-/** Real git (init writes nothing to it), stubbed bd — the dependency we cannot assume exists. */
-function runnerWith(bd: Record<string, Partial<RunResult>>): Runner & { calls: Call[] } {
+/**
+ * Real git (init writes nothing to it), stubbed `bd` and `qmd` — the two optional dependencies.
+ * Both are stubbed rather than probed for real so these tests give the same answer on a machine
+ * that happens to have them installed, where `avo init` would otherwise write a real qmd index into
+ * the throwaway repo.
+ */
+function runnerWith(bd: Record<string, Partial<RunResult>>, qmd: Record<string, Partial<RunResult>> = NO_QMD): Runner & { calls: Call[] } {
   const calls: Call[] = [];
+  const answerFrom = (table: Record<string, Partial<RunResult>>, key: string): RunResult => {
+    const match = Object.keys(table).find((k) => key.startsWith(k));
+    return { code: 0, stdout: "", stderr: "", timedOut: false, spawnError: null, ...(match === undefined ? {} : table[match]) };
+  };
   const runner = async (cmd: string, args: readonly string[], opts: RunOpts): Promise<RunResult> => {
     calls.push({ cmd, args: [...args] });
-    if (cmd === "bd") {
-      const key = [cmd, ...args].join(" ");
-      const match = Object.keys(bd).find((k) => key.startsWith(k));
-      const answer = match === undefined ? {} : (bd[match] as Partial<RunResult>);
-      return { code: 0, stdout: "", stderr: "", timedOut: false, spawnError: null, ...answer };
-    }
+    const key = [cmd, ...args].join(" ");
+    if (cmd === "bd") return answerFrom(bd, key);
+    if (cmd === "qmd") return answerFrom(qmd, key);
     const { spawnRunner } = await import("../src/score.ts");
     return await spawnRunner(cmd, args, opts);
   };
@@ -32,6 +38,9 @@ function runnerWith(bd: Record<string, Partial<RunResult>>): Runner & { calls: C
 }
 
 const NO_BD = { bd: { code: -1, spawnError: "spawn bd ENOENT" } };
+const NO_QMD = { qmd: { code: -1, spawnError: "spawn qmd ENOENT" } };
+/** The one warning every NO_BD/NO_QMD run emits about K, so warning assertions stay specific. */
+const QMD_WARNING = /qmd is not installed .*@tobilu\/qmd/;
 
 function repo(): string {
   const cwd = mkdtempSync(join(tmpdir(), "avo-init-"));
@@ -80,7 +89,10 @@ test("avo init scaffolds the config, the gitignore and lineage/, and is a no-op 
     assert.equal(step(first, ".avo/score").action, "skipped");
     assert.equal(step(first, "beads").action, "skipped");
     assert.match(step(first, "beads").detail, /not installed.*memory\.jsonl/);
-    assert.equal(first.warnings.length, 1);
+    assert.equal(step(first, "knowledge/").action, "created");
+    assert.equal(step(first, "qmd").action, "skipped");
+    assert.equal(first.warnings.length, 2, "one per absent optional dependency, bd and qmd");
+    assert.match(first.warnings.join(" "), QMD_WARNING);
 
     // The scaffolded config must load as the defaults it claims to be.
     const { config, warnings, present } = loadConfig(cwd);
@@ -91,7 +103,7 @@ test("avo init scaffolds the config, the gitignore and lineage/, and is a no-op 
     writeFileSync(join(cwd, CONFIG_PATH), JSON.stringify({ reduce: "mean", floor: 0.02 }));
     const second = await runInit({ json: false, cwd, prefix: null, scorer: null }, runnerWith(NO_BD));
     assert.equal(second.ok, true);
-    for (const name of [CONFIG_PATH, ".avo/.gitignore", "lineage/"]) {
+    for (const name of [CONFIG_PATH, ".avo/.gitignore", "lineage/", "knowledge/"]) {
       assert.equal(step(second, name).action, "unchanged", `${name} is rewritten on a second run`);
     }
     assert.notEqual(readFileSync(join(cwd, CONFIG_PATH), "utf8"), before, "an edited config is left alone");
@@ -153,7 +165,7 @@ test("an already-initialized beads database is reported, not re-initialized", as
     assert.equal(step(r, "beads").action, "unchanged");
     assert.match(step(r, "beads").detail, /prefix 'proj'/);
     assert.equal(runner.calls.some((c) => c.cmd === "bd" && c.args[0] === "init"), false);
-    assert.deepEqual(r.warnings, []);
+    assert.deepEqual(r.warnings.filter((w) => !QMD_WARNING.test(w)), []);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -170,7 +182,7 @@ test("a failing bd init degrades to the file store instead of failing init", asy
     const r = await runInit({ json: false, cwd, prefix: null, scorer: null }, runner);
     assert.equal(r.ok, true, "beads is optional: its failure must not fail init");
     assert.equal(step(r, "beads").action, "skipped");
-    assert.match(r.warnings[0] ?? "", /bd init failed \(dolt: port already in use\).*memory\.jsonl/);
+    assert.match(r.warnings.join("\n"), /bd init failed \(dolt: port already in use\).*memory\.jsonl/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -185,7 +197,7 @@ test("avo init --json reports every step, and the pretty form names them all", a
     assert.equal(parsed.ok, true);
     assert.deepEqual(
       parsed.steps.map((s) => s.name),
-      ["git", ".avo/.gitignore", CONFIG_PATH, "lineage/", ".avo/score", "beads"],
+      ["git", ".avo/.gitignore", CONFIG_PATH, ".avo/score", "knowledge/", "lineage/", "qmd", "beads"],
     );
     const pretty = renderInit(parsed);
     assert.match(pretty, /created\s+\.avo\/config\.json/);
