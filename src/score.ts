@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { CONFIG_NAME, CONFIG_PATH, loadConfig } from "./config.ts";
 import type { Io } from "./io.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -214,9 +215,6 @@ export function parseScoreOutput(stdout: string): ParseSuccess | ParseFailure {
 
   return { output, warnings };
 }
-
-/** Config names must be plain tokens — that is also how we detect a scorer with no `--configs`. */
-const CONFIG_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export function parseConfigList(stdout: string): string[] | null {
   const names = stdout
@@ -474,42 +472,32 @@ async function readGit(runner: Runner, cwd: string): Promise<Attempt["git"]> {
   return { head: head.stdout.trim(), dirty: status.stdout.trim() !== "" };
 }
 
-/** Result codes: 0 = pass, 1 = ran but failed, 2 = harness error (usage, no scorer, bad output). */
-export async function scoreCommand(
-  argv: readonly string[],
-  io: Io,
+export interface ScoreRun {
+  attempt: Attempt | null;
+  /** Pre-flight failure — nothing ran, so there is no attempt to diagnose. */
+  error: string | null;
+}
+
+/**
+ * Runs `f` once and returns the normalized attempt. This is the single scoring path: `avo score`
+ * renders it, `avo commit` gates on it. Nothing else may invoke `.avo/score` directly.
+ */
+export async function runScore(
+  opts: ScoreOptions,
   runner: Runner = spawnRunner,
   now: () => Date = () => new Date(),
-): Promise<number> {
-  const parsed = parseScoreArgs(argv);
-  if ("error" in parsed) {
-    io.err(`${parsed.error}\n`);
-    return 2;
-  }
-  const opts = parsed;
-
-  if (opts.init !== null) {
-    const r = initScorer(opts.cwd, opts.init, opts.force);
-    if (opts.json) io.out(`${JSON.stringify(r)}\n`);
-    else if (r.ok) io.out(`avo score --init: ${r.path} ${r.action} from template '${r.template}'\n`);
-    else io.err(`avo score --init: ${r.error}\n`);
-    return r.ok ? 0 : 2;
-  }
-
+): Promise<ScoreRun> {
   const scorer = join(opts.cwd, SCORER_PATH);
-  const fail = (msg: string): number => {
-    if (opts.json) io.out(`${JSON.stringify({ ok: false, pass: false, errors: [msg] })}\n`);
-    else io.err(`avo score: ${msg}\n`);
-    return 2;
-  };
   try {
     accessSync(scorer, constants.X_OK);
   } catch {
     const templates = listTemplates().join("|");
-    return fail(
-      `no executable ${SCORER_PATH} in ${opts.cwd} — scaffold one with 'avo score --init <${templates}>' ` +
+    return {
+      attempt: null,
+      error:
+        `no executable ${SCORER_PATH} in ${opts.cwd} — scaffold one with 'avo score --init <${templates}>' ` +
         `(or 'chmod +x ${SCORER_PATH}' if it exists but is not executable)`,
-    );
+    };
   }
 
   const timeoutMs = opts.timeoutS * 1000;
@@ -518,12 +506,21 @@ export async function scoreCommand(
 
   let configs: string[] | null = null;
   if (opts.parallel) {
-    const probe = await runner(scorer, ["--configs"], { cwd: opts.cwd, timeoutMs });
-    configs = probe.code === 0 ? parseConfigList(probe.stdout) : null;
-    if (configs === null) {
-      warmupWarnings.push(
-        `--parallel requested but ${SCORER_PATH} --configs listed no usable config names; ran a single serial pass`,
-      );
+    // A declared config list skips the probe entirely: probing costs a full extra scoring run on
+    // every scorer that does not implement --configs, which is most of them (issue #4).
+    const declared = loadConfig(opts.cwd);
+    warmupWarnings.push(...declared.warnings);
+    if (declared.config.configs !== null) {
+      configs = declared.config.configs;
+    } else {
+      const probe = await runner(scorer, ["--configs"], { cwd: opts.cwd, timeoutMs });
+      configs = probe.code === 0 ? parseConfigList(probe.stdout) : null;
+      if (configs === null) {
+        warmupWarnings.push(
+          `--parallel requested but ${SCORER_PATH} --configs listed no usable config names; ran a single serial pass ` +
+            `(declare them in ${CONFIG_PATH} as {"configs":[...]} to skip this probe)`,
+        );
+      }
     }
   }
 
@@ -562,6 +559,38 @@ export async function scoreCommand(
     } catch (e) {
       attempt.warnings.push(`could not record the attempt in ${ATTEMPTS_PATH} — ${(e as Error).message}`);
     }
+  }
+
+  return { attempt, error: null };
+}
+
+/** Result codes: 0 = pass, 1 = ran but failed, 2 = harness error (usage, no scorer, bad output). */
+export async function scoreCommand(
+  argv: readonly string[],
+  io: Io,
+  runner: Runner = spawnRunner,
+  now: () => Date = () => new Date(),
+): Promise<number> {
+  const parsed = parseScoreArgs(argv);
+  if ("error" in parsed) {
+    io.err(`${parsed.error}\n`);
+    return 2;
+  }
+  const opts = parsed;
+
+  if (opts.init !== null) {
+    const r = initScorer(opts.cwd, opts.init, opts.force);
+    if (opts.json) io.out(`${JSON.stringify(r)}\n`);
+    else if (r.ok) io.out(`avo score --init: ${r.path} ${r.action} from template '${r.template}'\n`);
+    else io.err(`avo score --init: ${r.error}\n`);
+    return r.ok ? 0 : 2;
+  }
+
+  const { attempt, error } = await runScore(opts, runner, now);
+  if (attempt === null) {
+    if (opts.json) io.out(`${JSON.stringify({ ok: false, pass: false, errors: [error] })}\n`);
+    else io.err(`avo score: ${error}\n`);
+    return 2;
   }
 
   io.out(opts.json ? `${JSON.stringify(attempt)}\n` : renderAttempt(attempt));

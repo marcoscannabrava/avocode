@@ -62,3 +62,19 @@ test("score is reachable through the dispatcher and reports a missing scorer", a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("every subcommand in the usage text is actually dispatched", async () => {
+  const block = USAGE.split("commands:\n")[1]?.split("\n\n")[0] ?? "";
+  const documented = [...block.matchAll(/^ {2}([a-z]+)/gm)].map((m) => m[1] as string);
+  assert.ok(documented.length >= 6, `parsed ${documented.length} commands from usage`);
+  assert.ok(documented.includes("commit") && documented.includes("lineage") && documented.includes("best"));
+  const dir = mkdtempSync(join(tmpdir(), "avo-cli-"));
+  for (const cmd of new Set(documented)) {
+    const io = bufferIo();
+    // No repo and no scorer here, so these fail — but they must fail as themselves, never as
+    // "unknown command", which is the only thing this asserts.
+    await main([cmd, "--cwd", dir], io);
+    assert.doesNotMatch(io.stderr, /unknown command/, `'${cmd}' is documented but not dispatched`);
+  }
+  rmSync(dir, { recursive: true, force: true });
+});

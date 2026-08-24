@@ -530,3 +530,63 @@ test("spawnRunner reports a missing binary as a spawn error instead of throwing"
   assert.ok(r.spawnError !== null);
   assert.match(r.spawnError, /ENOENT/);
 });
+
+test("declared configs skip the --configs probe entirely (issue #4)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-cfg-"));
+  mkdirSync(join(dir, ".avo"), { recursive: true });
+  writeFileSync(join(dir, ".avo/score"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  writeFileSync(join(dir, ".avo/config.json"), JSON.stringify({ configs: ["b1", "b8"] }));
+
+  const calls: string[][] = [];
+  const runner: Runner = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    const config = args[1] ?? "?";
+    return {
+      code: 0,
+      stdout: line({ ...GOOD, primary: 1, scores: { [config]: 1 } }),
+      stderr: "",
+      timedOut: false,
+      spawnError: null,
+    };
+  };
+  const io = bufferIo();
+  await scoreCommand(["--cwd", dir, "--parallel", "--json", "--no-record"], io, runner);
+
+  const scorerCalls = calls.filter((c) => c[0]?.endsWith(SCORER_PATH));
+  assert.deepEqual(
+    scorerCalls.map((c) => c.slice(1)),
+    [
+      ["--config", "b1"],
+      ["--config", "b8"],
+    ],
+  );
+  const attempt = JSON.parse(io.stdout) as Attempt;
+  assert.deepEqual(attempt.configs, ["b1", "b8"]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("with no declared configs the probe still runs, and its failure degrades to one serial pass", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-cfg2-"));
+  mkdirSync(join(dir, ".avo"), { recursive: true });
+  writeFileSync(join(dir, ".avo/score"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+  const calls: string[][] = [];
+  const runner: Runner = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    const probing = args[0] === "--configs";
+    return {
+      code: 0,
+      stdout: probing ? "usage: score [--config name]\n" : line(GOOD),
+      stderr: "",
+      timedOut: false,
+      spawnError: null,
+    };
+  };
+  const io = bufferIo();
+  await scoreCommand(["--cwd", dir, "--parallel", "--json", "--no-record"], io, runner);
+  assert.ok(calls.some((c) => c[1] === "--configs"));
+  const attempt = JSON.parse(io.stdout) as Attempt;
+  assert.deepEqual(attempt.configs, ["*"]);
+  assert.match(attempt.warnings.join("\n"), /skip this probe/);
+  rmSync(dir, { recursive: true, force: true });
+});
