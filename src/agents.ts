@@ -1,11 +1,15 @@
 /**
- * The variation operator's *driver*: how avo starts a headless coding agent.
+ * The variation operator's *driver*: how avo starts a headless coding agent, and how one turn of it
+ * is run and classified.
  *
  * Every surface here was read off the real binaries (pi 0.84.3, claude 2.1.241, codex-cli 0.147.0)
  * rather than from memory, because a wrong flag here fails silently — the agent starts, refuses to
  * edit anything, exits 0, and the probe reads as "the model had no idea". That is exactly the trap
  * S5 recorded for `pi --approve`, and each template below carries the same class of flag.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import type { Runner } from "./score.ts";
 
 export interface AgentInvocation {
   prompt: string;
@@ -244,4 +248,112 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
 
   // A structured agent that died mid-stream still said something useful on the way down.
   return { summary: summary ?? lastLine(stdout), tokens };
+}
+
+// ---------------------------------------------------------------------------
+// driving one turn
+// ---------------------------------------------------------------------------
+
+/** 50KB / 2000 lines, whichever comes first. The uncapped text is always on disk (`log_path`). */
+const SUMMARY_CAP_CHARS = 50_000;
+const SUMMARY_CAP_LINES = 2_000;
+
+export interface Capped {
+  text: string;
+  truncated: boolean;
+}
+
+export function capOutput(s: string, maxChars = SUMMARY_CAP_CHARS, maxLines = SUMMARY_CAP_LINES): Capped {
+  const lines = s.split("\n");
+  let text = s;
+  let truncated = false;
+  if (lines.length > maxLines) {
+    text = lines.slice(0, maxLines).join("\n");
+    truncated = true;
+  }
+  if (text.length > maxChars) {
+    text = text.slice(0, maxChars);
+    truncated = true;
+  }
+  return { text, truncated };
+}
+
+export interface TurnOpts {
+  /** Where the agent runs: a worktree for `avo fan`, the root tree for `avo run`. */
+  cwd: string;
+  /** Repo-relative, so the message points at something the operator can open. */
+  logPath: string;
+  /** Absolute path the raw output is written to. */
+  logFile: string;
+  timeoutS: number;
+  env: Record<string, string>;
+}
+
+/** One agent turn, as both `avo fan` and `avo run` see it. `ok` describes the PROCESS, not the work. */
+export interface AgentTurn {
+  ok: boolean;
+  summary: string | null;
+  tokens: AgentTokens | null;
+  wall_s: number;
+  exit_code: number;
+  timed_out: boolean;
+  truncated: boolean;
+  /** The command could not be started at all — the one failure worth stopping a whole loop for. */
+  spawn_failed: boolean;
+  error: string | null;
+}
+
+/**
+ * Starts a headless agent, records what it said, and classifies how it ended.
+ *
+ * Shared by `avo fan` (one turn per worktree) and `avo run` (one turn per iteration) so the two
+ * report a timeout, a crash and a missing binary in exactly the same words. What differs between
+ * them — the worktree, the diffstat, the commit decision — stays with the caller.
+ */
+export async function driveAgent(
+  runner: Runner,
+  template: AgentTemplate,
+  inv: AgentInvocation,
+  opts: TurnOpts,
+  now: () => Date,
+): Promise<AgentTurn> {
+  const started = now().getTime();
+  const run = await runner(template.command, template.args(inv), {
+    cwd: opts.cwd,
+    timeoutMs: opts.timeoutS * 1000,
+    env: opts.env,
+  });
+  const wallS = Math.round((now().getTime() - started) / 100) / 10;
+
+  const raw = run.stderr === "" ? run.stdout : `${run.stdout}\n--- stderr ---\n${run.stderr}`;
+  try {
+    mkdirSync(dirname(opts.logFile), { recursive: true });
+    writeFileSync(opts.logFile, raw);
+  } catch {
+    // A log we cannot write must not lose the turn; the result below still carries the summary.
+  }
+
+  const parsed = parseAgentOutput(template.format, run.stdout);
+  const capped = capOutput(parsed.summary ?? "");
+
+  let error: string | null = null;
+  if (run.spawnError !== null) {
+    error = `could not execute '${template.command}' — ${run.spawnError}. Is it on PATH?`;
+  } else if (run.timedOut) {
+    error = `the agent exceeded --timeout ${opts.timeoutS}s and its process group was killed`;
+  } else if (run.code !== 0) {
+    error = `the agent exited ${run.code}; its output is in ${opts.logPath}`;
+  }
+
+  return {
+    ok: error === null,
+    summary: capped.text === "" ? null : capped.text,
+    tokens: parsed.tokens,
+    wall_s: wallS,
+    exit_code: run.code,
+    timed_out: run.timedOut,
+    truncated: capped.truncated,
+    spawn_failed: run.spawnError !== null,
+    error,
+  };
 }

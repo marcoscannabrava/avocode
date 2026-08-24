@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
 import { loadConfig, type AvoConfig } from "./config.ts";
@@ -14,8 +14,23 @@ export const LINEAGE_DIR = "lineage";
  * how it was reached, and would leave the working tree permanently dirty — which would in turn
  * defeat the no-op check below.
  */
-export const TRAJECTORY_PATHS: readonly string[] = [".avo/attempts.jsonl", ".avo/worktrees"];
+export const TRAJECTORY_PATHS: readonly string[] = [".avo/attempts.jsonl", ".avo/worktrees", ".avo/runs"];
 const TRAJECTORY_IGNORE = ".avo/.gitignore";
+/**
+ * What `.avo/.gitignore` says, one entry per trajectory path — patterns relative to `.avo/`, with a
+ * trailing slash on the directories. A test asserts every TRAJECTORY_PATH has an entry, because the
+ * two lists drifting apart is silent: the path stays unstaged by `avo commit` and still shows up in
+ * `git status` for every other tool the operator runs.
+ */
+const IGNORE_ENTRIES: readonly string[] = ["attempts.jsonl", "worktrees/", "runs/"];
+/**
+ * Any `.avo/.gitignore` opening with this is ours to extend. Matched by prefix, not equality: files
+ * written before `avo run` existed say "written by avo commit", and they must still receive the
+ * entry for a path added later — which is the bug this replaced. A file *without* the marker is the
+ * operator's and is never touched.
+ */
+const IGNORE_MARKER = "# written by avo";
+const IGNORE_HEADER = `${IGNORE_MARKER}: trajectory, not lineage`;
 /**
  * Everything avo writes *by itself*. None of it may make the working tree read as a candidate
  * change: the trajectory log and the harness gitignore are ours, and so is the memory log, which
@@ -120,13 +135,34 @@ export function withoutTrajectory(porcelain: string): string[] {
     });
 }
 
-/** Idempotent: writes `.avo/.gitignore` once, never touches an existing one. */
+/**
+ * Idempotent, and *additive*: a file we wrote gains any entry it is missing, so a repo that has been
+ * running avo since before `.avo/runs/` existed still stops tracking it. Returning early on an
+ * existing file — the original behaviour — meant a new trajectory path was ignored only in repos
+ * created after it, which is the worst kind of divergence: it works on the machine that added it.
+ *
+ * A `.avo/.gitignore` without our marker belongs to the operator and is left exactly as it is.
+ */
 export function ensureTrajectoryIgnored(cwd: string): void {
   const path = join(cwd, TRAJECTORY_IGNORE);
-  if (existsSync(path)) return;
+  let existing: string | null;
   try {
-    mkdirSync(join(cwd, ".avo"), { recursive: true });
-    writeFileSync(path, `# written by avo commit: trajectory, not lineage\nattempts.jsonl\nworktrees/\n`);
+    existing = readFileSync(path, "utf8");
+  } catch {
+    existing = null;
+  }
+  try {
+    if (existing === null) {
+      mkdirSync(join(cwd, ".avo"), { recursive: true });
+      writeFileSync(path, `${IGNORE_HEADER}\n${IGNORE_ENTRIES.join("\n")}\n`);
+      return;
+    }
+    const lines = existing.split("\n").map((l) => l.trim());
+    if (!lines.some((l) => l.startsWith(IGNORE_MARKER))) return;
+    const missing = IGNORE_ENTRIES.filter((e) => !lines.includes(e));
+    if (missing.length === 0) return;
+    const body = existing === "" || existing.endsWith("\n") ? existing : `${existing}\n`;
+    writeFileSync(path, `${body}${missing.join("\n")}\n`);
   } catch {
     // A read-only .avo just means the paths get unstaged explicitly instead; not worth failing on.
   }

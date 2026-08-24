@@ -7,6 +7,7 @@ import test from "node:test";
 import { bufferIo } from "../src/io.ts";
 import { commitCommand } from "../src/lineage.ts";
 import {
+  MEMORY_KINDS,
   beadId,
   listMemories,
   MEMORY_PATH,
@@ -442,4 +443,27 @@ test("the memory log is trajectory-adjacent but lives in lineage/, so it is comm
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("a memory kind added later is not silently read back as an insight", () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-kinds-"));
+  mkdirSync(join(dir, "lineage"), { recursive: true });
+  // The kind whitelist used to be written out inline, so `intervention` — added in S7b — read back
+  // as `insight`, which put a whole previous steering directive into the next one's citations.
+  const lines = MEMORY_KINDS.map((kind, i) =>
+    JSON.stringify({ ts: "2026-08-24T00:00:00.000Z", kind, key: `k${i}`, text: `a ${kind}`, version: null, bead: null, parent: null }),
+  );
+  writeFileSync(join(dir, "lineage/memory.jsonl"), `${lines.join("\n")}\n`);
+  const { memories } = readMemoryFile(dir);
+  assert.deepEqual(memories.map((m) => m.kind).sort(), [...MEMORY_KINDS].sort());
+});
+
+test("a kind we have never heard of still reads as an insight rather than corrupting the store", () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-kinds2-"));
+  mkdirSync(join(dir, "lineage"), { recursive: true });
+  writeFileSync(
+    join(dir, "lineage/memory.jsonl"),
+    `${JSON.stringify({ kind: "prophecy", key: "k", text: "t" })}\n`,
+  );
+  assert.equal(readMemoryFile(dir).memories[0]?.kind, "insight");
 });

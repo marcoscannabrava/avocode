@@ -11,6 +11,7 @@ import type { Memory } from "../src/mem.ts";
 import { ATTEMPTS_PATH, type Attempt, type RunOpts, type Runner, type RunResult } from "../src/score.ts";
 import {
   ANALYSIS_WINDOW,
+  aboutTheProblem,
   citationsFor,
   detect,
   exploredCorpus,
@@ -464,4 +465,29 @@ test("a bad option is a harness error, not a silent default", async () => {
   const io = bufferIo();
   assert.equal(await superviseCommand(["--stall", "x"], io, noTools), 2);
   assert.match(io.stderr, /--stall/);
+});
+
+test("a directive never cites an intervention — the supervisor does not quote itself", () => {
+  const memories: Memory[] = [
+    { ts: "", kind: "failure", key: "dead-1", text: "tiling made it slower", version: null, bead: null, parent: null },
+    {
+      ts: "",
+      kind: "intervention",
+      key: "avo-intervention-abc",
+      // A recorded intervention holds a whole previous directive, which names the docs it cited.
+      text: "steered on stall\n\nSTEERING (avo supervise)\nIn K and never mentioned: knowledge/warp-specialization.md",
+      version: null,
+      bead: null,
+      parent: null,
+    },
+  ];
+  const cited = citationsFor([], memories, []);
+  assert.equal(cited.filter((c) => c.ref.startsWith("avo-intervention")).length, 0);
+  assert.equal(cited.filter((c) => c.kind === "failure").length, 1, "real dead ends still get cited");
+
+  // And the doc that intervention recommended must not read as explored because it recommended it:
+  // otherwise a doc is cited exactly once, by the directive that then buries it.
+  const docs = [{ file: "knowledge/warp-specialization.md", title: "warp specialization", collection: "knowledge" }];
+  assert.deepEqual(unexplored(docs, exploredCorpus([], memories)), docs);
+  assert.deepEqual(aboutTheProblem(memories).map((m) => m.key), ["dead-1"]);
 });

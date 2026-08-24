@@ -100,7 +100,8 @@ avocode/
     install.ts             # avo install — wires pi | claude | codex to .agents/skills, no copying
     fan.ts                 # concurrency — worktrees, probes, guards, promote, resume
     supervise.ts           # stagnation detection + steering directive
-    agents.ts              # agent command templates (pi | claude | codex | custom)
+    run.ts                 # avo run — the continuous loop, its manifest, the intervention record
+    agents.ts              # agent command templates + driveAgent (one turn, as fan and run see it)
   .agents/skills/          # THE agent-agnostic layer (Agent Skills standard)
     avo-vary/SKILL.md      #   how to perform one variation step
     avo-lineage/SKILL.md   #   how to read/extend Pt
@@ -435,22 +436,20 @@ Each slice: build → verify with the stated command → commit → update `PROG
   memory-log bug, same fix: filter through `withoutTrajectory`, and write `.avo/.gitignore` on the
   way in the way `avo commit` does, since `avo fan` may well be the first avo command a repo sees.
 
-### S7 — Supervisor + continuous loop `[~]` (`avo supervise` shipped; `avo run` is next)
+### S7 — Supervisor + continuous loop `[x]`
 - `avo supervise [--json]` `[x]` — reads lineage + attempt log, detects (a) **stall**: ≥N attempts
   with no committed improvement; (b) **thrash**: ≥K consecutive attempts that failed the *same way*
   (the signature, not the file region — see the deviation below and #24). Emits a steering directive
   citing specific prior versions, the dead ends in memory, and the docs in `K` no version has
   mentioned.
-- `avo run` `[ ]` — the continuous evolution driver: prompt → agent turn → `avo score`/`avo commit` →
+- `avo run` `[x]` — the continuous evolution driver: prompt → agent turn → `avo commit` →
   `avo supervise` → inject directive if triggered → repeat. Replaces the hand-rolled `ralph.sh`
   polling for the AVO loop specifically (`ralph.sh` stays as the *meta* loop building `avocode`).
-- Every intervention is logged (lineage + bead) so the trajectory is auditable — the paper's 7-day
-  run is only interpretable because interventions are recorded. **Not built yet:** `avo supervise`
-  only reads; the *writing* of an intervention belongs to whoever injects the directive, which is
-  `avo run`.
+- Every intervention is logged (memory + bead) so the trajectory is auditable — the paper's 7-day
+  run is only interpretable because interventions are recorded.
 - **Verify:** unit tests driving the detector off synthetic lineage fixtures (stall fires at exactly
   N, resets on improvement, thrash fires on repeated same-signature failures) `[x]`; `avo run
-  --dry-run --max-iters 3` against the stub agent produces the expected transcript `[ ]`.
+  --dry-run --max-iters 3` against the stub agent produces the expected transcript `[x]`.
 - **Shipped (iter 8) — the detector half.** `src/supervise.ts`: `readAttempts` (the first reader of
   `.avo/attempts.jsonl` — until now only `avo score` wrote it), the pure `detect`, the citation
   builder and `avo supervise`. Split from `avo run` on this plan's own instruction to build the
@@ -487,6 +486,41 @@ Each slice: build → verify with the stated command → commit → update `PROG
     it is a step in a variation turn, not a separate capability, and the plan's skill list has five.
   - `knowledge.ts` gained `listDocs`: "what is in `K` at all" is a different question from "what
     matches this query", and a search cannot find what nobody thought to query for.
+
+- **Shipped (iter 9) — the driver half.** `src/run.ts`: the loop, its crash-safe manifest and the
+  intervention record. `avo fan`'s probe loop with the worktree taken away. Recorded deviations,
+  each with its reason:
+  - **`ensureTrajectoryIgnored` is now additive**, not write-once. It returned early whenever
+    `.avo/.gitignore` existed, so `.avo/runs/` would have been ignored *only in repos created after
+    this slice* — the worst kind of divergence, since it works on the machine that added it. A file
+    carrying our marker (matched by the `# written by avo` prefix, so files written before `avo run`
+    existed still qualify) gains the entries it is missing; a file without the marker is the
+    operator's and is never touched. `IGNORE_ENTRIES` is asserted against `TRAJECTORY_PATHS` by a
+    test, because the two drifting apart is silent.
+  - **The manifest *is* the `--json` report.** One shape, not two: a manifest that can drift from
+    what the command reports is one nobody trusts after a crash, and after a crash is the only time
+    anybody reads it. Rewritten after every iteration.
+  - **`MemoryKind` gained `intervention`, and it is a labelled bead, not a `bd remember` insight.**
+    Insights are injected at prime time, so every future session would open with a stale directive
+    from a run that ended days ago. `avo mem` lists interventions; `avo mem prime` does not.
+  - **A no-op only counts as one when HEAD did not move.** An agent that ran `avo commit` itself
+    leaves a clean tree, and calling that "nothing happened" would stop a loop that is working.
+  - **`avo run` shares `avo fan`'s guard budget** (`AVO_FAN_DEPTH`/`LEVEL`/`CHAIN`) rather than
+    getting its own. A turn is an agent that can call `avo run`, and a loop inside a loop is the same
+    exponential hazard as a fan-out inside one; two separate budgets would each permit three levels.
+  - **`MAX_CONSECUTIVE_NOOPS` is a stop condition the supervisor cannot express.** An unchanged tree
+    is never scored, so it records no attempt and the stall detector never sees it — an idle agent
+    would otherwise burn the whole budget invisibly. Related to but distinct from #25.
+  - **`driveAgent`/`capOutput` moved into `agents.ts`** and `fan.ts` now calls them. `avo fan` and
+    `avo run` must report a timeout, a crash and a missing binary in the same words; two copies of
+    "how does an agent turn end" is how they start disagreeing.
+  - **`--model` does not default to `AVO_PROBE_MODEL`.** Probes explore on a small model; `avo run`
+    is the exploitation path (§3) and takes the agent's own default unless told otherwise.
+  - **#8 measured before making `readLineage` an inner-loop call**, as this plan asked: the `git log`
+    it runs costs ~14ms at 5,000 commits and ~3µs/commit, against an agent turn measured in seconds
+    to minutes. Not a problem for the loop; the e2e asserts it at 2,000 commits so a regression is
+    caught rather than assumed away.
+  - Two real bugs the loop caught by being run, not by being read — see PROGRESS.jsonl iter 9.
 
 ### S8 — Pi implementation `[ ]`
 - `pi/extensions/avo/index.ts` — `pi.registerTool` for `avo_score`, `avo_commit`, `avo_lineage`,

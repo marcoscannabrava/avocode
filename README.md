@@ -9,11 +9,11 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 ## Status
 
 S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory), S4 (`K` —
-knowledge), S5 (agent-agnostic skills) and S6 (concurrency) are done, and S7's detector
-(`avo supervise`) with it. `avo init`, `avo install`, `avo doctor`, `avo score`, `avo commit`,
-`avo lineage`, `avo best`, `avo mem`, `avo know`, `avo fan` and `avo supervise` work, and the five
-skills in `.agents/skills/` are wired for `pi`, Claude Code and Codex. `avo run` — the continuous
-driver that calls the supervisor between agent turns — is the rest of S7.
+knowledge), S5 (agent-agnostic skills), S6 (concurrency) and S7 (supervisor + continuous loop) are
+done. `avo init`, `avo install`, `avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`,
+`avo mem`, `avo know`, `avo fan`, `avo supervise` and `avo run` work, and the five skills in
+`.agents/skills/` are wired for `pi`, Claude Code and Codex. Next is S8 (the native Pi extension)
+and S9 (end-to-end validation on a real optimization target).
 
 ## Quickstart
 
@@ -42,6 +42,11 @@ avo fan --promote 2          # bring the winner into the working tree, then scor
 # is the loop still making progress? exit 1 means it printed a directive to follow
 avo supervise
 avo supervise --json | jq -r .directive
+
+# or hand the whole loop over: turn -> commit -> supervise -> steer -> repeat
+avo run --prompt-file task.md --max-iters 20 --dry-run   # what it would do, spawning nothing
+avo run --prompt-file task.md --max-iters 20
+touch .avo/STOP              # stops it before the next turn, from anywhere
 
 # K — what the agent may consult before it varies anything
 avo know add ./docs/tuning.md          # or a url, with FIRECRAWL_API_KEY set
@@ -275,7 +280,7 @@ Thresholds belong in `.avo/config.json` because they are repo policy: a scorer t
 wants a smaller `stall` than one that takes a second. A flag overrides it.
 
 The exit code is the interface — `avo supervise || inject_directive` is the whole integration for a
-shell loop, and `avo run` (the rest of S7) will use the same two codes.
+shell loop, and `avo run` reads the same two codes between turns.
 
 **The directive cites.** "Try something else" is worthless: the agent already believes it is trying
 something else. So the directive names prior versions with their scores and rationales, the dead ends
@@ -292,6 +297,49 @@ second, so with a fast scorer the two are indistinguishable by time.
 `avo supervise` only ever reads. It writes nothing, moves nothing, and leaves the working tree
 byte-identical, because a supervisor that dirtied the tree would make the harness's own output part
 of the next candidate's diff.
+
+## `avo run` — the continuous loop
+
+`avo fan` explores; `avo run` *exploits*. One prompt, N iterations of **agent turn → `avo commit` →
+`avo supervise` → inject the directive**, in the root working tree rather than in a worktree — this
+is the case where uncommitted work is the point rather than a hazard.
+
+```bash
+avo run --prompt-file task.md --max-iters 20
+avo run --prompt "make the tokenizer faster without changing its output" --max-iters 5 --json
+avo run --prompt-file task.md --dry-run      # the resolved plan and the first turn prompt; spawns nothing
+avo run --prompt-file task.md --stall 3 --thrash 2 --timeout 600 --agent claude --model opus
+```
+
+**Every iteration is a fresh process.** Nothing from the previous turn is in the agent's context, so
+the turn prompt is the only continuity there is: after the first, each one carries the operator's
+task *plus* what the last iteration decided, plus the steering directive when one fired. The task is
+never replaced by the directive — an agent told only "you are stalling" has lost the problem.
+
+**Every intervention is written down.** The paper's seven-day run is only interpretable because the
+interventions are recorded, so each injected directive becomes a labelled bead (`bd create -l
+avo,avo-intervention`) or a `lineage/memory.jsonl` record. Deliberately *not* an insight: insights
+are injected at prime time, and every future session would then open with a stale "you are stalling,
+read v3" from a run that ended days ago.
+
+| It stops when | Because |
+| --- | --- |
+| `--max-iters` is reached | the budget is the operator's, not the agent's |
+| `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is genuinely done |
+| 3 iterations in a row change nothing | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. This is the one stop condition steering cannot express |
+| the agent binary cannot be started | it will not start on the next iteration either; retrying it nine more times is spinning |
+
+The run manifest at `.avo/runs/<id>/manifest.json` is rewritten after **every** iteration, never at
+the end, and each turn's raw agent output is kept beside it under `logs/`. A loop meant to run for
+days will be killed at some point, and the difference between per-iteration and at-exit is the
+difference between a recoverable record and nothing at all. `.avo/runs/` is trajectory, not lineage:
+it is in `TRAJECTORY_PATHS` and gitignored, so the record of *how* a version was reached never lands
+inside the version.
+
+`avo run` carries the same four guards as `avo fan`, on the same budget (`AVO_FAN_DEPTH`,
+`AVO_FAN_LEVEL`, `AVO_FAN_CHAIN`), because a turn is itself an agent that can call `avo run` — and a
+loop inside a loop is the same exponential hazard as a fan-out inside one. A guard is a refusal
+(exit 1), not a harness error.
 
 ## `avo install` — the agent-agnostic layer
 
@@ -351,7 +399,7 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
 
@@ -372,16 +420,17 @@ src/steps.ts      the created/unchanged/skipped step report init and know init s
 src/init.ts       avo init — idempotent scaffolding, including bd init
 src/install.ts    avo install — wires pi | claude | codex to .agents/skills without copying
 src/skills.ts     the Agent Skills frontmatter parser and spec validator
-src/agents.ts     headless agent command templates: pi | claude | codex | custom
+src/agents.ts     headless agent command templates + driveAgent, one turn as fan and run see it
 src/fan.ts        avo fan — worktrees, probes, the four guards, promote and resume
 src/supervise.ts  avo supervise — the stall/thrash detector and the directive it cites with
+src/run.ts        avo run — the continuous loop, its manifest and the intervention record
 src/io.ts         injectable output sink, so commands are unit-testable
 .agents/skills/   THE agent-agnostic layer: avo-vary, avo-score, avo-lineage, avo-knowledge,
                   avo-fanout
 AGENTS.md         the always-on rules + the skills index (managed block, hand edits preserved)
 templates/score/  reference scorers + the authoring guide
 test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install,-fan,
-                  -supervise}.sh
+                  -supervise,-run}.sh
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

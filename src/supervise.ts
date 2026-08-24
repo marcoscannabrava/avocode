@@ -313,9 +313,28 @@ export function unexplored(docs: readonly DocRef[], corpus: string, limit = MAX_
   return docs.filter((d) => !isExplored(d, corpus.toLowerCase())).slice(0, limit);
 }
 
+/**
+ * Memories that say something about the *problem*. Interventions are excluded, and that exclusion is
+ * load-bearing in two ways — both found by running the loop rather than by reading it (S7b):
+ *
+ * 1. An intervention's text is a whole previous directive, so citing one nests the last directive
+ *    inside this one. Three iterations in, the agent reads its own supervisor quoting itself.
+ * 2. Worse, that directive *names* the unexplored docs it cited. Fold it into the corpus below and
+ *    every doc the supervisor has ever recommended reads as explored — so a doc is cited exactly
+ *    once, by the intervention that then buries it. The supervisor would erase its own best advice.
+ *
+ * An intervention is trajectory about the supervisor, not knowledge about the problem. It is
+ * recorded so a run can be audited (`avo mem`), never so a directive can cite it.
+ */
+export function aboutTheProblem(memories: readonly Memory[]): Memory[] {
+  return memories.filter((m) => m.kind !== "intervention");
+}
+
 /** The corpus "explored" is measured against: every rationale and everything remembered. */
 export function exploredCorpus(versions: readonly Version[], memories: readonly Memory[]): string {
-  return [...versions.map((v) => `${v.subject} ${v.why ?? ""}`), ...memories.map((m) => m.text)].join("\n").toLowerCase();
+  return [...versions.map((v) => `${v.subject} ${v.why ?? ""}`), ...aboutTheProblem(memories).map((m) => m.text)]
+    .join("\n")
+    .toLowerCase();
 }
 
 export function citationsFor(
@@ -335,7 +354,8 @@ export function citationsFor(
     });
   }
   // Dead ends first: "do not re-try this" is worth more to a stalled agent than a general insight.
-  const ranked = [...memories.filter((m) => m.kind === "failure"), ...memories.filter((m) => m.kind === "insight")];
+  const about = aboutTheProblem(memories);
+  const ranked = [...about.filter((m) => m.kind === "failure"), ...about.filter((m) => m.kind === "insight")];
   for (const m of ranked.slice(0, MAX_MEMORY_CITATIONS)) {
     citations.push({ kind: m.kind === "failure" ? "failure" : "insight", ref: m.key, text: m.text });
   }

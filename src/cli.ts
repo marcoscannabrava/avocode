@@ -7,6 +7,7 @@ import { processIo } from "./io.ts";
 import { knowCommand } from "./knowledge.ts";
 import { bestCommand, commitCommand, lineageCommand } from "./lineage.ts";
 import { memCommand } from "./mem.ts";
+import { runCommand } from "./run.ts";
 import { scoreCommand } from "./score.ts";
 import { superviseCommand } from "./supervise.ts";
 import { VERSION } from "./version.ts";
@@ -25,6 +26,7 @@ commands:
   best [--json]     the version every candidate is ranked against
   mem [...]         what the loop remembers; 'add "<insight>"' writes one; 'prime' for a session
   fan [options]     explore N directions at once, one git worktree + headless agent each
+  run [options]     the continuous loop: agent turn -> commit -> supervise -> steer -> repeat
   know [...]        K: 'init', 'query "<q>"', 'add <url|path>', 'search "<q>"', 'reindex'
   supervise [...]   detect a stall or a thrash and emit a steering directive that cites P_t and K
   version           print the version
@@ -84,6 +86,20 @@ avo fan:
   exit codes        0 = ran, 1 = a guard refused or every probe failed, 2 = harness error
   guards            AVO_FAN_DEPTH (default 3) caps nesting; a repeated prompt is refused as a cycle
 
+avo run:
+  --prompt "<text>" | --prompt-file <f>   the task every iteration is given
+  --max-iters <n>   how many turns at most (default 10)
+  --agent <a>       pi | claude | codex | a custom one from .avo/config.json
+                    (default: $AVO_AGENT, the config, then the first on PATH)
+  --model <m>       the model each turn runs on (default: the agent's own)
+  --timeout <s>     kill a turn's process group after s seconds (default 900, 0 = no limit)
+  --stall <n> --thrash <k>   the supervisor's thresholds, as for avo supervise
+  --dry-run         print the resolved plan and the first turn prompt; spawn nothing
+  --json --cwd <dir>
+  exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
+  stops on          --max-iters, an .avo/STOP file, 3 unchanged iterations in a row, or an agent
+                    binary that cannot be started
+
 avo supervise:
   --stall <n>       attempts with no committed improvement before it steers
                     (default: .avo/config.json 'supervise.stall', then 5)
@@ -125,6 +141,8 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
       return await knowCommand(rest, io);
     case "fan":
       return await fanCommand(rest, io);
+    case "run":
+      return await runCommand(rest, io);
     case "doctor":
       return doctorCommand(rest, io, VERSION);
     case "score":

@@ -9,11 +9,11 @@
 
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { loadConfig } from "./config.ts";
 import { ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
 import type { Io } from "./io.ts";
-import { parseAgentOutput, resolveTemplate, type AgentTemplate, type AgentTokens } from "./agents.ts";
+import { capOutput, driveAgent, resolveTemplate, type AgentTemplate, type AgentTokens, type Capped } from "./agents.ts";
 import {
   concurrencyCap,
   mapLimit,
@@ -44,8 +44,6 @@ export const DEFAULT_N = 3;
 export const DEFAULT_TIMEOUT_S = 900;
 
 /** What `avo fan` returns per probe; anything larger goes to a file whose path we report. */
-const SUMMARY_CAP_CHARS = 50_000;
-const SUMMARY_CAP_LINES = 2_000;
 
 const GIT_TIMEOUT_MS = 60_000;
 
@@ -428,26 +426,12 @@ export function listRuns(cwd: string): Manifest[] {
 // output
 // ---------------------------------------------------------------------------
 
-export interface Capped {
-  text: string;
-  truncated: boolean;
-}
-
-/** 50KB / 2000 lines, whichever comes first. The uncapped text is always on disk (`log_path`). */
-export function capOutput(s: string, maxChars = SUMMARY_CAP_CHARS, maxLines = SUMMARY_CAP_LINES): Capped {
-  const lines = s.split("\n");
-  let text = s;
-  let truncated = false;
-  if (lines.length > maxLines) {
-    text = lines.slice(0, maxLines).join("\n");
-    truncated = true;
-  }
-  if (text.length > maxChars) {
-    text = text.slice(0, maxChars);
-    truncated = true;
-  }
-  return { text, truncated };
-}
+/**
+ * Re-exported: the cap lives with the agent driver in `agents.ts` because `avo run` truncates a
+ * turn's summary by the same rule, and one loose copy of "how much of an agent's output do we
+ * keep" is exactly how two commands start disagreeing about it.
+ */
+export { capOutput, type Capped };
 
 // ---------------------------------------------------------------------------
 // one probe
@@ -482,39 +466,25 @@ interface ProbeContext {
 async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeResult> {
   const worktree = join(ctx.cwd, probe.worktree);
   const logPath = join(WORKTREES_DIR, ctx.runId, "logs", `${probe.i}.log`);
-  const started = ctx.now().getTime();
 
-  const run = await ctx.runner(ctx.template.command, ctx.template.args({ prompt: ctx.prompt, model: ctx.model }), {
-    cwd: worktree,
-    timeoutMs: ctx.timeoutS * 1000,
-    env: { ...ctx.env, [PROBE_ENV]: String(probe.i) },
-  });
-  const wallS = Math.round((ctx.now().getTime() - started) / 100) / 10;
-
-  const raw = run.stderr === "" ? run.stdout : `${run.stdout}\n--- stderr ---\n${run.stderr}`;
-  try {
-    mkdirSync(dirname(join(ctx.cwd, logPath)), { recursive: true });
-    writeFileSync(join(ctx.cwd, logPath), raw);
-  } catch {
-    // A log we cannot write must not lose the probe; the result below still carries the summary.
-  }
-
-  const parsed = parseAgentOutput(ctx.template.format, run.stdout);
-  const capped = capOutput(parsed.summary ?? "");
-
-  let error: string | null = null;
-  if (run.spawnError !== null) {
-    error = `could not execute '${ctx.template.command}' — ${run.spawnError}. Is it on PATH?`;
-  } else if (run.timedOut) {
-    error = `the agent exceeded --timeout ${ctx.timeoutS}s and its process group was killed`;
-  } else if (run.code !== 0) {
-    error = `the agent exited ${run.code}; its output is in ${logPath}`;
-  }
+  const turn = await driveAgent(
+    ctx.runner,
+    ctx.template,
+    { prompt: ctx.prompt, model: ctx.model },
+    {
+      cwd: worktree,
+      logPath,
+      logFile: join(ctx.cwd, logPath),
+      timeoutS: ctx.timeoutS,
+      env: { ...ctx.env, [PROBE_ENV]: String(probe.i) },
+    },
+    ctx.now,
+  );
 
   // Scored even when the agent failed: a half-finished edit that still passes `f` is a real result,
   // and one that no longer builds is exactly what the operator needs to see.
   let score: ProbeScore | null = null;
-  if (ctx.score && run.spawnError === null && existsSync(join(worktree, SCORER_PATH))) {
+  if (ctx.score && !turn.spawn_failed && existsSync(join(worktree, SCORER_PATH))) {
     const { attempt } = await runScore(
       {
         json: true,
@@ -533,18 +503,18 @@ async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeR
 
   return {
     i: probe.i,
-    ok: error === null,
+    ok: turn.ok,
     score,
     diffstat: await diffstatOf(ctx.runner, worktree, ctx.baseline),
-    summary: capped.text === "" ? null : capped.text,
+    summary: turn.summary,
     worktree: probe.worktree,
-    tokens: parsed.tokens,
-    wall_s: wallS,
-    exit_code: run.code,
-    timed_out: run.timedOut,
+    tokens: turn.tokens,
+    wall_s: turn.wall_s,
+    exit_code: turn.exit_code,
+    timed_out: turn.timed_out,
     log_path: logPath,
-    truncated: capped.truncated,
-    error,
+    truncated: turn.truncated,
+    error: turn.error,
   };
 }
 

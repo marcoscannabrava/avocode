@@ -91,5 +91,23 @@ avo know search "<the sub-problem>" --ingest    # pull new material into K, with
 If every direction you can name is already in the lineage, stop guessing and let `f` choose — see
 [avo-fanout](../avo-fanout/SKILL.md).
 
+## If you are running inside `avo run`
+
+`avo run` drives this loop for many turns: it spawns you, runs `avo commit` on whatever you left in
+the tree, asks `avo supervise` whether to steer, and spawns a *fresh* process for the next turn.
+Three things follow, and they are easy to get wrong:
+
+- **You will not remember this turn.** The next iteration is a new process; its only context is the
+  prompt it is given. Anything worth carrying forward has to be written down — `avo commit --why`,
+  or `avo mem add "<insight>"` for something that is not tied to a version.
+- **You do not have to commit.** `avo run` runs the commit rule after you, on the tree you leave
+  behind. Committing yourself is fine too; it is not a no-op and the loop keeps going.
+- **`touch .avo/STOP` when the task is genuinely done.** It ends the loop before the next turn. Use
+  it when there is nothing left to vary — not when *this* turn was hard. A loop that keeps going
+  after the work is finished burns budget on candidates nobody wants.
+
+If you find yourself about to call `avo run` or `avo fan` from inside a turn, check the depth first:
+`AVO_FAN_LEVEL` against `AVO_FAN_DEPTH`. At the limit you must do the work yourself.
+
 See [avo-score](../avo-score/SKILL.md) for the `f` contract, [avo-lineage](../avo-lineage/SKILL.md)
 for reading `P_t`, and [avo-knowledge](../avo-knowledge/SKILL.md) for growing `K`.
