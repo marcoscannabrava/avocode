@@ -15,7 +15,15 @@ export const MEMORY_PATH = "lineage/memory.jsonl";
 export const BEAD_LABEL = "avo";
 const BD_TIMEOUT_MS = 60_000;
 
-export type MemoryKind = "insight" | "version" | "failure";
+/**
+ * `intervention` is S7b's: a directive `avo run` injected into a turn. It is deliberately NOT an
+ * insight — insights go through `bd remember` and are injected at prime time, so every future
+ * session would open with a stale "you are stalling, read v3" from a run that ended days ago. An
+ * intervention is a labelled bead: auditable when you go looking for it (the paper's 7-day run is
+ * only interpretable because interventions are recorded), silent when you are not.
+ */
+export const MEMORY_KINDS = ["insight", "version", "failure", "intervention"] as const;
+export type MemoryKind = (typeof MEMORY_KINDS)[number];
 
 /**
  * One remembered thing. The same shape whichever backend holds it, so `avo mem --json` is stable
@@ -157,7 +165,10 @@ export function readMemoryFile(cwd: string): { memories: Memory[]; warnings: str
     }
     byKey.set(m.key, {
       ts: typeof m.ts === "string" ? m.ts : "",
-      kind: m.kind === "version" || m.kind === "failure" ? m.kind : "insight",
+      // Checked against MEMORY_KINDS rather than a hand-written list: the original enumerated the
+      // kinds inline, so adding `intervention` in S7b left every intervention reading back as an
+      // insight — which put a whole previous directive into the next one's citations.
+      kind: MEMORY_KINDS.includes(m.kind as MemoryKind) ? (m.kind as MemoryKind) : "insight",
       key: m.key,
       text: m.text,
       version: typeof m.version === "number" ? m.version : null,
@@ -234,7 +245,7 @@ export async function remember(
       else return { ok: true, backend: "beads", key, bead: null, parent: null, warnings, error: null };
     } else {
       const id = beadId(prefix, { ...input, key });
-      const label = input.kind === "version" ? `${BEAD_LABEL},avo-version` : `${BEAD_LABEL},avo-insight`;
+      const label = `${BEAD_LABEL},avo-${input.kind === "version" ? "version" : input.kind === "intervention" ? "intervention" : "insight"}`;
       const args = ["create", input.text, "--id", id, "--silent", "--force", "-l", label];
       if (input.detail !== undefined && input.detail !== "") args.push("-d", input.detail);
       args.push("-t", input.kind === "version" ? "task" : "chore");
@@ -334,6 +345,7 @@ export function renderPrime(memories: readonly Memory[]): string {
   group("insight", "insights");
   group("failure", "dead ends (do not re-try these)");
   group("version", "committed versions");
+  // Interventions are recorded for audit, not for priming: see MemoryKind. `avo mem` lists them.
   return `${lines.join("\n")}\n`;
 }
 

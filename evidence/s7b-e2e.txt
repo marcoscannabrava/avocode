@@ -1,0 +1,93 @@
+# avo S7b e2e — 2026-08-24T16:04:29Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+
+## 0. fixture
+PASS  repo at HEAD ff19d6bc, a stub agent and an f that counts lines
+
+## 1. --dry-run
+PASS  --dry-run exits 0
+PASS  it says plainly that it did nothing
+PASS  --max-iters 3 is reflected in the plan
+PASS  the resolved command line is shown with the prompt elided
+PASS  the first turn prompt is shown verbatim
+PASS  the plan names the supervise step and its thresholds
+PASS  no run directory was created
+PASS  no agent was spawned
+PASS  not even .avo/.gitignore was written
+PASS  the working tree is byte-identical afterwards
+
+## 2. the loop: turn -> commit -> supervise -> repeat
+PASS  a productive loop exits 0
+PASS  three iterations ran
+PASS  each turn committed a version: v1, v2, v3
+PASS  it stopped because the budget ran out, not for another reason
+PASS  a loop that is making progress is never steered
+PASS  avo lineage reads back the three versions the loop committed
+PASS  v3's commit carries the Avo-Version trailer
+PASS  the agent's own final message became the commit rationale
+PASS  avo best names v3 at 4 lines
+
+## 3. the run log is trajectory
+PASS  .avo/runs/ never shows up in git status
+PASS  and it is in no commit the loop made
+PASS  .avo/.gitignore carries the entry
+PASS  the run manifest is on disk
+PASS  each turn's raw agent output is on disk
+PASS  the manifest holds every iteration
+PASS  a repo that predates .avo/runs/ receives the entry on the next run
+PASS  and its original header is left exactly as it was
+
+## 4. the supervisor steers, and the directive reaches the agent
+PASS  a failing f never yields a commit (invariant 2)
+PASS  past the threshold, the loop is steered
+PASS  both signals fire: not progressing AND failing the same way
+PASS  the operator's task survives every turn
+PASS  the directive is INJECTED into the next turn, not merely reported
+PASS  a thrashing agent is told to re-diagnose, not to explore
+PASS  exactly one directive: a directive never quotes the previous directive
+PASS  and it never cites an intervention as if it were knowledge
+PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
+PASS  the injected directive is recorded (avo-intervention-69804a4b)
+PASS  recorded as an intervention, not as an insight
+PASS  avo mem lists it, so a finished run can be audited
+PASS  but it does not prime a future session with a stale directive
+
+## 5. stopping
+PASS  an agent that changes nothing stops the loop after 3 turns, not after 8
+PASS  an unchanged tree is never scored, which is why the supervisor cannot see this case
+PASS  .avo/STOP halts the loop before the first turn is spawned
+PASS  a loop that never ran a turn exits 1
+PASS  and nothing was committed
+PASS  a STOP file dropped mid-run halts it after 19 of 50 iterations
+PASS  an agent binary that cannot be started stops the loop after one try, not five
+PASS  and it exits 1
+PASS  a turn past its --timeout is killed
+PASS  a 30s turn under --timeout 2 returned in 2s
+
+## 6. crash safety: the manifest is rewritten after EVERY iteration
+PASS  a killed run left a manifest behind
+PASS  it holds the 3 iteration(s) that finished before the kill
+PASS  and it is still open, so a reader can tell the run did not end
+PASS  every finished iteration's version survived the kill (3 committed)
+
+## 7. the guards, since a turn is an agent that can call avo run
+PASS  a run at the depth limit is refused (exit 1)
+PASS  and it says which limit and how to raise it
+PASS  a refused run creates nothing
+PASS  the same prompt already running higher up is refused as a cycle
+PASS  and the refusal says so
+PASS  the turn runs one level deeper than its parent, and knows the cap
+
+## 8. --json, and re-running
+PASS  a second run leaves no stray change behind
+PASS  it kept evolving from where the first run stopped
+PASS  each run gets its own directory; the first one is not overwritten
+PASS  one JSON object, every field typed as documented
+PASS  it is a single JSON object on stdout
+
+## 9. #8 measured: readLineage runs once per iteration now
+      2000 commits: the git log readLineage runs took 7ms
+PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 7ms
+
+## summary
+all checks passed (67 of them)
