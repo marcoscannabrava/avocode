@@ -1,0 +1,74 @@
+# avo S6 e2e — 2026-08-24T15:17:29Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+
+## 0. fixture
+PASS  repo at HEAD d0080fe7, git worktree list has 1 entry
+
+## 1. the avo-fanout skill
+PASS  avo-fanout/SKILL.md exists
+PASS  it opens with a frontmatter fence
+PASS  name matches its directory
+PASS  it documents the small-model policy
+PASS  it documents the depth guard
+PASS  avo help documents --promote
+PASS  avo help documents --resume
+PASS  avo help documents --clean
+PASS  avo help documents --list
+PASS  avo help documents AVO_FAN_DEPTH
+PASS  avo help documents AVO_PROBE_MODEL
+
+## 2. four probes in parallel worktrees
+PASS  avo fan exited 0
+PASS  all four probes returned a result
+PASS  run id 20260824T151729Z-727ab9
+PASS  every probe process finished ok
+PASS  every probe was scored by .avo/score and passed
+PASS  each probe scored its own diff (2,3,4,5 lines)
+PASS  best names the highest-scoring passing probe
+PASS  every diffstat names the file that changed
+PASS  the guard environment reached every agent process
+PASS  git worktree list has 4 new entries
+PASS  the root working tree is untouched
+PASS  HEAD did not move
+PASS  the full probe output is on disk at .avo/worktrees/20260824T151729Z-727ab9/logs/1.log
+PASS  the run manifest survived the run
+
+## 3. promote
+PASS  probe 3 promoted cleanly
+PASS  probe 3's work is now in the working tree
+PASS  only the chosen probe's work came across
+PASS  promote did not commit — avo commit is the only writer of a version
+PASS  the patch is kept as evidence at .avo/worktrees/20260824T151729Z-727ab9/promote-3.patch
+PASS  the promoted candidate scores 4 in the real tree
+
+## 4. cleanup
+PASS  git worktree list is back to baseline
+PASS  the run directory is gone
+PASS  avo fan --list reports no runs
+
+## 5. a probe that changed nothing
+PASS  both empty worktrees were removed automatically
+PASS  git worktree list never left baseline
+
+## 6. the guards
+PASS  a depth-limited fan-out is a refusal (exit 1), not a harness error
+PASS  the refusal names the depth limit
+PASS  nothing was created before the refusal
+PASS  a repeated prompt is refused as a cycle (exit 1)
+PASS  the refusal names the cycle
+PASS  a 60s probe under --timeout 2 returned in 2s
+PASS  the timed-out probe is reported as such
+
+## 7. a killed run is resumable
+PASS  avo fan --resume exited 0
+PASS  both probes are present after the resume
+PASS  only the unfinished probe was re-run
+PASS  the resumed probe scored like the original
+PASS  git worktree list is back to baseline after every suite
+
+## 8. usage errors
+PASS  a fan-out with no prompt exits 2
+PASS  an unknown agent names the alternatives
+PASS  promoting from a run that does not exist says so
+
+# 52 checks passed, 0 failed

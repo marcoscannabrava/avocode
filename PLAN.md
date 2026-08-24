@@ -98,7 +98,7 @@ avocode/
     steps.ts               # the created/unchanged/skipped step report shared by init and know init
     skills.ts              # the Agent Skills frontmatter parser + spec validator
     install.ts             # avo install — wires pi | claude | codex to .agents/skills, no copying
-    fan.ts                 # concurrency — worktrees + headless agent procs
+    fan.ts                 # concurrency — worktrees, probes, guards, promote, resume
     supervise.ts           # stagnation detection + steering directive
     agents.ts              # agent command templates (pi | claude | codex | custom)
   .agents/skills/          # THE agent-agnostic layer (Agent Skills standard)
@@ -106,7 +106,7 @@ avocode/
     avo-lineage/SKILL.md   #   how to read/extend Pt
     avo-knowledge/SKILL.md #   how to search K and grow it from the web
     avo-score/SKILL.md     #   the f contract, how to author a scorer
-    avo-fanout/SKILL.md    #   when and how to parallelize with small models (S6, with `avo fan`)
+    avo-fanout/SKILL.md    #   when and how to parallelize with small models
   AGENTS.md                # always-on rules + the skills index; only the marked block is managed
   pi/extensions/
     avo/index.ts           # native Pi tools (thin wrappers over src/)
@@ -370,7 +370,7 @@ Each slice: build → verify with the stated command → commit → update `PROG
   `--approve`, or the skills silently do not load in exactly the mode it drives. `avo install`
   warns about this every time it wires pi.
 
-### S6 — Concurrency: `avo fan` `[ ]`
+### S6 — Concurrency: `avo fan` `[x]`
 - Author `.agents/skills/avo-fanout/SKILL.md` (deferred from S5) alongside the command, so the skill
   and the guards it documents ship together. `src/skills.ts` validates it; `avo install` picks it up
   with no change — that is what the one-directory symlink for Claude Code buys.
@@ -389,6 +389,51 @@ Each slice: build → verify with the stated command → commit → update `PROG
 - **Verify:** e2e with a stub agent binary (a script that edits a file and exits) — 4 parallel
   probes, all four results returned, worktrees cleaned, `git worktree list` back to baseline;
   timeout and depth-guard tests.
+- **Shipped (iter 7):** `src/agents.ts` (the command templates and the output readers) and
+  `src/fan.ts` (worktrees, probes, guards, promote, resume, clean), plus
+  `.agents/skills/avo-fanout/SKILL.md`. `avo install` picked the fifth skill up with **no code
+  change** — that is what the one-directory symlink from S5 bought. Every agent surface was read off
+  the real binary before being coded against: pi 0.84.3 (`--approve`, `--mode json`, and the
+  `message_end` / `message_update` events in its `docs/json.md`), claude 2.1.241 (`--print
+  --output-format stream-json --verbose`, whose single `{"type":"result"}` line carries both the
+  final message and the usage), codex-cli 0.147.0 (`exec --json`, `item.completed` /
+  `turn.completed`). Recorded deviations, each with its reason:
+  - **`--promote <i>` applies a patch and stops.** It does not score and does not commit: `avo
+    commit` is the only writer of a version (invariant 1) and promotion is the explicit, separate
+    step invariant 7 asks for. The patch is written to `.avo/worktrees/<run>/promote-<i>.patch`
+    *before* it is applied, so a rejected promotion still leaves something to inspect; a `--3way`
+    fallback is used only when the plain apply fails, and says so.
+  - **Probes are scored automatically**, so the returned `score` is comparable across probes without
+    N extra commands. `--no-score` opts out. A probe is scored even when its agent process failed —
+    a half-finished edit that still passes `f` is a real result, and one that no longer builds is
+    exactly what the operator needs to see. Hence `ok` (the process) and `score` (the candidate) are
+    separate fields.
+  - **`--list` and `--clean <id|all>` were added.** "Cleanup removes untouched worktrees" leaves the
+    *touched* ones by design — they are the only copy of that work — so without an explicit cleaner
+    `git worktree list` fills up and the feature becomes annoying enough to stop using.
+  - **codex gets `--sandbox workspace-write`, not the bypass flag.** The worktree *is* the writable
+    workspace, which is the whole point of fanning out into one; reads stay unrestricted so `avo
+    score` works. The cost is that `avo commit` inside a codex probe is blocked (it would write to
+    the parent repo's `.git`) — and promotion is the intended path anyway.
+  - **The guards travel in the environment as three variables, not one.** `AVO_FAN_DEPTH` is the
+    *cap*; `AVO_FAN_LEVEL` is how deep this agent already is and `AVO_FAN_CHAIN` the prompt hashes
+    above it. The environment is the only channel that survives `spawn` into an arbitrary agent
+    binary, and a cap with nothing counting against it is not a guard.
+  - **A guard is a refusal (exit 1), not a harness error.** Depth and cycle refusals are the harness
+    telling an agent it should be editing files itself — the same shape `avo commit` uses when it
+    declines a candidate.
+  - **Default `--timeout 900`, where `avo score`'s default is 0 (no limit).** A scorer that runs long
+    is a slow benchmark; a headless agent that runs long is a process that never returns.
+  - **A custom agent is declared in `.avo/config.json` under `agent`** (`{prompt}` / `{model}`
+    substituted per argument) and may not shadow a built-in name — `--agent claude` meaning
+    different things in different repos is exactly the divergence the templates exist to prevent.
+  - **Agent auto-detection is a `$PATH` scan, not `<agent> --version`.** Probing three binaries
+    costs three node startups before any work begins. Which agent was chosen, and why, is reported.
+- **The bug the first run of the new tests caught:** `avo fan`'s own worktrees read as a variation.
+  The dirty-tree warning ran on raw `git status --porcelain`, so the *second* fan-out in a repo
+  warned the operator about `.avo/worktrees/` — a change the agent never made. Same class as the S3
+  memory-log bug, same fix: filter through `withoutTrajectory`, and write `.avo/.gitignore` on the
+  way in the way `avo commit` does, since `avo fan` may well be the first avo command a repo sees.
 
 ### S7 — Supervisor + continuous loop `[ ]`
 - `avo supervise [--json]` — reads lineage + attempt log, detects:

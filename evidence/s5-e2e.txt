@@ -1,11 +1,16 @@
-# avo S5 e2e — 2026-08-24T14:53:00Z
+# avo S5 e2e — 2026-08-24T15:17:27Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 # pi on PATH: yes
 # claude on PATH: yes
 # codex on PATH: yes
 
 ## 1. the skills themselves
-PASS  avo ships 4 skills: avo-knowledge avo-lineage avo-score avo-vary
+PASS  avo ships 5 skills: avo-fanout avo-knowledge avo-lineage avo-score avo-vary
+PASS  avo-fanout has a SKILL.md
+PASS  avo-fanout: SKILL.md opens with a frontmatter fence
+PASS  avo-fanout: name matches its directory
+PASS  avo-fanout: has a non-empty description (387 chars)
+PASS  avo-fanout: description is within the 1024-char cap
 PASS  avo-knowledge has a SKILL.md
 PASS  avo-knowledge: SKILL.md opens with a frontmatter fence
 PASS  avo-knowledge: name matches its directory
@@ -28,12 +33,14 @@ PASS  avo-vary: has a non-empty description (401 chars)
 PASS  avo-vary: description is within the 1024-char cap
 
 ## 2. avo install into a fresh repo
-$ avo install --json | jq -c '{ok, agents, skills: [.skills[].name]}' -> {"ok":true,"agents":["pi","claude","codex"],"skills":["avo-knowledge","avo-lineage","avo-score","avo-vary"]}
+$ avo install --json | jq -c '{ok, agents, skills: [.skills[].name]}' -> {"ok":true,"agents":["pi","claude","codex"],"skills":["avo-fanout","avo-knowledge","avo-lineage","avo-score","avo-vary"]}
 PASS  avo install reports ok
 PASS  no --agent means all three
 PASS  no step failed
 
 ## 3. what each agent finds
+PASS  pi: .agents/skills/avo-fanout is a symlink, not a copy
+PASS  pi: avo-fanout/SKILL.md is readable through the link
 PASS  pi: .agents/skills/avo-knowledge is a symlink, not a copy
 PASS  pi: avo-knowledge/SKILL.md is readable through the link
 PASS  pi: .agents/skills/avo-lineage is a symlink, not a copy
@@ -46,11 +53,13 @@ PASS  pi: .pi/settings.json enables bash, which every avo command needs
 PASS  pi: .agents/skills is not re-declared in settings (pi finds it natively; a duplicate warns)
 PASS  pi: the headless project-trust trap is named exactly once
 PASS  claude: .claude/skills is a symlink -> ../.agents/skills
+PASS  claude: avo-fanout reads through .claude/skills -> .agents/skills -> avo
 PASS  claude: avo-knowledge reads through .claude/skills -> .agents/skills -> avo
 PASS  claude: avo-lineage reads through .claude/skills -> .agents/skills -> avo
 PASS  claude: avo-score reads through .claude/skills -> .agents/skills -> avo
 PASS  claude: avo-vary reads through .claude/skills -> .agents/skills -> avo
 PASS  codex: AGENTS.md exists
+PASS  codex: AGENTS.md indexes avo-fanout
 PASS  codex: AGENTS.md indexes avo-knowledge
 PASS  codex: AGENTS.md indexes avo-lineage
 PASS  codex: AGENTS.md indexes avo-score

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import type { CustomAgent, OutputFormat } from "./agents.ts";
 
 /** Optional per-repo settings. Absent is the common case and never a warning. */
 export const CONFIG_PATH = ".avo/config.json";
@@ -24,6 +25,22 @@ export const ConfigSchema = Type.Object(
     weights: Type.Optional(Type.Record(Type.String(), Type.Number({ minimum: 0 }))),
     /** Declares the scorer's configs so `avo score --parallel` skips the `--configs` probe. */
     configs: Type.Optional(Type.Array(Type.String())),
+    /**
+     * A custom headless agent for `avo fan`, so the harness drives something other than the three
+     * built-ins without a code change (PLAN §2: agent-agnostic is the point). `{prompt}` and
+     * `{model}` are substituted per argument; an argument mentioning `{model}` is dropped when no
+     * model is set. `format` picks the output parser; omit it for an agent that just prints prose.
+     */
+    agent: Type.Optional(
+      Type.Object({
+        name: Type.String({ minLength: 1 }),
+        command: Type.String({ minLength: 1 }),
+        args: Type.Array(Type.String()),
+        format: Type.Optional(
+          Type.Union([Type.Literal("pi"), Type.Literal("claude"), Type.Literal("codex"), Type.Literal("text")]),
+        ),
+      }),
+    ),
   },
   { additionalProperties: true },
 );
@@ -36,9 +53,11 @@ export interface AvoConfig {
   weights: Record<string, number>;
   /** `null` = not declared; probe the scorer instead. */
   configs: string[] | null;
+  /** `null` = no custom agent declared; `avo fan` offers only the built-ins. */
+  agent: CustomAgent | null;
 }
 
-export const DEFAULT_CONFIG: AvoConfig = { reduce: "dominate", floor: 0, weights: {}, configs: null };
+export const DEFAULT_CONFIG: AvoConfig = { reduce: "dominate", floor: 0, weights: {}, configs: null, agent: null };
 
 export interface LoadedConfig {
   config: AvoConfig;
@@ -84,7 +103,22 @@ export function loadConfig(cwd: string): LoadedConfig {
     floor: file.floor ?? DEFAULT_CONFIG.floor,
     weights: file.weights ?? {},
     configs: null,
+    agent: null,
   };
+
+  if (file.agent !== undefined) {
+    const reserved = ["pi", "claude", "codex"];
+    if (reserved.includes(file.agent.name)) {
+      // Shadowing a built-in name would make `--agent claude` mean different things in different
+      // repos, which is exactly the kind of silent divergence the templates exist to prevent.
+      warnings.push(`${CONFIG_PATH}: field 'agent.name' may not shadow a built-in (${reserved.join(", ")}); ignoring it`);
+    } else if (!file.agent.args.some((a) => a.includes("{prompt}"))) {
+      warnings.push(`${CONFIG_PATH}: field 'agent.args' never mentions {prompt}, so the agent would get no task; ignoring it`);
+    } else {
+      const { name, command, args, format } = file.agent;
+      config.agent = format === undefined ? { name, command, args } : { name, command, args, format: format as OutputFormat };
+    }
+  }
 
   if (file.configs !== undefined) {
     const bad = file.configs.filter((c) => !CONFIG_NAME.test(c));
