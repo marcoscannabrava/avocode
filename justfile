@@ -8,7 +8,7 @@ check: lint typecheck test ralph-test
 # Static analysis.
 lint:
     node_modules/.bin/oxlint src test pi bench
-    shellcheck -S style bin/avo test/e2e.sh test/e2e-score.sh test/e2e-lineage.sh test/e2e-mem.sh test/e2e-know.sh test/e2e-install.sh test/e2e-fan.sh test/e2e-supervise.sh test/e2e-run.sh test/e2e-pi.sh test/e2e-bench.sh templates/score/*.sh bench/init.sh bench/fuzzysearch/avo/score ralph.sh test/ralph_test.sh || echo "shellcheck: skipped (not installed)"
+    shellcheck -S style bin/avo test/e2e.sh test/e2e-score.sh test/e2e-lineage.sh test/e2e-mem.sh test/e2e-know.sh test/e2e-install.sh test/e2e-fan.sh test/e2e-supervise.sh test/e2e-run.sh test/e2e-pi.sh test/e2e-bench.sh templates/score/*.sh bench/init.sh bench/verify-run.sh bench/fuzzysearch/avo/score ralph.sh test/ralph_test.sh || echo "shellcheck: skipped (not installed)"
 
 typecheck:
     node_modules/.bin/tsc --noEmit
