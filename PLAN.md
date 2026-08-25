@@ -718,11 +718,16 @@ because a Ralph iteration has one hour total, not because it converged — itera
 still had room. The target repo persists, so S9b-2 resumes the same lineage rather than restarting.
 
 **Five things the run measured that no test could have:**
-- **`avo run`'s manifest under-reports a well-behaved agent.** Every iteration recorded `noop —
+- **`avo run`'s manifest under-reported a well-behaved agent.** Every iteration recorded `noop —
   the working tree holds no change to score`, and `committed` stayed empty, while git grew four
   versions. The `avo-vary` skill has the agent call `avo commit` itself, so by step 2 the tree is
-  clean. Read alone, the manifest says the run was flat. Filed as **#42**, which also notes that
-  #29's no-op counter miscounts these and would cut a *working* loop short.
+  clean. Read alone, the manifest says the run was flat. Filed as **#42**; **fixed in iter 15** —
+  each iteration now records `agent_versions`, read back from the `Avo-Version` trailers in
+  `head_before..head_after` minus step 2's own, and those versions count toward `committed`.
+  Replayed against this very run in `evidence/issue-42-replay.txt`: `committed=[]` becomes
+  `[1,2,3,4]`, and iterations 5 and 6 stay empty because they genuinely were. #42's claim that
+  #29's counter miscounts these was **wrong** — `idle` has required `head_after === head_before`
+  since S7; the record was wrong, the stop condition never was.
 - **The token totals are unusable.** 24 input tokens for a turn that read a README, four K
   documents and a source file: `tokensFrom` takes `input_tokens` only, and Anthropic reports the
   bulk as `cache_read_input_tokens`. Filed as **#43**. This is the half of S9b's evidence that did

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { CHAIN_ENV, DEFAULT_TIMEOUT_S, DEPTH_ENV, LEVEL_ENV, promptSha } from "../src/fan.ts";
 import { bufferIo } from "../src/io.ts";
@@ -108,6 +109,7 @@ const iteration = (over: Partial<Iteration> = {}): Iteration => ({
   },
   log_path: ".avo/runs/r/logs/1.log",
   decision: { action: "committed", version: 1, sha: "bbbbbbbb", reason: "improved", primary: 2, unit: "lines", pass: true },
+  agent_versions: [],
   supervision: { triggered: false, signals: [], since_best: 0, repeat: 0 },
   directive: null,
   intervention: null,
@@ -146,6 +148,21 @@ test("an agent that committed for itself is reported as progress, not as a no-op
     decision: { action: "noop", version: null, sha: null, reason: "no change to score", primary: null, unit: "", pass: null },
   });
   assert.match(describeOutcome(idle), /nothing changed/);
+});
+
+test("a version the agent committed itself is named in the next turn's prompt, not just its sha (#42)", () => {
+  const own = iteration({
+    head_before: "aaaaaaaa",
+    head_after: "cccccccc",
+    decision: { action: "noop", version: null, sha: null, reason: "no change to score", primary: null, unit: "", pass: null },
+    agent_versions: [{ version: 3, sha: "cccccccc", primary: 0.408, unit: "ms", why: "pigeonhole index" }],
+  });
+  const out = describeOutcome(own);
+  assert.match(out, /the agent committed v3 at 0\.408 ms itself/);
+  assert.doesNotMatch(out, /nothing changed/, "a turn that moved the lineage must not read as an empty one");
+  // Both can happen in one turn: the agent commits, then leaves more for the harness to score.
+  const both = iteration({ agent_versions: [{ version: 3, sha: "cccccccc", primary: 3, unit: "lines", why: null }] });
+  assert.match(describeOutcome(both), /the agent committed v3 at 3 lines itself, and then the harness committed v1/);
 });
 
 test("a refusal with no measurement does not print a placeholder as if it were one", () => {
@@ -232,6 +249,13 @@ case "$prompt" in
     git commit -qm "the agent's own commit" >/dev/null 2>&1
     echo "I committed it myself"
     exit 0 ;;
+  # What the avo-vary skill actually tells an agent to do: edit, then commit through avo, so the
+  # tree is already clean when the loop's own step 2 looks at it.
+  *avocommit*)
+    echo "own commit" >> kernel.txt
+    "{{AVO}}" commit --why "I measured it and committed this myself" >/dev/null 2>&1
+    echo "I ran avo commit myself"
+    exit 0 ;;
 esac
 echo "line at iteration \${AVO_FAN_PROBE:-?}" >> kernel.txt
 echo "appended one line at depth \${AVO_FAN_LEVEL:-?}"
@@ -247,6 +271,9 @@ const FAILING_SCORER = `#!/usr/bin/env bash
 printf '{"ok":true,"correct":false,"primary":null,"unit":"lines","higher_is_better":true,"log":"assertion failed at kernel.txt:3"}\\n'
 `;
 
+/** The real CLI, so the stub commits exactly the way the avo-vary skill has an agent commit. */
+const AVO_BIN = fileURLToPath(new URL("../bin/avo", import.meta.url));
+
 interface Fixture {
   dir: string;
   git: (...args: string[]) => string;
@@ -261,7 +288,7 @@ function fixture(name: string, opts: { scorer?: string | false } = {}): Fixture 
   mkdirSync(join(dir, ".avo"), { recursive: true });
   writeFileSync(join(dir, ".gitignore"), ".avo/runs/\n.avo/worktrees/\n.avo/attempts.jsonl\nlast-prompt.txt\nall-prompts.txt\n");
   writeFileSync(join(dir, "kernel.txt"), "baseline\n");
-  writeFileSync(join(dir, "stub.sh"), STUB, { mode: 0o755 });
+  writeFileSync(join(dir, "stub.sh"), STUB.replace("{{AVO}}", AVO_BIN), { mode: 0o755 });
   if (opts.scorer !== false) writeFileSync(join(dir, ".avo/score"), opts.scorer ?? SCORER, { mode: 0o755 });
   writeFileSync(
     join(dir, ".avo/config.json"),
@@ -407,7 +434,35 @@ test("an agent that commits for itself is not idle, so the loop keeps going", as
   for (const it of json.iterations) {
     assert.equal(it.decision?.action, "noop", "the tree is clean after the agent's own commit");
     assert.notEqual(it.head_after, it.head_before, "but HEAD moved");
+    assert.deepEqual(it.agent_versions, [], "a commit without the trailers is a commit, not a version");
   }
+  assert.deepEqual(json.committed, [], "and it never becomes one by moving HEAD");
+});
+
+test("versions the agent commits itself are the run's output too (#42)", async () => {
+  const f = fixture("runagentcommit");
+  const { json } = await run(f, ["--prompt", "avocommit", "--max-iters", "3"]);
+  assert.equal(json.stopped, "max-iters");
+  assert.equal(json.iterations.length, 3);
+  // The bug: every iteration is a `noop` — correctly — and the run still produced three versions.
+  // Reading only the decision, this run is flat; reading agent_versions, it is the curve it was.
+  assert.deepEqual(json.committed, [1, 2, 3], "the manifest must not under-report a well-behaved agent");
+  for (const it of json.iterations) {
+    assert.equal(it.decision?.action, "noop", "avo commit found a clean tree — the agent got there first");
+    assert.equal(it.agent_versions.length, 1, `iteration ${it.iter} committed one version`);
+    const v = it.agent_versions[0];
+    assert.equal(v?.version, it.iter);
+    assert.equal(v?.unit, "lines");
+    assert.match(v?.why ?? "", /committed this myself/, "the rationale that landed is the agent's own");
+  }
+  assert.deepEqual(
+    json.iterations.map((it) => it.agent_versions[0]?.sha),
+    json.iterations.map((it) => it.head_after),
+    "each version is the head the turn left behind",
+  );
+  // The same thing the loop tells the next turn, and the same thing a human reads at the end.
+  assert.match(describeOutcome(json.iterations[1] as Iteration), /the agent committed v2 at 3 lines itself/);
+  assert.match(renderRun(json), /committed {4}v1, v2, v3 \(3 by the agent itself\)/);
 });
 
 test(".avo/STOP halts the loop before the next turn", async () => {

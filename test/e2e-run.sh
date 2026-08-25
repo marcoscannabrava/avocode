@@ -310,7 +310,7 @@ printf '%s' "$json" | jq -e '
   and (.stopped | type) == "string"
   and (.committed | type) == "array"
   and (.thresholds.stall | type) == "number"
-  and (.iterations[0] | has("agent") and has("decision") and has("supervision") and has("head_before") and has("head_after"))
+  and (.iterations[0] | has("agent") and has("decision") and has("supervision") and has("head_before") and has("head_after") and has("agent_versions"))
   and (.iterations[0].agent | has("wall_s") and has("ok") and has("error"))
 ' >/dev/null
 yes_no $? "one JSON object, every field typed as documented" "the --json shape is not what an agent is told to expect"
@@ -336,6 +336,41 @@ if [[ $ms -lt 500 ]]; then
 else
   bad "readLineage costs ${ms}ms at 2000 commits — too much to call every iteration"
 fi
+say ""
+
+# --------------------------------------- 10. the agent commits for itself (#42), against real avo
+say "## 10. #42: an agent that runs avo commit itself"
+# This is what the avo-vary skill tells an agent to do, so it is the normal case in a real run: by
+# the time the loop's own step 2 looks, the tree is clean and every iteration decides `noop`. The
+# manifest has to say the run produced a curve anyway, or a working loop reads as a flat one.
+self="$work/selfcommit"
+make_repo "$self"
+cat > "$self/stub.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s' "\$1" > "\$PWD/last-prompt.txt"
+echo "line at iteration \${AVO_FAN_PROBE:-?}" >> kernel.txt
+"$root/bin/avo" commit --why "I measured it and committed this myself" >/dev/null 2>&1
+echo "I ran avo commit myself"
+STUB
+chmod +x "$self/stub.sh"
+
+json="$(avo run --cwd "$self" --agent stub --prompt "make kernel.txt longer" --max-iters 3 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '[.iterations[].decision.action] == ["noop","noop","noop"]' >/dev/null
+yes_no $? "every iteration decides noop — the tree really was clean" "the harness committed; this is not the case #42 is about"
+printf '%s' "$json" | jq -e '.committed == [1,2,3]' >/dev/null
+yes_no $? "and the run still reports v1, v2, v3 as its output" "the manifest under-reports an agent that commits for itself (#42)"
+printf '%s' "$json" | jq -e '[.iterations[].agent_versions | length] == [1,1,1]' >/dev/null
+yes_no $? "each iteration is credited with the version it committed" "agent_versions does not attribute the versions to their turns"
+printf '%s' "$json" | jq -e '[.iterations[].agent_versions[0].why] | all(test("committed this myself"))' >/dev/null
+yes_no $? "the rationale recorded is the agent's own --why, not the harness's" "the agent's --why is not in the manifest"
+printf '%s' "$json" | jq -e '[.iterations[] | .agent_versions[0].sha == .head_after] | all' >/dev/null
+yes_no $? "each version is the head its turn left behind" "a version is attributed to the wrong iteration"
+avo lineage --cwd "$self" --json | jq -e '[.[].version] == [1,2,3]' >/dev/null
+yes_no $? "git agrees: three versions, written by the one writer that may write them" "the lineage does not hold three versions"
+printf '%s' "$json" | jq -e '.stopped == "max-iters"' >/dev/null
+yes_no $? "three self-committing turns never look like three idle ones (#29)" "a working loop was stopped for no progress"
+avo run --cwd "$self" --agent stub --prompt "make kernel.txt longer" --max-iters 1 2>/dev/null | grep -q 'by the agent itself'
+yes_no $? "the human rendering says so too" "renderRun does not distinguish an agent's own commits"
 say ""
 
 say "## summary"

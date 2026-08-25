@@ -1,0 +1,20 @@
+# issue #42 replayed against the S9b-1 run that found it — 2026-08-25T21:08:13Z
+#
+# The run at /home/marcos/code/avo-s9b-fuzzysearch (.avo/runs/20260825T201507Z-f2548e) recorded
+# head_before/head_after per iteration even before the fix, so the attribution the fix produces
+# can be checked against a run that actually happened rather than only against a stub.
+#
+manifest says: committed=[]
+  it1: noop + agent committed v1 at 6.853999999999999 ms — Replace the full DP matrix over the whole cross product with
+  it2: noop + agent committed v2 at 0.642 ms — Add a character-set bitmask prefilter ahead of the banded DP
+  it3: noop + agent committed v3 at 0.40800000000000003 ms — Generate candidates from a partition (pigeonhole) index inst
+  it4: noop + agent committed v4 at 0.34450000000000003 ms — Tighten the partition-index probe window with PassJoin's pos
+  it5: noop — HEAD did not move; genuinely nothing
+  it6: refused — HEAD did not move; genuinely nothing
+the fix would report: committed=[1,2,3,4]
+
+# git agrees — the four versions and the heads they were attributed to:
+f651b62 avo v1: 6.853999999999999 ms
+3be2bec avo v2: 0.642 ms
+3d1e5ce avo v3: 0.40800000000000003 ms
+1f56243 avo v4: 0.34450000000000003 ms
