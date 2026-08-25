@@ -1,0 +1,11 @@
+{
+  "name": "fuzzysearch-bench",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "avocode S9 optimization target: thresholded edit-distance retrieval",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "bench": "node bench/run.js --config large"
+  }
+}

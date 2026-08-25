@@ -1,8 +1,8 @@
-# avo S7a e2e — 2026-08-25T19:29:25Z
+# avo S7a e2e — 2026-08-25T19:56:43Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD d6d2f92, an f that can fail on demand, 2 docs in K
+PASS  repo at HEAD bb97cb9, an f that can fail on demand, 2 docs in K
 
 ## 1. nothing to steer
 PASS  exit 0 with no attempts and no versions
