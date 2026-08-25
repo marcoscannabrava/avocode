@@ -432,7 +432,8 @@ values never appear in any output.
 
 | Command | What it does |
 | --- | --- |
-| `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
+| `just check` | lint + typecheck + test + `ralph-test` — the health check every Ralph cycle runs first |
+| `just ralph-test` | drives `ralph.sh` against a stub agent in a throwaway repo (2s) |
 | `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b,8}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
@@ -470,3 +471,11 @@ evidence/         artifacts proving user-facing behavior works end to end
 ```
 
 `ralph.sh` is the meta loop that builds this repo; it is not part of `avo` itself.
+
+Ctrl+C stops it, and stopping means the session is *gone*: the loop signals the whole process
+tree pid by pid, waits, and escalates to `KILL` if the session ignores the `TERM`. This is not a
+nicety. A session that outlives its loop is reparented to init and goes on editing the repo,
+which is how two agents end up committing to one working tree — observed, not hypothesized (#33).
+The session runs as an async job rather than a foreground pipeline because bash defers trap
+handlers until the running foreground command returns, so a foreground session swallows the
+interrupt for however long it lasts. `just ralph-test` is what holds all of this in place.

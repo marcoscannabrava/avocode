@@ -21,6 +21,9 @@ jobs:
       - run: just lint
       - run: just typecheck
       - run: just test
+      # The loop harness. Signals and process groups are exactly what differs between a
+      # laptop and a runner, so the interrupt tests need to run where they can surprise us.
+      - run: just ralph-test
 
   e2e:
     runs-on: ubuntu-latest
