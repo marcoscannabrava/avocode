@@ -17,16 +17,33 @@ export interface AgentInvocation {
   model: string | null;
 }
 
+/**
+ * One turn's usage, normalized so the four counts are **disjoint**: total input sent is
+ * `input + cache_read + cache_write`. Cached input is kept apart from uncached rather than summed
+ * into it because it is priced at roughly a tenth (read) and a quarter over (write) — folding them
+ * together throws away the only thing these numbers are collected for.
+ */
 export interface AgentTokens {
+  /** Input billed at full rate: the portion that did *not* come from the prompt cache. */
   input: number;
   output: number;
+  /** Input replayed from the prompt cache. On a long loop over one repo this is most of it. */
+  cache_read: number;
+  /** Input written *into* the cache by this turn. */
+  cache_write: number;
 }
 
-/** What we can recover from an agent's own output. Both fields are best-effort. */
+/** What we can recover from an agent's own output. Every field is best-effort. */
 export interface AgentOutput {
   /** The agent's final message — the probe's answer, in its own words. */
   summary: string | null;
   tokens: AgentTokens | null;
+  /**
+   * What the agent says the turn cost in USD, when it says so at all (`null` otherwise). Taken
+   * from the agent rather than derived from `tokens`: it knows which model served each request and
+   * at what rate, and we do not. #28's cost budget spends this number.
+   */
+  cost_usd: number | null;
 }
 
 export type OutputFormat = "pi" | "claude" | "codex" | "text";
@@ -168,14 +185,43 @@ function obj(v: unknown): Record<string, unknown> | null {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
-/** `input`/`output` (pi) or `input_tokens`/`output_tokens` (claude, codex) — whichever is present. */
+/**
+ * Reads one usage object, in whichever of the three shapes produced it, into `AgentTokens`.
+ *
+ * | agent | uncached in | output | cache read | cache write |
+ * | --- | --- | --- | --- | --- |
+ * | pi 0.84.3 | `input` | `output` | `cacheRead` | `cacheWrite` |
+ * | claude 2.1.241 | `input_tokens` | `output_tokens` | `cache_read_input_tokens` | `cache_creation_input_tokens` |
+ * | codex-cli 0.147.0 | `input_tokens` *minus* `cached_input_tokens` | `output_tokens` | `cached_input_tokens` | — |
+ *
+ * Codex is the odd one and the reason this normalizes instead of copying: it follows OpenAI, where
+ * `cached_input_tokens` is a **subset** of `input_tokens`, while pi and claude report the cached
+ * portion **disjointly** from it. Copying both raw would double-count codex's cache hits and, far
+ * worse, drop claude's entirely — the S9b-1 run recorded 24 input tokens for a turn that sent
+ * 573,313, because 523,326 of them were a cache read (#43).
+ */
 function tokensFrom(usage: unknown): AgentTokens | null {
   const u = obj(usage);
   if (u === null) return null;
-  const input = num(u["input"]) ?? num(u["input_tokens"]);
   const output = num(u["output"]) ?? num(u["output_tokens"]);
-  if (input === null && output === null) return null;
-  return { input: input ?? 0, output: output ?? 0 };
+  const rawInput = num(u["input"]) ?? num(u["input_tokens"]);
+  const cacheWrite = num(u["cacheWrite"]) ?? num(u["cache_creation_input_tokens"]);
+  // `cached_input_tokens` last, and handled apart: it is codex's, and it is inclusive.
+  const disjointRead = num(u["cacheRead"]) ?? num(u["cache_read_input_tokens"]);
+  const inclusiveRead = num(u["cached_input_tokens"]);
+  const cacheRead = disjointRead ?? inclusiveRead;
+  if (rawInput === null && output === null && cacheRead === null && cacheWrite === null) return null;
+  const input =
+    disjointRead === null && inclusiveRead !== null
+      ? Math.max(0, (rawInput ?? 0) - inclusiveRead) // clamped: a subset larger than its set is not a debt
+      : (rawInput ?? 0);
+  return { input, output: output ?? 0, cache_read: cacheRead ?? 0, cache_write: cacheWrite ?? 0 };
+}
+
+/** pi carries the turn's USD inside `usage` (`cost`); claude puts it beside it; codex omits it. */
+function costFrom(usage: unknown): number | null {
+  const u = obj(usage);
+  return u === null ? null : num(u["cost"]);
 }
 
 /** Concatenates the `text` parts of a pi/anthropic-shaped content array, dropping thinking blocks. */
@@ -196,16 +242,24 @@ function lastLine(stdout: string): string | null {
 }
 
 /**
- * Pulls the final message and the token count out of one agent's stdout.
+ * Pulls the final message, the token counts and the reported cost out of one agent's stdout.
+ *
+ * **All three agents report usage cumulatively for the turn**, so last-seen wins rather than being
+ * summed: claude emits exactly one `result` event closing the turn, codex exactly one
+ * `turn.completed`, and pi's `message_update`/`message_end` usage is a running total for the
+ * session (docs/json.md). An agent that instead reported *per-message* usage would need summing
+ * here, and would silently report only its last message until someone noticed — which is why this
+ * assumption is written down rather than left in the shape of the code.
  *
  * Deliberately tolerant: a format that changes under us must degrade to `summary: null` and a
  * scored, diffed probe, never to a crash that loses the whole fan-out (invariant 4).
  */
 export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOutput {
-  if (format === "text") return { summary: lastLine(stdout), tokens: null };
+  if (format === "text") return { summary: lastLine(stdout), tokens: null, cost_usd: null };
 
   let summary: string | null = null;
   let tokens: AgentTokens | null = null;
+  let costUsd: number | null = null;
 
   for (const e of jsonLines(stdout)) {
     switch (format) {
@@ -215,6 +269,8 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
         if (e["type"] === "result") {
           if (typeof e["result"] === "string") summary = e["result"];
           tokens = tokensFrom(e["usage"]) ?? tokens;
+          // Sibling of `usage`, not a member of it — and already what ralph.sh bills the loop by.
+          costUsd = num(e["total_cost_usd"]) ?? costUsd;
         }
         break;
       }
@@ -226,9 +282,11 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
           if (m !== null && m["role"] === "assistant") {
             summary = textOf(m["content"]) ?? summary;
             tokens = tokensFrom(m["usage"]) ?? tokens;
+            costUsd = costFrom(m["usage"]) ?? costUsd;
           }
         } else if (e["type"] === "message_update") {
           tokens = tokensFrom(e["usage"]) ?? tokens;
+          costUsd = costFrom(e["usage"]) ?? costUsd;
         }
         break;
       }
@@ -247,7 +305,7 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
   }
 
   // A structured agent that died mid-stream still said something useful on the way down.
-  return { summary: summary ?? lastLine(stdout), tokens };
+  return { summary: summary ?? lastLine(stdout), tokens, cost_usd: costUsd };
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +352,8 @@ export interface AgentTurn {
   ok: boolean;
   summary: string | null;
   tokens: AgentTokens | null;
+  /** USD for this turn as the agent itself reported it; `null` when it reports none. */
+  cost_usd: number | null;
   wall_s: number;
   exit_code: number;
   timed_out: boolean;
@@ -349,6 +409,7 @@ export async function driveAgent(
     ok: error === null,
     summary: capped.text === "" ? null : capped.text,
     tokens: parsed.tokens,
+    cost_usd: parsed.cost_usd,
     wall_s: wallS,
     exit_code: run.code,
     timed_out: run.timedOut,

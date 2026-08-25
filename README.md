@@ -227,7 +227,9 @@ avo fan --agent pi --model groq/llama-3.3-70b   # the agent, and the probe model
 avo fan --timeout 300                           # kill a probe's process group after 300s
 ```
 
-Each probe comes back as `{i, ok, score, diffstat, summary, worktree, tokens, wall_s, log_path}`.
+Each probe comes back as `{i, ok, score, diffstat, summary, worktree, tokens, cost_usd, wall_s,
+log_path}` — `tokens` and `cost_usd` as described under [`avo run`](#avo-run--the-continuous-loop),
+which is what prices the small-model question (#35).
 `ok` describes the *process*, `score` describes the *candidate* — a probe can finish cleanly and
 still fail `f`. `best` names the highest-scoring probe that passed; it is a hint, never a decision.
 
@@ -345,6 +347,25 @@ their `Avo-Version` trailers, minus the one step 2 committed itself. They count 
 this a run that produced a curve reads as a flat one, and three well-behaved turns in a row look
 exactly like three idle ones (#42). A commit *without* the trailers moves HEAD but is not a
 version — invariant 1 says `avo commit` is the only writer.
+
+**What a turn cost is read off the agent, not re-derived.** Each iteration records
+`tokens: {input, output, cache_read, cache_write}` and `cost_usd`, and the run totals both. The four
+token counts are **disjoint** — total input sent is `input + cache_read + cache_write` — because
+cached input is priced at roughly a tenth of uncached, so folding them together destroys the only
+thing the numbers are collected for. `input` is normalized to mean *uncached* for every agent: pi
+and claude already report it that way, while codex follows OpenAI, where `cached_input_tokens` is a
+subset of `input_tokens` and is subtracted back out. `cost_usd` is whatever the agent itself
+reported (claude's `total_cost_usd`, pi's `usage.cost`) rather than token arithmetic we would have
+to keep in step with per-model rates; it is `null`, not `0`, when the agent reports none — nothing
+measured and nothing spent are different facts, and a cost budget has to refuse the first (#28).
+
+Before this, the manifest of a real six-iteration run reported **44 input tokens for a loop that
+sent 985,039**, and no cost at all: `cache_read_input_tokens` was dropped on the floor, and four of
+the six turns lost their closing `result` event to an output cap that kept only the *first* 200KB —
+so the summary, the usage and the cost all went with it. The cap now spends 50KB of its budget on a
+rolling tail and marks the gap it elides, because in every stream `avo` reads, the payload is the
+last thing printed (#43, #22; `evidence/issue-43-replay.txt`, reproducible with
+`npx tsx bench/replay-tokens.ts <repo>/.avo/runs/<id>`).
 
 The run manifest at `.avo/runs/<id>/manifest.json` is rewritten after **every** iteration, never at
 the end, and each turn's raw agent output is kept beside it under `logs/`. A loop meant to run for

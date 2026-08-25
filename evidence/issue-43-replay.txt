@@ -1,0 +1,50 @@
+# issue #43 replayed against the S9b-1 run that found it (bench/replay-tokens.ts)
+#
+# /home/marcos/code/avo-s9b-fuzzysearch/.avo/runs/20260825T201507Z-f2548e
+# Same six raw claude logs the run already wrote, re-parsed by the fixed parser. Nothing
+# is re-run and no agent is spawned: the evidence is that the bytes were always there.
+#
+  it 1  log 193,243 bytes
+        manifest recorded  in 24 / out 15,977
+        replayed           in 24 / out 15,977 / cache read 523,326 + write 49,963   cost $1.1623
+        input actually sent 573,313; the manifest recorded 24 of it (0.0042%)
+  it 2  log 122,467 bytes
+        manifest recorded  in 20 / out 9,162
+        replayed           in 20 / out 9,162 / cache read 379,040 + write 32,666   cost $0.7468
+        input actually sent 411,726; the manifest recorded 20 of it (0.0049%)
+  it 3  log 203,768 bytes  <- OVER the 200KB cap; the result event was cut off
+        manifest recorded  nothing at all
+        replayed           nothing at all   cost not in this log
+  it 4  log 200,374 bytes  <- OVER the 200KB cap; the result event was cut off
+        manifest recorded  nothing at all
+        replayed           nothing at all   cost not in this log
+  it 5  log 200,590 bytes  <- OVER the 200KB cap; the result event was cut off
+        manifest recorded  nothing at all
+        replayed           nothing at all   cost not in this log
+  it 6  log 200,258 bytes  <- OVER the 200KB cap; the result event was cut off
+        manifest recorded  nothing at all
+        replayed           nothing at all   cost not in this log
+
+  manifest total   in 44 / out 25,139   cost: not recorded
+  replayed total   in 44 / out 25,139 / cache read 902,366 + write 82,629   cost: $1.91
+
+  input tokens the run actually sent:  985,039
+  input tokens the manifest recorded:  44  (0.0045% of them)
+  cost the manifest could not report:  $1.91
+
+# Why four of the six iterations replay to nothing, and what that cost:
+#
+# Their logs are ALREADY truncated on disk. spawnRunner capped stdout at the first 200KB
+# and dropped the rest, and a claude stream carries its usage, its cost and the agent's
+# final message in the LAST event. The correlation is exact — the two logs under the cap
+# have a result event, the four at or over it have none:
+#   1.log    193,243 bytes  intact  result event: present
+#   2.log    122,467 bytes  intact  result event: present
+#   3.log    203,768 bytes  capped  result event: GONE
+#   4.log    200,374 bytes  capped  result event: GONE
+#   5.log    200,590 bytes  capped  result event: GONE
+#   6.log    200,258 bytes  capped  result event: GONE
+#
+# So the four numbers above are a FLOOR on what the run cost: the true total is higher by
+# whatever iterations 3-6 spent, which those logs can no longer say. spawnRunner now keeps
+# a 50KB rolling tail inside the same 200KB budget, so a future run records all six.

@@ -169,6 +169,7 @@ const probe = (i: number, pass: boolean, normalized: number | null): ProbeResult
   summary: null,
   worktree: `${WORKTREES_DIR}/r/${i}`,
   tokens: null,
+  cost_usd: null,
   wall_s: 1,
   exit_code: 0,
   timed_out: false,

@@ -508,6 +508,43 @@ test("spawnRunner captures stdout, stderr, and the exit code of a real process",
   }
 });
 
+// The failure this pins down happened for real: four of six iterations of the S9b-1 run printed
+// past the 200KB cap, so every one of them lost the `result` event that closes a claude stream —
+// and with it the final message, the usage and the cost (#43, #22). A head-only cap keeps exactly
+// the part of a chatty agent's output that carries no payload.
+test("a child that overruns the output cap keeps its LAST line, not only its first", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-cap-"));
+  try {
+    const script = join(dir, "s.sh");
+    // ~600KB of chatter, then the one line that matters.
+    writeFileSync(
+      script,
+      `#!/bin/sh\ni=0\nwhile [ $i -lt 6000 ]; do printf '{"type":"assistant","n":%d,"pad":"%s"}\\n' "$i" "${"x".repeat(80)}"; i=$((i+1)); done\nprintf '{"type":"result","usage":{"input_tokens":24,"cache_read_input_tokens":523326}}\\n'\n`,
+      { mode: 0o755 },
+    );
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0 });
+
+    assert.ok(r.stdout.length <= 200_000 + 200, `kept ${r.stdout.length} bytes; the cap must still bound memory`);
+    assert.match(r.stdout, /^\{"type":"assistant","n":0,/, "the head is still the head");
+    assert.match(r.stdout, /"cache_read_input_tokens":523326\}\}\n$/, "the last line survived the cap");
+    assert.match(r.stdout, /--- avo elided \d+ bytes of output here ---/, "the gap is marked, not silent");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("output that fits under the cap is passed through byte for byte, with no elision marker", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-nocap-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, "#!/bin/sh\nprintf 'a\\nb\\nc\\n'\n", { mode: 0o755 });
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0 });
+    assert.equal(r.stdout, "a\nb\nc\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a timeout kills the scorer's whole process group, not just the scorer", async () => {
   const dir = mkdtempSync(join(tmpdir(), "avo-timeout-"));
   try {
