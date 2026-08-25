@@ -691,7 +691,8 @@ for a reason that has nothing to do with the harness.
 
 #### S9b — the run `[~]`
 Split again, and for the same reason S9 itself was: `avo run` needs no second agent harness, a `pi`
-session with both extensions does. **S9b-1 is done; S9b-2 is the comparison.**
+session with both extensions does. **S9b-1 and S9b-2a are done — S9's two acceptance criteria are
+met (`evidence/s9b-run-2.txt`, 10/10). What is left is S9b-2b, the `pi` comparison.**
 
 ##### S9b-1 — the agent-agnostic run `[x]`
 `avo run --agent claude` against `bench/fuzzysearch`, K seeded first, `bench/init.sh --verify`
@@ -722,10 +723,11 @@ survives an edit budget of `k` verbatim, so the scan becomes a handful of substr
 K's bucketing note as the reason ("the same idea applies to any filter whose key is discrete"). So
 K earned its seeding, and the ladder is a floor on this target, not a ceiling.
 
-**Criterion 1 is not met: 4 versions, not ≥5.** The loop was cut off by a watchdog at 34 minutes
-because a Ralph iteration has one hour total, not because it converged — iteration 6's candidate was
-*refused* (`'small' regressed -4.74%`, floor ±3%), which is the commit rule working, and the target
-still had room. The target repo persists, so S9b-2 resumes the same lineage rather than restarting.
+**Criterion 1 was not met by this run: 4 versions, not ≥5.** The loop was cut off by a watchdog at
+34 minutes because a Ralph iteration has one hour total, not because it converged — iteration 6's
+candidate was *refused* (`'small' regressed -4.74%`, floor ±3%), which is the commit rule working,
+and the target still had room. The target repo persisted, and **S9b-2a resumed the same lineage and
+carried it to v7 — criterion 1 now passes.**
 
 **Five things the run measured that no test could have:**
 - **`avo run`'s manifest under-reported a well-behaved agent.** Every iteration recorded `noop —
@@ -767,17 +769,70 @@ BK-trees + Levenshtein automata + cheap filters, V8 numeric-loop performance) ra
 no `qmd` either — so K was also served by the local-scan fallback rather than by hybrid search. The
 notes are the standard literature and deliberately do not contain the ladder.
 
-##### S9b-2 — the comparison `[ ]`
-- Resume the same target repo (`/home/marcos/code/avo-s9b-fuzzysearch`, lineage at v4) — `rm
-  .avo/STOP` first — and carry it past 5 versions so criterion 1 is met on an agent's curve.
-- Then the same target under a `pi` session with both extensions loaded, and compare: intervention
+##### S9b-2a — carry the curve past 5 versions `[x]`
+Same target repo, same prompt, resumed from v4 rather than re-materialized. `--timeout 900` (480s
+had killed iterations 5 and 6 of S9b-1), `--max-iters 6`, watchdog at 1200s. `bench/verify-run.sh`
+wrote `evidence/s9b-run-2.txt`; **all 10 checks pass, and S9's two acceptance criteria are met.**
+
+| | |
+| --- | --- |
+| iterations | 3 of 6, stopped by `.avo/STOP` (the watchdog again, not convergence) |
+| wall-clock | 30m 41s |
+| versions | **7** committed (3 new), 0 regressions, 0 refusals |
+| speedup | 1810.37ms → 0.231ms = **7837×** (this run's own share: 0.345 → 0.231, 1.49×) |
+| interventions | **0** — `since_best` never left 0; every single turn committed |
+| cost | **$8.19** for 3 turns = **$2.73/turn** |
+| `f` intact | yes, `bench/init.sh --verify` clean on all 5 protected files |
+
+```
+v5  0.331ms  1.04×  one interleaved Int32Array for the partition index (length+mask beside the link)
+v6  0.270ms  1.22×  Myers bit-parallel for the survivors + fuse the layout pass into the index build
+v7  0.231ms  1.17×  stop materializing the flat corpus buffer; branchless Myers with an early exit
+```
+
+**What the three turns show about the operator, not the target.** Every one of them opened with a
+*measurement* and let it pick the change: v6's turn ablated the phases (`setup 0.147/0.073, chain
+walk 0.112/0.047, banded 0.118/0.098`) and found the band was 30–43% of the call — which is what the
+v4 and v5 notes had filed as "almost certainly too small to matter now". The agent read its own
+lineage's prediction, measured it, and recorded that it was wrong. v7 did the same to v6's fused
+layout pass and deleted the 46105-code-unit buffer it had just built, because only ~15000 code units
+are ever read. Two of the three turns also *bundled deliberately*: a change measuring +2.66% is
+under the ±3% floor, so it shipped with a partner rather than being tuned twice — the commit rule
+shaping the variation step, which is the whole thesis.
+
+**A dead end found twice, under different conditions.** Both v6's and v7's turns tried dropping the
+counting sort (`shortEnd` is 0 on both scored configs, so the window scan it feeds is dead code) and
+both measured a *regression*. v7 retried it precisely because removing `cBuf` should have neutralised
+the locality argument v6 recorded — and it did not. Length order is load-bearing for the chain
+walk's random slot-indexed reads. That is `avo mem`'s failure records doing their job across turns.
+
+**Cost is the headline number, and it is 3× the estimate.** S9b-1's recovered floor implied
+~$0.95/turn; the real, agent-reported figure is **$2.73/turn** — 5.56M cache-read tokens against
+158 uncached input. **#28** (`avo run` has no cost budget) now has its first real input: at this
+rate a 12-iteration default run is ~$33, and nothing in the harness would stop it.
+
+**Deviations and what they cost.** The refused v4→v5 candidate (interleaved entries, `-4.74%` on
+`small`) was **discarded** from the working tree before resuming, not kept — it was already recorded
+as a dead-end memory, which is the channel designed to carry it. Kept as
+`evidence/s9b-refused-candidate-interleaved-entries.diff`. The agent reached the same idea again on
+its own and made it win as v5. Two harness bugs surfaced and are filed, not fixed:
+**#49** (the stream-json summary fallback writes a raw protocol event into permanent lineage — the
+polluted S9b-1 dead-end record is the evidence) and **#51** (`verify-run.sh`'s `vs v0` column uses
+the *run's* starting HEAD, so on this resumed run v1 is printed as a 0.1× slowdown; the 7837× above
+is computed from the lineage root by hand because the evidence file no longer states it).
+
+##### S9b-2b — the `pi` comparison `[ ]`
+- The same target under a `pi` session with both extensions loaded, and compare: intervention
   counts, and the probe/commit token split that #35 says should settle the fan-out model question.
-  Needs **#43** fixed first, or the token half is unmeasurable again.
-- **§6 Q3 is still open and is now sharper than it was.** The stall threshold of 5 never fired,
-  because `since_best` never got past 2 — on a target with this much headroom the agent improves
-  faster than any stall detector can notice. Q3 needs the *converged* end of this target, where real
-  wins fall under `floor: 0.03` and nothing commits; that is where a threshold of 5 either steers
-  usefully or burns five turns. Raise `--timeout` above 480s before trying.
+  **#43** is fixed, so the token half is now measurable — S9b-2a is the `claude` side of the
+  comparison and reports real tokens and a real dollar figure.
+- A small-model key (`GROQ`/`CEREBRAS`/`OPENROUTER`, none set here) is still needed before `avo fan`
+  has a cheap probe model, which is the other half of #35.
+- **§6 Q3 is still open and is now sharper again.** Across nine agent turns on this target the
+  supervisor has fired **zero** times and `since_best` has never exceeded 2 — in S9b-2a it never
+  left 0, because every turn committed. Q3 needs the *converged* end of this target, where real wins
+  fall under `floor: 0.03` and nothing commits. v7 is 7837× in and still finding 17% per turn, so
+  that end is further away than S9b-1 assumed; reaching it is several more paid runs, not one.
 
 ### S10 — Population branching `(deferred, not scheduled)`
 Paper §3.3 leaves it as future work; so do we. If we take it, this is where OpenEvolve's

@@ -1,0 +1,112 @@
+diff --git i/src/search.js w/src/search.js
+index 2664420..d1c5c5a 100644
+--- i/src/search.js
++++ w/src/search.js
+@@ -12,7 +12,7 @@
+ //      contiguous segments and spending at most `k` edits leaves at least one segment untouched
+ //      (pigeonhole), so every word within distance `k` of a query contains a segment that occurs
+ //      VERBATIM in the query, at an offset shifted by at most `k`. Hashing every segment of every
+-//      corpus word into a chained table once per call turns "scan the whole length window" into
++//      corpus word into a chained table (one interleaved record per segment) once per call turns "scan the whole length window" into
+ //      "probe `(k+1) * (2k+1)` short substrings per admissible length". On the scored workload that
+ //      is 283k window candidates -> 23k probed candidates.
+ //   3. A character-set bitmask prefilter on the surviving candidates, then
+@@ -181,10 +181,15 @@ export function search(queries, corpus, k) {
+   // the length-ordered layout.
+   const shortEnd = useIndex ? bucketStart[parts < maxCorpusLen + 1 ? parts : maxCorpusLen + 1] : nc;
+ 
++  // The index entries are stored INTERLEAVED, four `Int32Array` slots per segment:
++  //   ent[b] = hash, ent[b+1] = next (a base offset, -1 to end the chain),
++  //   ent[b+2] = the corpus length of the slot, ent[b+3] = its character-set mask.
++  // The chain walk is the hottest random-access loop in the call, and length and mask are exactly
++  // the two tests that reject the overwhelming majority of chain steps; keeping them beside the
++  // hash and the link puts one whole entry in a single 16-byte aligned quarter of a cache line, so
++  // a rejected step touches one line instead of one per parallel array.
+   let head = null;
+-  let entNext = null;
+-  let entHash = null;
+-  let entSlot = null;
++  let ent = null;
+   let tableMask = 0;
+   let seen = null;
+   let stamp = 0;
+@@ -195,14 +200,13 @@ export function search(queries, corpus, k) {
+     while (size < nSeg) size <<= 1;
+     tableMask = size - 1;
+     head = new Int32Array(size).fill(-1);
+-    entNext = new Int32Array(nSeg);
+-    entHash = new Int32Array(nSeg);
+-    entSlot = new Int32Array(nSeg);
++    ent = new Int32Array(nSeg * 4);
+     seen = new Int32Array(nc);
+ 
+     let e = 0;
+     for (let s = shortEnd; s < nc; s++) {
+       const n = sLens[s];
++      const wm = cMasks[s];
+       const base = cOffs[s];
+       let off = 0;
+       for (let g = 0; g < parts; g++) {
+@@ -218,11 +222,14 @@ export function search(queries, corpus, k) {
+         h = Math.imul(h ^ (h >>> 15), 0x27d4eb2d);
+         h ^= h >>> 13;
+         const b = h & tableMask;
+-        entHash[e] = h;
+-        entSlot[e] = s;
+-        entNext[e] = head[b];
++        // `sLens[s]` and `cMasks[s]` are read once per slot here, sequentially, instead of once
++        // per candidate later, randomly.
++        ent[e] = h;
++        ent[e + 1] = head[b];
++        ent[e + 2] = n;
++        ent[e + 3] = wm;
+         head[b] = e;
+-        e++;
++        e += 4;
+         off += l;
+       }
+     }
+@@ -301,18 +308,19 @@ export function search(queries, corpus, k) {
+           for (let j = 0; j < l; j++) h = (Math.imul(h, 31) + qBuf[p + j]) | 0;
+           h = Math.imul(h ^ (h >>> 15), 0x27d4eb2d);
+           h ^= h >>> 13;
+-          for (let e = head[h & tableMask]; e !== -1; e = entNext[e]) {
+-            if (entHash[e] !== h) continue;
+-            const s = entSlot[e];
++          for (let e = head[h & tableMask]; e !== -1; e = ent[e + 1]) {
++            if (ent[e] !== h) continue;
+             // A hash collision can name a word of any length, and `banded` is only valid inside
+             // the length window, so the length test has to be re-made here rather than assumed.
+             // It comes BEFORE the seen-stamp: stamping a colliding slot would hide it from the
+             // later probe at its own length, which is where it legitimately belongs.
+-            const n2 = sLens[s];
+-            if (n2 !== n) continue;
+-            if (seen[s] === stamp) continue;
+-            seen[s] = stamp;
+-            const wm = cMasks[s];
++            if (ent[e + 2] !== n) continue;
++            // The mask test also runs BEFORE the stamp. It depends only on (query, slot), never on
++            // which probe reached the slot, so a slot it rejects is rejected identically by every
++            // other probe -- leaving it unstamped costs a repeat of these few ops and cannot change
++            // the result, while stamping here would spend a random read and a random write on the
++            // ~92% of candidates that are about to be thrown away.
++            const wm = ent[e + 3];
+             let x = qMask & ~wm;
+             let y = wm & ~qMask;
+             for (let t = k; t !== 0; t--) {
+@@ -320,7 +328,14 @@ export function search(queries, corpus, k) {
+               y &= y - 1;
+             }
+             if (x !== 0 || y !== 0) continue;
+-            const d = banded(qBuf, m, cBuf, cOffs[s], n2, k, rowA, rowB);
++            // The slot is recovered from the entry's own position rather than stored: entries are
++            // emitted `parts` at a time in slot order, so entry `e >> 2` belongs to slot
++            // `shortEnd + floor((e >> 2) / parts)`. One division, on survivors only, in place of a
++            // fifth array to miss on.
++            const s = shortEnd + (((e >> 2) / parts) | 0);
++            if (seen[s] === stamp) continue;
++            seen[s] = stamp;
++            const d = banded(qBuf, m, cBuf, cOffs[s], n, k, rowA, rowB);
+             if (d <= k) out.push({ query, match: corpus[order[s]], distance: d });
+           }
+         }
