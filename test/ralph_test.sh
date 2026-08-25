@@ -12,6 +12,10 @@ check() { # <name> <expected-substring> <actual>
   if [[ "$3" == *"$2"* ]]; then printf 'ok   %s\n' "$1"; (( pass++ ))
   else printf 'FAIL %s\n       want substring: %s\n       got: %s\n' "$1" "$2" "$3"; (( fail++ )); fi
 }
+refute() { # <name> <forbidden-substring> <actual>
+  if [[ "$3" != *"$2"* ]]; then printf 'ok   %s\n' "$1"; (( pass++ ))
+  else printf 'FAIL %s\n       want NO substring: %s\n       got: %s\n' "$1" "$2" "$3"; (( fail++ )); fi
+}
 
 # A throwaway repo so tests never write logs or RALPH_STOP into the real one.
 repo="$work/repo"; mkdir -p "$repo/test"
@@ -25,6 +29,8 @@ bin="$work/bin"; mkdir -p "$bin"
 cat >"$bin/claude" <<'STUB'
 #!/usr/bin/env bash
 cat >/dev/null                      # drain the prompt on stdin, as `claude -p` does
+[[ -n "${STUB_IGNORE_INT:-}" ]] && trap '' INT   # an agent that does not die of its own accord
+echo "$$" >>"${STUB_PIDS:-/dev/null}"
 echo "⚠ a warning on stderr" >&2
 [[ -n "${STUB_ECHO_ARGV:-}" ]] && echo "argv: $*" >&2
 if [[ -n "${STUB_AUTH_FAIL:-}" ]]; then
@@ -32,7 +38,11 @@ if [[ -n "${STUB_AUTH_FAIL:-}" ]]; then
   exit "${STUB_EXIT:-1}"
 fi
 while IFS= read -r line; do [[ "$line" == '{'* ]] && printf '%s\n' "$line"; done <test/stream.jsonl
-sleep "${STUB_SLEEP:-0}"
+if (( ${STUB_SLEEP:-0} > 0 )); then
+  sleep "$STUB_SLEEP" & nap=$!
+  echo "$nap" >>"${STUB_PIDS:-/dev/null}"
+  wait "$nap"
+fi
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$bin/claude"
@@ -63,8 +73,7 @@ check "honours cost cap"             "cost cap reached"             "$out"
 # The auth hint prints next to a live credential; it must never interpolate it.
 out="$(ITER=1 run env STUB_EXIT=1 STUB_AUTH_FAIL=1 ANTHROPIC_API_KEY=sk-ant-SENTINEL-do-not-print)"
 check "explains auth failure"        "overrides your claude.ai login" "$out"
-if [[ "$out" != *SENTINEL* ]]; then printf 'ok   %s\n' "never echoes the API key"; (( pass++ ))
-else printf 'FAIL %s — key leaked to output\n' "never echoes the API key"; (( fail++ )); fi
+refute "never echoes the API key"     "SENTINEL"                     "$out"
 out="$(ITER=1 run env STUB_EXIT=1 STUB_AUTH_FAIL=1 ANTHROPIC_API_KEY=)"
 check "auth hint without a key set"  "no ANTHROPIC_API_KEY is set"  "$out"
 
@@ -90,6 +99,53 @@ check "--help prints usage"          "max_iterations"               "$out"
 # Runs from any cwd: paths anchor to the script's directory, not $PWD.
 out="$(cd / && RALPH_SLEEP=0 RALPH_PULL=0 "$repo/ralph.sh" 1 2>&1)"
 check "runs from another cwd"        "1 ok, 0 failed"               "$out"
+
+# ── interrupt ────────────────────────────────────────────────────────────────────────────
+# Ctrl+C has to land while a session is in flight, even when the agent ignores SIGINT: bash
+# defers trap handlers until the running foreground command returns, so a loop that pipes
+# the session in the foreground swallows the interrupt for as long as the session lasts.
+pidfile="$work/stub-pids"; : >"$pidfile"
+set -m                                   # own process group per job, the way a terminal gives one
+STUB_IGNORE_INT=1 STUB_SLEEP=30 STUB_PIDS="$pidfile" RALPH_SLEEP=0 RALPH_PULL=0 \
+  ./ralph.sh 0 >"$work/int.log" 2>&1 &
+int_pid=$!
+for (( t = 0; t < 150; t++ )); do grep -q 'iteration 1' "$work/int.log" && break; sleep 0.1; done
+for (( t = 0; t < 150; t++ )); do [[ -s "$pidfile" ]] && break; sleep 0.1; done
+started=$SECONDS
+kill -INT -- -"$int_pid"
+int_rc=0; wait "$int_pid" || int_rc=$?
+elapsed=$(( SECONDS - started ))
+set +m
+
+out="$(cat "$work/int.log")"
+check "acknowledges the interrupt"   "interrupt received"           "$out"
+check "reports the interrupt"        "iteration 1 interrupted"      "$out"
+refute "stops before iteration 2"    "iteration 2"                  "$out"
+check "interrupt exits 130"          "130"                          "$int_rc"
+if (( elapsed < 15 )); then printf 'ok   %s\n' "does not wait out the session"; (( pass++ ))
+else printf 'FAIL %s — took %ds\n' "does not wait out the session" "$elapsed"; (( fail++ )); fi
+
+sleep 0.5                                # reaping is asynchronous; give the tree a moment
+strays=""
+while read -r p; do [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null && strays+=" $p"; done <"$pidfile"
+if [[ -z "$strays" ]]; then printf 'ok   %s\n' "kills the agent it started"; (( pass++ ))
+else printf 'FAIL %s — still running:%s\n' "kills the agent it started" "$strays"; (( fail++ ))
+  kill $strays 2>/dev/null; fi
+
+# The breather between iterations is a wait like any other: it must not hold the interrupt.
+set -m
+STUB_SLEEP=0 RALPH_SLEEP=30 RALPH_PULL=0 ./ralph.sh 0 >"$work/nap.log" 2>&1 &
+nap_pid=$!
+for (( t = 0; t < 150; t++ )); do grep -q 'iteration 1 ok' "$work/nap.log" && break; sleep 0.1; done
+started=$SECONDS
+kill -INT -- -"$nap_pid"
+nap_rc=0; wait "$nap_pid" || nap_rc=$?
+elapsed=$(( SECONDS - started ))
+set +m
+check "interrupt in the breather"    "stopped on interrupt"         "$(cat "$work/nap.log")"
+check "breather interrupt exits 130" "130"                          "$nap_rc"
+if (( elapsed < 15 )); then printf 'ok   %s\n' "does not wait out the breather"; (( pass++ ))
+else printf 'FAIL %s — took %ds\n' "does not wait out the breather" "$elapsed"; (( fail++ )); fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 (( fail == 0 ))

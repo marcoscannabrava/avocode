@@ -4,8 +4,8 @@
 # usage:  ./ralph.sh [max_iterations]      # omitted or 0 = run until stopped
 #         ./ralph.sh --help
 #
-# stop:   Ctrl+C, or `touch RALPH_STOP` (the agent does this when it runs out of work).
-#         RALPH_STOP is never removed automatically — delete it to resume.
+# stop:   Ctrl+C stops the session in flight (again to force), or `touch RALPH_STOP` (the
+#         agent does this when it runs out of work); RALPH_STOP is never removed for you.
 #
 # Every iteration runs `claude --print --output-format stream-json`, which emits one JSON
 # event per turn as it happens. Default `--output-format text` prints nothing until the
@@ -89,6 +89,9 @@ elif [[ ! -f "$renderer" ]]; then
   say "ralph: renderer missing ($renderer) — showing raw JSON events" "$C_Y"
 fi
 
+have_pgrep=1
+command -v pgrep >/dev/null 2>&1 || have_pgrep=0
+
 claude_cmd=()
 (( timeout_s > 0 )) && claude_cmd+=(timeout -k 10 "$timeout_s")
 claude_cmd+=(claude --print --output-format stream-json --verbose)
@@ -99,11 +102,52 @@ read -r -a extra_args <<<"${RALPH_ARGS:-}"
 (( ${#extra_args[@]} )) && claude_cmd+=("${extra_args[@]}")
 
 # ── signals ──────────────────────────────────────────────────────────────────────────────
+# The session is signalled pid by pid, not by process group: `timeout` puts itself in a group
+# of its own, so `kill -- -$pgid` would leave the session running. The whole tree is listed
+# before anything is signalled — killing a parent reparents its survivors to init, which both
+# loses the trail to them and is why a TERM that goes ignored needs a list that still holds.
+doomed=()
+child_pids() { # <pid>
+  if (( have_pgrep )); then pgrep -P "$1" 2>/dev/null
+  else ps -A -o pid=,ppid= 2>/dev/null | awk -v p="$1" '$2 == p { print $1 }'
+  fi
+}
+collect_tree() { # <pid> — appends to `doomed`, deepest descendant first
+  local kid
+  for kid in $(child_pids "$1"); do collect_tree "$kid"; done
+  doomed+=("$1")
+}
+signal_doomed() { # <signal>
+  local p
+  for p in "${doomed[@]}"; do kill -"$1" "$p" 2>/dev/null || true; done
+}
+tree_alive() {
+  local p
+  for p in "${doomed[@]}"; do kill -0 "$p" 2>/dev/null && return 0; done
+  return 1
+}
+# Reparented to init, a session that shrugged off the TERM would go on editing the repo long
+# after the loop printed its summary. Give it a moment to leave, then insist.
+insist() {
+  local tries
+  for (( tries = 0; tries < 30; tries++ )); do tree_alive || return 0; sleep 0.1; done
+  say "ralph: session ignored the TERM — killing it" "$C_Y"
+  signal_doomed KILL
+}
+
 interrupted=0
+job_pid=''
 on_signal() {
-  if (( interrupted )); then say "ralph: forced exit" "$C_Y"; exit 130; fi
+  if (( interrupted )); then
+    say "ralph: forced exit" "$C_Y"
+    signal_doomed KILL
+    exit 130
+  fi
   interrupted=1
-  say "ralph: interrupt received — stopping (Ctrl+C again to force)" "$C_Y"
+  say "ralph: interrupt received — stopping the session (Ctrl+C again to force)" "$C_Y"
+  doomed=()
+  [[ -n "$job_pid" ]] && collect_tree "$job_pid"
+  signal_doomed TERM
 }
 trap on_signal INT TERM
 
@@ -134,16 +178,43 @@ result_field() { # <raw-log> <jq-path> <default>
 add_usd() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.4f", a + b }'; }
 over_budget() { awk -v t="$1" -v m="$2" 'BEGIN { exit !(m > 0 && t >= m) }'; }
 
+# The session runs as an async job rather than a foreground pipeline. Bash defers trap
+# handlers until the running foreground command returns, so a foreground session swallows
+# Ctrl+C for however long it lasts — minutes, usually. `wait` is interruptible, so the
+# handler runs the instant the signal lands. Async jobs also inherit SIGINT ignored, which
+# is what we want: the session dies from our own kill, not from a stray terminal signal,
+# and there is a single place that decides when it goes.
 run_iteration() { # <raw-log>
-  local raw="$1"
+  local raw="$1" status
   if (( have_jq )); then
-    "${claude_cmd[@]}" <"$prompt" 2>&1 \
-      | tee "$raw" \
-      | jq -R --unbuffered -r --argjson color "$jq_color" -f "$renderer"
+    { "${claude_cmd[@]}" <"$prompt" 2>&1 \
+        | tee "$raw" \
+        | jq -R --unbuffered -r --argjson color "$jq_color" -f "$renderer"
+      exit "${PIPESTATUS[0]}"; } &
   else
-    "${claude_cmd[@]}" <"$prompt" 2>&1 | tee "$raw"
+    { "${claude_cmd[@]}" <"$prompt" 2>&1 | tee "$raw"; exit "${PIPESTATUS[0]}"; } &
   fi
-  return "${PIPESTATUS[0]}"
+  job_pid=$!
+  wait "$job_pid"; status=$?
+  if (( interrupted )); then
+    # `wait` returned because the handler ran, not because the job is gone. It has been sent
+    # a TERM; collect it so the log is complete and no session outlives the loop.
+    wait "$job_pid" 2>/dev/null
+    insist
+    status=130
+  fi
+  job_pid=''
+  return "$status"
+}
+
+# Interruptible too, so Ctrl+C in the breather is not held until the backoff expires.
+nap() { # <seconds>
+  (( $1 > 0 )) || return 0
+  sleep "$1" &
+  job_pid=$!
+  wait "$job_pid" 2>/dev/null
+  kill "$job_pid" 2>/dev/null
+  job_pid=''
 }
 
 # ── loop ─────────────────────────────────────────────────────────────────────────────────
@@ -166,7 +237,10 @@ for (( i = 1; max == 0 || i <= max; i++ )); do
   cost="$(result_field "$raw" '.total_cost_usd' 0)"
   total_cost="$(add_usd "$total_cost" "$cost")"
 
-  if (( status == 0 )) && [[ "$(result_field "$raw" '.is_error' false)" != true ]]; then
+  if (( interrupted )); then
+    say "ralph: iteration $i interrupted (session \$$cost, total \$$total_cost)" "$C_Y"
+    break
+  elif (( status == 0 )) && [[ "$(result_field "$raw" '.is_error' false)" != true ]]; then
     (( ok++, fails_in_a_row = 0 ))
     say "ralph: iteration $i ok (session \$$cost, total \$$total_cost)" "$C_D"
   else
@@ -209,10 +283,12 @@ for (( i = 1; max == 0 || i <= max; i++ )); do
     delay=$(( sleep_s * (1 << (fails_in_a_row - 1)) ))
     (( delay > 300 )) && delay=300
   fi
-  (( delay > 0 )) && sleep "$delay"
+  nap "$delay"
   (( interrupted )) && break
 done
 
 say ""
-say "ralph: done — $last iterations, $ok ok, $failed failed, \$$total_cost total. Log: $run_dir" "$C_B"
+verdict="done"
+if (( interrupted )); then verdict="stopped on interrupt"; exit_code=130; fi
+say "ralph: $verdict — $last iterations, $ok ok, $failed failed, \$$total_cost total. Log: $run_dir" "$C_B"
 exit "$exit_code"

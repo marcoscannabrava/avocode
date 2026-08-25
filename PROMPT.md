@@ -8,7 +8,7 @@ Issues/PRs).
 
 ## Every cycle
 
-1. **Orient.** Read `PLAN.md`. Read `tail -n 1 PROGRESS.jsonl` — its `next` is your default task.
+1. **Orient.** Read `git diff @`. Read `PLAN.md`. Read `tail -n 1 PROGRESS.jsonl` — its `next` is your default task.
    `git log --oneline -10`.
 2. **Health check.** Lint + typecheck + tests. If `main` is red, fixing it is the only task.
 3. **Pick ONE task.** First match wins: broken `main` → security/data-loss → bug in the core path →

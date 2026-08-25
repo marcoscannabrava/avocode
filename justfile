@@ -3,7 +3,7 @@
 default: check
 
 # The Ralph health check: everything that must be green before any task starts.
-check: lint typecheck test
+check: lint typecheck test ralph-test
 
 # Static analysis.
 lint:
@@ -15,6 +15,11 @@ typecheck:
 
 test:
     node_modules/.bin/tsx --test test/*.test.ts
+
+# The loop harness itself, against a stub agent in a throwaway repo. Two seconds, and it is
+# the only thing that proves an interrupted run leaves no session behind editing this one.
+ralph-test:
+    ./test/ralph_test.sh
 
 # Exercises the real bin/avo; writes evidence/*-e2e.txt.
 e2e:
