@@ -14,8 +14,19 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 export const SCORER_PATH = ".avo/score";
 /** Append-only log of every `avo score` run. Attempts are not commits (PLAN §3). */
 export const ATTEMPTS_PATH = ".avo/attempts.jsonl";
-/** Scorer output beyond this is truncated; a runaway scorer must not exhaust memory. */
+/** A child's output beyond this is elided; a runaway scorer must not exhaust memory. */
 const OUTPUT_CAP = 200_000;
+/**
+ * How much of that budget is spent on the *end* of the output rather than the beginning.
+ *
+ * A head-only cap is the wrong shape for every consumer here, because in all of them the payload
+ * is the LAST thing printed: `.avo/score` prints its one JSON line after whatever the benchmark
+ * logged, and a headless agent's `result` / `turn.completed` / `message_end` event — which carries
+ * the final message, the usage and the cost — closes the stream. In the S9b-1 run, four of six
+ * iterations printed more than 200KB, so all four lost their result event and recorded `tokens:
+ * null`; the manifest reported 44 input tokens for a loop that sent 985,039 (#43, #22).
+ */
+const OUTPUT_TAIL_CAP = 50_000;
 
 /**
  * The `f` contract — frozen (PLAN §3). `.avo/score` is any executable, run from the repo root:
@@ -135,15 +146,46 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
             }
           }, opts.timeoutMs)
         : null;
-    const cap = (s: string, chunk: string) => (s.length >= OUTPUT_CAP ? s : s + chunk);
-    child.stdout.on("data", (d: Buffer) => void (stdout = cap(stdout, d.toString())));
-    child.stderr.on("data", (d: Buffer) => void (stderr = cap(stderr, d.toString())));
+    const out = capped();
+    const err = capped();
+    child.stdout.on("data", (d: Buffer) => void out.push(d.toString()));
+    child.stderr.on("data", (d: Buffer) => void err.push(d.toString()));
     child.on("error", (e: Error) => void (spawnError = e.message));
     child.on("close", (code) => {
       if (timer !== null) clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout, stderr, timedOut, spawnError });
+      resolve({ code: code ?? -1, stdout: out.value(), stderr: err.value(), timedOut, spawnError });
     });
   });
+
+/**
+ * Accumulates a child's output into a bounded head **and a rolling tail**, with a marked gap.
+ *
+ * The marker is a plain line rather than valid JSON on purpose: a consumer that parses lines
+ * already skips what it cannot parse, and one that parses the whole buffer was going to fail on a
+ * severed payload either way. What it must not do is fail *silently*, which a head-only cap does.
+ */
+function capped(): { push(chunk: string): void; value(): string } {
+  const headCap = OUTPUT_CAP - OUTPUT_TAIL_CAP;
+  let head = "";
+  let tail = "";
+  let elided = 0;
+  return {
+    push(chunk: string) {
+      if (head.length < headCap) {
+        const room = headCap - head.length;
+        head += chunk.slice(0, room);
+        chunk = chunk.slice(room);
+        if (chunk === "") return;
+      }
+      tail += chunk;
+      if (tail.length > OUTPUT_TAIL_CAP) {
+        elided += tail.length - OUTPUT_TAIL_CAP;
+        tail = tail.slice(-OUTPUT_TAIL_CAP);
+      }
+    },
+    value: () => (elided === 0 ? head + tail : `${head}\n--- avo elided ${elided} bytes of output here ---\n${tail}`),
+  };
+}
 
 /** `/scores/b1` -> `scores.b1`, so an error message names a field the way a human writes it. */
 function fieldName(path: string): string {

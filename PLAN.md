@@ -728,12 +728,19 @@ still had room. The target repo persists, so S9b-2 resumes the same lineage rath
   `[1,2,3,4]`, and iterations 5 and 6 stay empty because they genuinely were. #42's claim that
   #29's counter miscounts these was **wrong** — `idle` has required `head_after === head_before`
   since S7; the record was wrong, the stop condition never was.
-- **The token totals are unusable.** 24 input tokens for a turn that read a README, four K
-  documents and a source file: `tokensFrom` takes `input_tokens` only, and Anthropic reports the
-  bulk as `cache_read_input_tokens`. Filed as **#43**. This is the half of S9b's evidence that did
-  not land — the probe-vs-commit cost split is still unmeasured, and needs #43 plus a small-model
-  key (none of `GROQ`/`CEREBRAS`/`OPENROUTER` is set here, so `avo fan` had no small probe model to
-  be cheap with).
+- **The token totals were unusable — fixed, and it had a second cause.** 24 input tokens for a turn
+  that read a README, four K documents and a source file. Filed as **#43**; the manifest reported
+  **44 input tokens for a loop that sent 985,039**, and no cost at all. Two independent bugs:
+  `tokensFrom` took `input_tokens` only, dropping the `cache_read_input_tokens` that are almost all
+  of a long loop's input; and `spawnRunner`'s 200KB output cap kept only the *head*, so **four of
+  the six turns lost the closing `result` event** — with it the usage, the cost *and* the agent's
+  final message. `AgentTokens` now carries `cache_read`/`cache_write` as disjoint fields (`input` is
+  normalized to mean uncached, which costs codex a subtraction), `cost_usd` is read off the agent
+  (claude's `total_cost_usd`, pi's `usage.cost`), and the cap spends 50KB on a rolling tail and
+  marks the gap. Replayed against this run in `evidence/issue-43-replay.txt`; the recovered floor is
+  **$1.91 across two iterations** the manifest priced at nothing. That closes the *harness* half;
+  the probe-vs-commit split still needs a small-model key (none of `GROQ`/`CEREBRAS`/`OPENROUTER` is
+  set here, so `avo fan` had no small probe model to be cheap with).
 - **Nothing in the harness puts `avo` on the target's `PATH`.** Five wired skills all open with
   `avo ...`, and every one would have been `command not found`. Worked around with
   `PATH=…/avocode/bin:$PATH avo run …`; filed as **#41**, because the failure mode is a flat curve

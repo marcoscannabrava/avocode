@@ -108,8 +108,32 @@ const CLAUDE_STREAM = [
 test("claude stream-json: the result line carries both the summary and the tokens", () => {
   assert.deepEqual(parseAgentOutput("claude", CLAUDE_STREAM), {
     summary: "edited kernel.py",
-    tokens: { input: 10, output: 36 },
+    tokens: { input: 10, output: 36, cache_read: 0, cache_write: 0 },
+    cost_usd: null,
   });
+});
+
+// Trimmed verbatim from iteration 1 of the S9b-1 run against bench/fuzzysearch — the turn #43 was
+// filed about. 24 uncached input tokens and half a million cached ones: reading `input_tokens`
+// alone reports 0.004% of what the turn actually sent.
+const CLAUDE_CACHED = [
+  `{"type":"result","subtype":"success","is_error":false,"result":"rewrote the scan","total_cost_usd":1.1622600000000003,`,
+  `"usage":{"input_tokens":24,"cache_creation_input_tokens":49963,"cache_read_input_tokens":523326,`,
+  `"output_tokens":15977,"output_tokens_details":{"thinking_tokens":9539},"service_tier":"standard"}}`,
+].join("");
+
+test("claude's cached input is kept, and kept apart from the uncached input it is priced against", () => {
+  assert.deepEqual(parseAgentOutput("claude", CLAUDE_CACHED), {
+    summary: "rewrote the scan",
+    tokens: { input: 24, output: 15977, cache_read: 523326, cache_write: 49963 },
+    cost_usd: 1.1622600000000003,
+  });
+});
+
+test("claude's own total_cost_usd is recorded rather than re-derived from token arithmetic", () => {
+  // The agent knows its per-model rates and we do not; #28's budget has to spend this number.
+  assert.equal(parseAgentOutput("claude", CLAUDE_CACHED).cost_usd, 1.1622600000000003);
+  assert.equal(parseAgentOutput("claude", CLAUDE_STREAM).cost_usd, null);
 });
 
 const PI_STREAM = [
@@ -122,7 +146,17 @@ const PI_STREAM = [
 test("pi json mode: message_end wins over the streamed updates, and thinking is not the summary", () => {
   assert.deepEqual(parseAgentOutput("pi", PI_STREAM), {
     summary: "tried loop unrolling",
-    tokens: { input: 12, output: 40 },
+    tokens: { input: 12, output: 40, cache_read: 0, cache_write: 0 },
+    cost_usd: 0,
+  });
+});
+
+test("pi reports cacheRead/cacheWrite/cost in its own camelCase, and all three are read", () => {
+  const out = `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input":12,"output":40,"cacheRead":9000,"cacheWrite":700,"cost":0.42}}}`;
+  assert.deepEqual(parseAgentOutput("pi", out), {
+    summary: "x",
+    tokens: { input: 12, output: 40, cache_read: 9000, cache_write: 700 },
+    cost_usd: 0.42,
   });
 });
 
@@ -135,8 +169,28 @@ const CODEX_STREAM = [
 test("codex json: item.completed is the message, turn.completed is the usage", () => {
   assert.deepEqual(parseAgentOutput("codex", CODEX_STREAM), {
     summary: "rewrote the inner loop",
-    tokens: { input: 13138, output: 5 },
+    tokens: { input: 13138, output: 5, cache_read: 0, cache_write: 0 },
+    cost_usd: null,
   });
+});
+
+// The one place the three agents genuinely disagree, and the reason `input` is normalized rather
+// than copied: codex follows OpenAI, where cached_input_tokens is a SUBSET of input_tokens, while
+// claude and pi report the cached portion disjointly. Left raw, `input + cache_read` would count
+// codex's cache hits twice and claude's not at all.
+test("codex's cached_input_tokens is a subset of input_tokens, so it is subtracted out", () => {
+  const out = `{"type":"turn.completed","usage":{"input_tokens":13138,"cached_input_tokens":12000,"output_tokens":5}}`;
+  assert.deepEqual(parseAgentOutput("codex", out).tokens, {
+    input: 1138,
+    output: 5,
+    cache_read: 12000,
+    cache_write: 0,
+  });
+});
+
+test("a nonsensical cached > input never yields a negative uncached count", () => {
+  const out = `{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":99,"output_tokens":5}}`;
+  assert.equal(parseAgentOutput("codex", out).tokens?.input, 0);
 });
 
 test("a killed agent's half-written last line does not lose the earlier ones", () => {
@@ -151,11 +205,19 @@ test("noise interleaved with the event stream is skipped, not fatal", () => {
 
 test("a structured agent that printed no final message falls back to its last line", () => {
   const out = `{"type":"system","subtype":"init"}\nfatal: out of credits`;
-  assert.deepEqual(parseAgentOutput("claude", out), { summary: "fatal: out of credits", tokens: null });
+  assert.deepEqual(parseAgentOutput("claude", out), {
+    summary: "fatal: out of credits",
+    tokens: null,
+    cost_usd: null,
+  });
 });
 
 test("a text agent's summary is its last non-empty line", () => {
-  assert.deepEqual(parseAgentOutput("text", "step one\nstep two\n\n"), { summary: "step two", tokens: null });
+  assert.deepEqual(parseAgentOutput("text", "step one\nstep two\n\n"), {
+    summary: "step two",
+    tokens: null,
+    cost_usd: null,
+  });
 });
 
 test("no output at all is null, not an empty string", () => {
@@ -164,7 +226,13 @@ test("no output at all is null, not an empty string", () => {
   }
 });
 
-test("usage with neither field shape present is null rather than zeros", () => {
+test("usage carrying only cached input is a real reading, not the absence of one", () => {
+  // Before #43 this returned null: the two fields it does carry were the two being dropped.
   const out = `{"type":"result","result":"x","usage":{"cache_read_input_tokens":5}}`;
+  assert.deepEqual(parseAgentOutput("claude", out).tokens, { input: 0, output: 0, cache_read: 5, cache_write: 0 });
+});
+
+test("usage with none of the four field shapes present is null rather than zeros", () => {
+  const out = `{"type":"result","result":"x","usage":{"service_tier":"standard"}}`;
   assert.equal(parseAgentOutput("claude", out).tokens, null);
 });

@@ -164,7 +164,14 @@ export interface RunReport {
   /** Version numbers this run committed, in order. The run's actual output. */
   committed: number[];
   interventions: number;
+  /** Summed over every iteration. Disjoint by construction — see `AgentTokens`. */
   tokens: AgentTokens;
+  /**
+   * USD over the whole run, summed from what each agent reported, or `null` when no iteration
+   * reported one (codex, or a stub). `null` and `0` mean different things: nothing measured versus
+   * nothing spent, and a cost budget (#28) must refuse to run against the first.
+   */
+  cost_usd: number | null;
   stopped: StopReason;
   stop_reason: string;
   warnings: string[];
@@ -562,7 +569,8 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     iterations: [],
     committed: [],
     interventions: 0,
-    tokens: { input: 0, output: 0 },
+    tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+    cost_usd: null,
     stopped: "max-iters",
     stop_reason: "",
     warnings,
@@ -639,10 +647,15 @@ async function iterate(
       warnings: [],
     };
     report.iterations.push(it);
+    // Summed across iterations even though each turn's own usage is cumulative *within* the turn:
+    // `avo run` starts a fresh agent process per iteration, so the totals never overlap.
     report.tokens = {
       input: report.tokens.input + (turn.tokens?.input ?? 0),
       output: report.tokens.output + (turn.tokens?.output ?? 0),
+      cache_read: report.tokens.cache_read + (turn.tokens?.cache_read ?? 0),
+      cache_write: report.tokens.cache_write + (turn.tokens?.cache_write ?? 0),
     };
+    if (turn.cost_usd !== null) report.cost_usd = (report.cost_usd ?? 0) + turn.cost_usd;
 
     // A command that cannot be started will not start on the next iteration either. Burning the
     // whole budget on it is precisely the spinning this loop must not do.
@@ -795,13 +808,19 @@ export function renderRun(r: RunReport): string {
   }
   lines.push("");
 
-  const tok = r.tokens.input + r.tokens.output;
+  const t = r.tokens;
+  // Cached input is shown next to the uncached rather than added to it, because it is the ratio
+  // between the two that says whether a long loop over one repo is affordable.
+  const cached = (t.cache_read ?? 0) + (t.cache_write ?? 0);
+  const tok = t.input + t.output + cached;
+  const tokenLine = `  tokens       ${t.input} in / ${t.output} out${cached === 0 ? "" : ` / ${t.cache_read ?? 0} cache read + ${t.cache_write ?? 0} cache write`}`;
   const byAgent = r.iterations.reduce((n, it) => n + (it.agent_versions ?? []).length, 0);
   lines.push(
     `  iterations   ${r.iterations.length} of ${r.max_iters}`,
     `  committed    ${r.committed.length === 0 ? "nothing" : r.committed.map((v) => `v${v}`).join(", ")}${byAgent === 0 ? "" : ` (${byAgent} by the agent itself)`}`,
     `  interventions ${r.interventions}`,
-    ...(tok > 0 ? [`  tokens       ${r.tokens.input} in / ${r.tokens.output} out`] : []),
+    ...(tok > 0 ? [tokenLine] : []),
+    ...(r.cost_usd === null || r.cost_usd === undefined ? [] : [`  cost         $${r.cost_usd.toFixed(2)} (as the agent reported it)`]),
     `  manifest     ${join(RUNS_DIR, r.run_id, RUN_MANIFEST)}`,
     "",
     `stopped: ${r.stopped} — ${r.stop_reason}`,

@@ -77,6 +77,8 @@ export interface ProbeResult {
   /** Repo-relative, so the value is meaningful in a JSON line an agent reads from anywhere. */
   worktree: string;
   tokens: AgentTokens | null;
+  /** USD this probe cost, as the agent reported it — what #35's small-model question is priced in. */
+  cost_usd: number | null;
   wall_s: number;
   exit_code: number;
   timed_out: boolean;
@@ -509,6 +511,7 @@ async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeR
     summary: turn.summary,
     worktree: probe.worktree,
     tokens: turn.tokens,
+    cost_usd: turn.cost_usd,
     wall_s: turn.wall_s,
     exit_code: turn.exit_code,
     timed_out: turn.timed_out,

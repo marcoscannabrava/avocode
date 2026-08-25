@@ -373,6 +373,51 @@ avo run --cwd "$self" --agent stub --prompt "make kernel.txt longer" --max-iters
 yes_no $? "the human rendering says so too" "renderRun does not distinguish an agent's own commits"
 say ""
 
+# ------------------------------- 11. what a turn cost (#43, #22), through the real parse + manifest
+say "## 11. #43: the tokens and the cost a turn actually spent"
+# The stub speaks claude's stream-json, in the shape read off a real claude 2.1.241 result event,
+# and prints ~600KB of chatter BEFORE it — which is the whole point. In the S9b-1 run, four of six
+# turns overran the output cap and lost the closing result event, so the manifest recorded 44 input
+# tokens for a loop that sent 985,039 and no cost at all.
+cost="$work/cost"
+make_repo "$cost"
+cat > "$cost/stub.sh" <<STUB
+#!/usr/bin/env bash
+echo "line at iteration \${AVO_FAN_PROBE:-?}" >> kernel.txt
+i=0
+while [ \$i -lt 6000 ]; do printf '{"type":"assistant","n":%d,"pad":"%s"}\n' "\$i" "$(printf 'x%.0s' {1..80})"; i=\$((i+1)); done
+printf '{"type":"result","subtype":"success","result":"widened the band","total_cost_usd":0.25,"usage":{"input_tokens":24,"cache_creation_input_tokens":5000,"cache_read_input_tokens":50000,"output_tokens":900}}\n'
+STUB
+chmod +x "$cost/stub.sh"
+jq -n --arg cmd "$cost/stub.sh" \
+  '{agent:{name:"stub",command:$cmd,args:["{prompt}"],format:"claude"}}' > "$cost/.avo/config.json"
+
+json="$(avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 2 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '[.iterations[].agent.tokens != null] | all' >/dev/null
+yes_no $? "a chatty turn's usage survives the output cap" "the result event was cut off again (#22); usage is null"
+printf '%s' "$json" | jq -e '.tokens == {input:48,output:1800,cache_read:100000,cache_write:10000}' >/dev/null
+yes_no $? "cached input is summed across iterations and kept apart from uncached" "cache_read/cache_write are not totalled (#43)"
+printf '%s' "$json" | jq -e '(.tokens.input + .tokens.cache_read + .tokens.cache_write) == 110048' >/dev/null
+yes_no $? "the four counts are disjoint, so they add up to the input actually sent" "the token counts overlap or double-count"
+printf '%s' "$json" | jq -e '.cost_usd == 0.5' >/dev/null
+yes_no $? "the agent's own total_cost_usd is summed over the run (#28 can spend it)" "cost_usd is not recorded or not summed"
+printf '%s' "$json" | jq -e '[.iterations[].agent.cost_usd] == [0.25,0.25]' >/dev/null
+yes_no $? "and each iteration keeps its own share of it" "per-iteration cost is missing"
+printf '%s' "$json" | jq -e '.iterations[0].agent.summary == "widened the band"' >/dev/null
+yes_no $? "the final message survives too — it is in the same event" "the agent's summary was lost with the tail"
+grep -q -- '--- avo elided [0-9]* bytes of output here ---' "$cost/.avo/runs/"*/logs/1.log
+yes_no $? "the log says where it was cut rather than just stopping" "the elision is silent"
+avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 1 2>/dev/null | grep -qE '[0-9]+ in / [0-9]+ out / [0-9]+ cache read \+ [0-9]+ cache write'
+yes_no $? "the human rendering shows the cached/uncached split" "renderRun still prints in/out only"
+# shellcheck disable=SC2016  # a literal dollar sign in the rendered cost line, not an expansion
+avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 1 2>/dev/null | grep -q 'cost         \$0.25'
+yes_no $? "and what it cost" "renderRun does not print the cost"
+# The text stub from section 0 reports neither, and must say so rather than claim zero.
+printf '%s' "$(avo run --cwd "$repo" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --json 2>/dev/null)" \
+  | jq -e '.cost_usd == null' >/dev/null
+yes_no $? "an agent that reports no cost leaves it null, not 0" "an unmeasured cost reads as a free run"
+say ""
+
 say "## summary"
 if [[ $fails == 0 ]]; then
   say "all checks passed ($(grep -c '^PASS' "$evidence") of them)"

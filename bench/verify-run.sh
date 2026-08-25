@@ -81,7 +81,10 @@ else
 fi
 say "committed      $(m '(.committed // []) | if length == 0 then "nothing" else map("v" + (. | tostring)) | join(", ") end')"
 say "interventions  $(m '.interventions')"
-say "tokens         in $(m '.tokens.input'), out $(m '.tokens.output')"
+# `// 0` throughout: .avo/runs/ persists, and manifests written before #43 have neither the cache
+# fields nor cost_usd. An old run must still render, and must not claim a cost it never recorded.
+say "tokens         in $(m '.tokens.input // 0'), out $(m '.tokens.output // 0'), cache read $(m '.tokens.cache_read // 0') + write $(m '.tokens.cache_write // 0')"
+say "cost           $(m 'if (.cost_usd // null) == null then "not reported by this agent" else "$" + (.cost_usd * 100 | round / 100 | tostring) end')"
 say ""
 
 say "### per iteration"
