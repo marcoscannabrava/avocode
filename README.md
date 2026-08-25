@@ -593,10 +593,19 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test + `ralph-test` — the health check every Ralph cycle runs first |
+| `just lint` | oxlint, then `test/lint-sh.sh` — shellcheck over every shell script git knows about |
 | `just ralph-test` | drives `ralph.sh` against a stub agent in a throwaway repo (2s) |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b,8,9a}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b,8,9a}-e2e.txt` and `evidence/lint-gate-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
+
+`test/lint-sh.sh` discovers its own targets from `git ls-files` (plus untracked, non-ignored files),
+so a new script is checked before anyone remembers to list it. It needs shellcheck, but not
+*installed* shellcheck — absent from `PATH` it falls back to `npm exec --yes -- shellcheck`. If
+neither can run it **fails**: it used to end in `|| echo "shellcheck: skipped (not installed)"`,
+which reported real findings under a false reason and kept CI green through eight slices (#2).
+`test/e2e-lint.sh` is the suite that holds that shut — every one of its assertions is about the gate
+going red. `SHELLCHECK=<path>` pins a runner and disables the fallback.
 
 ## Layout
 

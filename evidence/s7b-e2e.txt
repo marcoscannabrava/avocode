@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-08-25T21:26:09Z
+# avo S7b e2e — 2026-08-25T21:45:15Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 2923b93b, a stub agent and an f that counts lines
+PASS  repo at HEAD 27ac4e95, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-d3c219fa)
+PASS  the injected directive is recorded (avo-intervention-04fefdab)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive
@@ -62,7 +62,7 @@ PASS  a STOP file dropped mid-run halts it after 25 of 50 iterations
 PASS  an agent binary that cannot be started stops the loop after one try, not five
 PASS  and it exits 1
 PASS  a turn past its --timeout is killed
-PASS  a 30s turn under --timeout 2 returned in 3s
+PASS  a 30s turn under --timeout 2 returned in 2s
 
 ## 6. crash safety: the manifest is rewritten after EVERY iteration
 PASS  a killed run left a manifest behind

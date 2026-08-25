@@ -1,0 +1,23 @@
+# avo lint-gate e2e — 2026-08-25T21:48:00Z
+# version: 0.11.0
+
+## 1. the gate is green on this repo, and says nothing about skipping
+PASS  ./test/lint-sh.sh exits 0 on a clean tree
+PASS  a green run claims nothing it did not do
+
+## 2. a finding turns the gate RED — the case #2 could not detect
+PASS  an untracked script is discovered, not waiting on a hand-edited file list
+PASS  the gate exits non-zero when shellcheck finds something (exit 1)
+PASS  the finding is reported, not just counted
+
+## 3. no shellcheck means FAIL, not skip
+PASS  an unrunnable shellcheck exits non-zero (exit 1)
+PASS  it says why it failed
+PASS  it says how to fix it
+
+## 4. just lint propagates the gate rather than swallowing it
+PASS  the lint recipe calls the gate
+PASS  the lint recipe has no || and no ; true to swallow an exit code
+PASS  just lint itself goes red on a finding (exit 1)
+
+# 11 checks passed, 0 failed

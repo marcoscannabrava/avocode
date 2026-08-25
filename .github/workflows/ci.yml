@@ -16,6 +16,8 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: extractions/setup-just@v2
+      # `just lint` falls back to `npm exec -- shellcheck` when the binary is absent, so this
+      # step is a speed-up, not a prerequisite. It is NOT what makes the gate real — see #2.
       - name: shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - run: just lint

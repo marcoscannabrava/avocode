@@ -5,10 +5,11 @@ default: check
 # The Ralph health check: everything that must be green before any task starts.
 check: lint typecheck test ralph-test
 
-# Static analysis.
+# Static analysis. The shellcheck half lives in test/lint-sh.sh: it discovers its own file
+# list from git and treats an unrunnable shellcheck as a failure, not a skip (#2).
 lint:
     node_modules/.bin/oxlint src test pi bench
-    shellcheck -S style bin/avo test/e2e.sh test/e2e-score.sh test/e2e-lineage.sh test/e2e-mem.sh test/e2e-know.sh test/e2e-install.sh test/e2e-fan.sh test/e2e-supervise.sh test/e2e-run.sh test/e2e-pi.sh test/e2e-bench.sh templates/score/*.sh bench/init.sh bench/verify-run.sh bench/fuzzysearch/avo/score ralph.sh test/ralph_test.sh || echo "shellcheck: skipped (not installed)"
+    ./test/lint-sh.sh
 
 typecheck:
     node_modules/.bin/tsc --noEmit
@@ -34,6 +35,7 @@ e2e:
     ./test/e2e-run.sh
     ./test/e2e-pi.sh
     ./test/e2e-bench.sh
+    ./test/e2e-lint.sh
 
 # Everything, including the slow end-to-end pass.
 all: check e2e

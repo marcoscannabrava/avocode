@@ -106,12 +106,16 @@ read -r -a extra_args <<<"${RALPH_ARGS:-}"
 # of its own, so `kill -- -$pgid` would leave the session running. The whole tree is listed
 # before anything is signalled — killing a parent reparents its survivors to init, which both
 # loses the trail to them and is why a TERM that goes ignored needs a list that still holds.
+# SC2329 is disabled on the three functions below that only the trap reaches: shellcheck's
+# reachability analysis does not follow `trap on_signal INT TERM`, so it calls all three dead.
 doomed=()
+# shellcheck disable=SC2329
 child_pids() { # <pid>
   if (( have_pgrep )); then pgrep -P "$1" 2>/dev/null
   else ps -A -o pid=,ppid= 2>/dev/null | awk -v p="$1" '$2 == p { print $1 }'
   fi
 }
+# shellcheck disable=SC2329
 collect_tree() { # <pid> — appends to `doomed`, deepest descendant first
   local kid
   for kid in $(child_pids "$1"); do collect_tree "$kid"; done
@@ -137,6 +141,7 @@ insist() {
 
 interrupted=0
 job_pid=''
+# shellcheck disable=SC2329
 on_signal() {
   if (( interrupted )); then
     say "ralph: forced exit" "$C_Y"

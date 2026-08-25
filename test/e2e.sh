@@ -2,7 +2,7 @@
 # End-to-end checks against the real `bin/avo` binary. Writes evidence/s0-e2e.txt.
 set -uo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$root"
+cd "$root" || exit 1
 
 evidence="$root/evidence/s0-e2e.txt"
 mkdir -p "$root/evidence"
@@ -21,22 +21,24 @@ say ""
 want="$(jq -r .version package.json)"
 got="$(./bin/avo --version)"
 say "\$ ./bin/avo --version -> $got"
-[[ "$got" == "$want" ]] && ok "version matches package.json ($want)" || bad "version: want $want, got $got"
+if [[ "$got" == "$want" ]]; then ok "version matches package.json ($want)"
+else bad "version: want $want, got $got"; fi
 
 # 2. help exits 0 and mentions doctor.
 ./bin/avo --help > /tmp/avo-help.$$ 2>&1
 help_code=$?
 say "\$ ./bin/avo --help -> exit $help_code"
-{ [[ $help_code -eq 0 ]] && grep -q doctor /tmp/avo-help.$$; } \
-  && ok "help exits 0 and documents doctor" || bad "help broken (exit $help_code)"
+if [[ $help_code -eq 0 ]] && grep -q doctor /tmp/avo-help.$$; then
+  ok "help exits 0 and documents doctor"
+else bad "help broken (exit $help_code)"; fi
 rm -f /tmp/avo-help.$$
 
 # 3. unknown command exits 2.
 ./bin/avo frobnicate > /dev/null 2>&1
 unknown_code=$?
 say "\$ ./bin/avo frobnicate -> exit $unknown_code"
-[[ $unknown_code -eq 2 ]] && ok "unknown command exits 2" \
-                          || bad "unknown command: want exit 2, got $unknown_code"
+if [[ $unknown_code -eq 2 ]]; then ok "unknown command exits 2"
+else bad "unknown command: want exit 2, got $unknown_code"; fi
 
 # 4. doctor --json is a single parseable line with the expected shape.
 json="$(./bin/avo doctor --json)"
@@ -49,7 +51,8 @@ if printf '%s' "$json" | jq -e 'has("ok") and has("deps") and has("keys") and ha
 else
   bad "doctor --json shape wrong"
 fi
-[[ "$(printf '%s' "$json" | wc -l)" -eq 0 ]] && ok "doctor --json is one line" || bad "doctor --json is multi-line"
+if [[ "$(printf '%s' "$json" | wc -l)" -eq 0 ]]; then ok "doctor --json is one line"
+else bad "doctor --json is multi-line"; fi
 
 # 5. Invariant 6: no API key value ever appears in output, even when one is set.
 canary="sk-avo-e2e-canary-must-not-leak"
@@ -76,13 +79,15 @@ code=$?
 say ""
 say "\$ PATH=<node+bash only> ./bin/avo doctor -> exit $code"
 printf '%s\n' "$out" | sed 's/^/    /' >> "$evidence"
-[[ $code -ne 0 ]] && ok "doctor exits non-zero when required deps are missing (exit $code)" \
-                  || bad "doctor exited 0 with git and jq missing"
+if [[ $code -ne 0 ]]; then ok "doctor exits non-zero when required deps are missing (exit $code)"
+else bad "doctor exited 0 with git and jq missing"; fi
 for expect in "required dependency 'git'" "required dependency 'jq'" "no coding agent found"; do
-  printf '%s' "$out" | grep -qF "$expect" && ok "reports: $expect" || bad "missing from output: $expect"
+  if printf '%s' "$out" | grep -qF "$expect"; then ok "reports: $expect"
+  else bad "missing from output: $expect"; fi
 done
-printf '%s' "$out" | grep -qF "https://jqlang.org/download/" \
-  && ok "includes an install hint" || bad "no install hint in output"
+if printf '%s' "$out" | grep -qF "https://jqlang.org/download/"; then
+  ok "includes an install hint"
+else bad "no install hint in output"; fi
 rm -rf "$sandbox"
 
 say ""
