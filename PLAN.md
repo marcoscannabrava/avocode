@@ -112,7 +112,8 @@ avocode/
   pi/extensions/
     avo/index.ts           # the entry point Pi discovers; registers what tools.ts defines
     avo/tools.ts           # native Pi tools (thin wrappers over src/); typebox schemas
-    avo-supervisor/index.ts# event-interception supervisor
+    avo-supervisor/        # steers from inside the session: index.ts + supervisor.ts
+                           #   (tool_result -> supervise() -> pi.sendMessage), episode-scoped
   templates/score/         # reference scorers: hyperfine, pytest, vitest, evals
   knowledge/               # K corpus (markdown; qmd collection)
   lineage/                 # rendered vNNN.md per committed version (qmd collection)
@@ -523,7 +524,7 @@ Each slice: build → verify with the stated command → commit → update `PROG
     caught rather than assumed away.
   - Two real bugs the loop caught by being run, not by being read — see PROGRESS.jsonl iter 9.
 
-### S8 — Pi implementation `[~]` (tools shipped; supervisor extension next)
+### S8 — Pi implementation `[x]`
 - `pi/extensions/avo/index.ts` — `pi.registerTool` for `avo_score`, `avo_commit`, `avo_lineage`,
   `avo_know_query`, `avo_know_add`, `avo_fan`. Thin wrappers over `src/`; typebox schemas; use
   `promptSnippet`/`promptGuidelines` so they land in the system prompt properly. Persist state in
@@ -532,8 +533,13 @@ Each slice: build → verify with the stated command → commit → update `PROG
   update running state; on trigger call `avo supervise` and `pi.sendMessage(directive)`;
   `ctx.ui.setStatus("avo", "v12 · 1668 TFLOPS · 3 since best")` for a live footer;
   `ctx.ui.notify` on a new best. Close resources in `session_shutdown`, not the factory.
-- `pi.registerProvider` / `pi.setModel` used only to pin `AVO_PROBE_MODEL` for fan-out; the main
-  session model is the user's choice.
+- ~~`pi.registerProvider` / `pi.setModel` used only to pin `AVO_PROBE_MODEL` for fan-out~~ —
+  **dropped in S8b, and the reason is worth keeping.** Both act on the *current session's* model
+  registry. `AVO_PROBE_MODEL` never reaches that registry: `runFan` reads it into `--model` on a
+  *subprocess* (`pi --mode json --print --model X`), which resolves its own models from its own
+  settings and auth. There is nothing for `registerProvider` to pin. Filed as #35 in case the
+  intent was a different feature (defaulting `avo_fan`'s `model` from the live session), which is a
+  new decision rather than the one this bullet described.
 - **Verify:** an SDK-driven test (`createAgentSession` + `SessionManager.inMemory()` +
   `tools: [...]`) that scripts a stalling sequence and asserts the steering message is injected
   exactly once; extension loads cleanly under `pi --mode json` in the fixture repo.
@@ -570,13 +576,44 @@ Each slice: build → verify with the stated command → commit → update `PROG
     passed for the wrong reason until it was driven.
   - **`test/pi-drive.ts` is a checked-in harness**, not a file the e2e writes into the repo root at
     run time: a stray file in avocode's own tree is that same self-perturbation bug.
-  - **Not yet built:** the supervisor extension, and `registerProvider`/`setModel` for pinning
-    `AVO_PROBE_MODEL`. The SDK-driven stalling test belongs with the supervisor, so this half is
-    verified by unit tests over `execute` plus an e2e that loads the extension through Pi's own
-    `DefaultResourceLoader` in a repo wired by the real `avo install`.
+  - **Not yet built (at iter 10):** the supervisor extension. Shipped in iter 12, below.
   - **Decided early, as the handoff asked:** the Pi supervisor will count the same attempts
     `avo supervise` counts — `.avo/attempts.jsonl`, read through `supervise()` — rather than keeping
     its own in-session tally, so an operator running both cannot be steered twice for one stall.
+
+- **Shipped (iter 12) — the supervisor half.** `pi/extensions/avo-supervisor/{index.ts,supervisor.ts}`,
+  a SECOND extension rather than a second half of the first: the tools are useful without steering,
+  and an operator already running `avo run` wants exactly that pairing. `avo install --agent pi`
+  links both. Decisions worth keeping:
+  - **The unit of steering is the EPISODE, not the attempt.** `episodeKeys()` names the run of
+    consecutive readings that are the same problem — a stall by the best version it is stuck under
+    plus the attempt index it began at, a thrash by its failure signature plus where the streak
+    began — and one episode gets one directive. Steering every attempt burns context and teaches
+    the model to skim the one message meant to change its mind. A new best, or a thrash appearing
+    *during* a stall, is new information and does steer.
+  - **The anchor is `analyzed - since_best`, not `attempts - since_best`.** Past `ANALYSIS_WINDOW`
+    the detector only sees a window, so the untruncated total creeps up once per attempt while the
+    window's own numbers hold still — the episode key would change every attempt and re-steer
+    forever. Tested at the saturated boundary.
+  - **Answered episodes are reconstructed from the injected messages on the branch**, via
+    `ctx.sessionManager.getBranch()` in `session_start`. Pi's docs say to persist extension state in
+    tool-result `details`, but this extension owns no tool, and a `tool_result` handler that
+    returned `details` would CLOBBER the avo tool's own. The injected `custom_message` already
+    carries everything and is already branch-scoped: a branch that never saw the directive is a
+    model that never read it, and is steered again. `getBranch()`, never `getEntries()`.
+  - **Only `avo_score` and `avo_commit` are watched.** `avo_fan` scores in disposable worktrees with
+    `record: false`, so a fan-out moves no counter in this repo (invariant 7).
+  - **Degrading is tested, not asserted.** A `supervise()` that throws, and a memory backend that
+    throws, each cost one `ctx.ui.notify` warning and nothing else — the directive still lands in
+    the second case, because it is already in the session file (invariant 4).
+  - **Every steer is also an intervention memory**, keyed by the episode, so a Pi-driven trajectory
+    audits exactly like an `avo run` one and re-recording is idempotent (invariant 5).
+  - **`test/pi-supervise-drive.ts` is the SDK-driven acceptance**, and what it scripts is the MODEL,
+    not the harness: real `DefaultResourceLoader`, real `ExtensionRunner`, real
+    `SessionManager.inMemory()`, real `emitToolResult`, with the tool calls executed through the
+    definitions Pi registered. A stalling sequence driven by an actual LLM is neither deterministic
+    nor offline, and the extension reacts to tool results, not to prose. Six worsening scores, one
+    directive; then `resetLeaf()` and a seventh, steered again.
 
 ### S9 — End-to-end validation `[ ]`
 - One real optimization target with a real `.avo/score` (candidate: a hot function in a small

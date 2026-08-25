@@ -9,13 +9,13 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 ## Status
 
 S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory), S4 (`K` —
-knowledge), S5 (agent-agnostic skills), S6 (concurrency) and S7 (supervisor + continuous loop) are
-done, and S8's first half — the six native Pi tools — is shipped. `avo init`, `avo install`,
-`avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`, `avo mem`, `avo know`,
-`avo fan`, `avo supervise` and `avo run` work; the five skills in `.agents/skills/` are wired for
-`pi`, Claude Code and Codex; and a `pi` session in a wired repo gets `avo_score`, `avo_commit`,
-`avo_lineage`, `avo_know_query`, `avo_know_add` and `avo_fan` as native tools. Next is the rest of
-S8 (the supervisor extension) and S9 (end-to-end validation on a real optimization target).
+knowledge), S5 (agent-agnostic skills), S6 (concurrency), S7 (supervisor + continuous loop) and S8
+(the Pi implementation) are done. `avo init`, `avo install`, `avo doctor`, `avo score`,
+`avo commit`, `avo lineage`, `avo best`, `avo mem`, `avo know`, `avo fan`, `avo supervise` and
+`avo run` work; the five skills in `.agents/skills/` are wired for `pi`, Claude Code and Codex; and
+a `pi` session in a wired repo gets `avo_score`, `avo_commit`, `avo_lineage`, `avo_know_query`,
+`avo_know_add` and `avo_fan` as native tools, plus an `avo-supervisor` extension that steers a
+stalling session from inside it. Next is S9 (end-to-end validation on a real optimization target).
 
 ## Quickstart
 
@@ -368,7 +368,7 @@ What each agent gets:
 
 | Agent | Wiring | Why |
 | --- | --- | --- |
-| pi | project `.agents/skills/` is discovered natively, so only two things are wired: `.pi/settings.json` gets `defaultTools` (including `bash`) and `enableSkillCommands`, and `.pi/extensions/avo` is linked at the native tools | `avo`, `bd` and `qmd` are CLIs; an agent without `bash` cannot drive any of them. The extension is a shortcut past `bash`, not a capability the others lack |
+| pi | project `.agents/skills/` is discovered natively, so only two things are wired: `.pi/settings.json` gets `defaultTools` (including `bash`) and `enableSkillCommands`, and `.pi/extensions/{avo,avo-supervisor}` are linked at the native tools and the in-session supervisor | `avo`, `bd` and `qmd` are CLIs; an agent without `bash` cannot drive any of them. The extension is a shortcut past `bash`, not a capability the others lack |
 | claude | `.claude/skills` → `.agents/skills`, one directory symlink | a skill added later needs no re-install |
 | codex | the `AGENTS.md` skills index | Codex has no skill-discovery mechanism; naming the files *is* the wiring |
 
@@ -388,11 +388,15 @@ mode `avo fan` will drive it in. `avo install` says so every time it wires pi.
 existing `.claude/skills` full of your own skills gets avo's linked *inside* it instead. A symlink
 or file in the way needs `--force`.
 
-## The native `pi` extension — the same commands, one process closer
+## The native `pi` extensions — the same commands, one process closer
 
-Every capability is reachable from `bash` first (invariant 8); the extension is a *binding*, not new
-behaviour. `avo install --agent pi` links `.pi/extensions/avo` at avocode's `pi/extensions/avo`,
-which is where pi discovers a project-local extension, and a pi session in that repo gets six tools:
+Every capability is reachable from `bash` first (invariant 8); the extensions are *bindings*, not new
+behaviour. `avo install --agent pi` links `.pi/extensions/avo` and `.pi/extensions/avo-supervisor`
+at avocode's `pi/extensions/`, which is where pi discovers a project-local extension. Two, not one,
+because they are useful apart: the tools without the supervisor is a session that steers itself, and
+an operator already running `avo run` wants exactly that.
+
+A pi session in that repo gets six tools:
 
 | Tool | Wraps | Notes |
 | --- | --- | --- |
@@ -414,6 +418,29 @@ Three rules the tools follow, each for a reason worth keeping:
   rendering in `content` — the model reads exactly what a human reads.
 - **The repo comes from the session, never from the model.** No tool takes a `cwd`: an agent that
   can retarget the repo can write a version into a repo nobody is watching.
+
+### `avo-supervisor` — S7's steering, inside the session
+
+`avo run` supervises by polling: turn, `avo commit`, `avo supervise`, splice the directive into the
+next prompt. That works for any agent and costs a process per check. The supervisor extension does
+the same thing natively — it subscribes to `tool_result`, and on `avo_score` or `avo_commit` (the
+only two that can move a counter; `avo_fan` scores in disposable worktrees) it calls the same
+`supervise()` the CLI calls and injects the directive with `pi.sendMessage`. A live footer reads
+`v12 · 1668 TFLOPS · 3 since best`, and a landed version is announced.
+
+- **It counts the attempt log, not the session.** State comes from `.avo/attempts.jsonl` and the git
+  lineage every time, so an operator running `avo run` in one terminal and `pi` in another cannot be
+  steered twice for one stall by two counters that drifted.
+- **One episode, one directive.** A stall is named by the best version it is stuck under; a thrash by
+  its failure signature and where the streak began. Re-injecting the same advice on every attempt
+  burns context and teaches the model to skim the one message meant to change its mind. A *new* best,
+  or a thrash appearing during a stall, is new information and does steer.
+- **A branch that never saw the directive still gets one.** The answered episodes are reconstructed
+  from the injected messages on the current branch, so branching rewinds the supervisor with the
+  conversation.
+- **It re-implements nothing.** No commit rule, no thresholds, no directive text: `.avo/config.json`
+  decides `stall` and `thrash` exactly as it does for the CLI. Every steer is also written down as an
+  intervention memory, the same record `avo run` leaves.
 
 The same trust rule applies as for skills — pi ignores a project-local extension until the project
 is trusted, and headless runs never prompt. `--approve` or `defaultProjectTrust: "always"`.
@@ -460,13 +487,14 @@ src/fan.ts        avo fan — worktrees, probes, the four guards, promote and re
 src/supervise.ts  avo supervise — the stall/thrash detector and the directive it cites with
 src/run.ts        avo run — the continuous loop, its manifest and the intervention record
 src/io.ts         injectable output sink, so commands are unit-testable
-pi/extensions/    the native pi binding: avo/index.ts registers what avo/tools.ts defines
+pi/extensions/    the native pi bindings: avo/ registers the six tools, avo-supervisor/ steers
 .agents/skills/   THE agent-agnostic layer: avo-vary, avo-score, avo-lineage, avo-knowledge,
                   avo-fanout
 AGENTS.md         the always-on rules + the skills index (managed block, hand edits preserved)
 templates/score/  reference scorers + the authoring guide
 test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install,-fan,
-                  -supervise,-run,-pi}.sh, plus pi-load.ts / pi-drive.ts (harnesses, not suites)
+                  -supervise,-run,-pi}.sh, plus pi-{load,drive,supervise-drive}.ts (harnesses,
+                  not suites)
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

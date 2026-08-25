@@ -1,16 +1,19 @@
-# avo S8a e2e — 2026-08-25T18:57:36Z
+# avo S8 e2e — 2026-08-25T19:29:53Z
 # node v22.14.0, pi 0.84.3
 
 ## 1. avo install --agent pi wires the extension where pi looks for it
 PASS  avo install --agent pi exits 0
 PASS  .pi/extensions/avo is a symlink, not a copy
-PASS  the link resolves to a real index.ts — pi loads <dir>/index.ts
+PASS  avo resolves to a real index.ts — pi loads <dir>/index.ts
+PASS  .pi/extensions/avo-supervisor is a symlink, not a copy
+PASS  avo-supervisor resolves to a real index.ts — pi loads <dir>/index.ts
 PASS  a second install reports the extension unchanged
 PASS  the link is byte-identical after a re-run
 
 ## 2. pi's own resource loader discovers it in a trusted project
 PASS  the extension loads with zero errors
 PASS  it was found by DISCOVERY, at .pi/extensions/avo/index.ts
+PASS  the supervisor is discovered too, and registers no tools of its own
 PASS  all six tools register: score, commit, lineage, know_query, know_add, fan
 
 ## 3. an untrusted project gets nothing — the warning avo prints is real
@@ -23,5 +26,15 @@ PASS  the commit carries the Avo-Version trailer the CLI writes
 PASS  the CLI reads back the version the extension wrote
 PASS  the rationale reaches lineage/v001.md
 
+## 5. the supervisor steers a stalling session exactly once, through pi's own dispatch
+PASS  pi loads both extensions and has a tool_result handler
+PASS  v1 lands first, so the stall has a best to be measured against
+PASS  six worsening scores produce ONE directive, not six
+PASS  the injected message is the supervisor's, and it names the stall
+PASS  it fires at the configured threshold (3 since best), read from .avo/config.json
+PASS  a branch that never saw the directive is steered again
+PASS  a landed version is announced once to the operator
+PASS  the steer is written down as an intervention memory, as avo run writes it
+
 ## summary
-all checks passed (14 of them)
+all checks passed (25 of them)
