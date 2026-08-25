@@ -418,6 +418,82 @@ printf '%s' "$(avo run --cwd "$repo" --agent stub --prompt "make kernel.txt long
 yes_no $? "an agent that reports no cost leaves it null, not 0" "an unmeasured cost reads as a free run"
 say ""
 
+
+# ---------------- 12. #49: a turn that says nothing must not put protocol noise in the lineage
+say "## 12. #49: what an unexplained turn writes into the permanent record"
+# No `result` event — exactly what a turn killed by --timeout leaves behind. The old fallback took
+# the last line of stdout, which on a stream-json stream is always a protocol event, and wrote it
+# to `avo commit --why`: into the commit body, lineage/vNNN.md and memory.jsonl, permanently, and
+# from there back into later turns as a rationale the supervisor replays.
+silent="$work/silent"
+make_repo "$silent"
+cat > "$silent/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "line at iteration ${AVO_FAN_PROBE:-?}" >> kernel.txt
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"unrolled the inner loop"}]}}'
+echo '{"type":"system","subtype":"thinking_tokens","estimated_tokens":3450,"session_id":"s"}'
+STUB
+chmod +x "$silent/stub.sh"
+jq -n --arg cmd "$silent/stub.sh" \
+  '{agent:{name:"stub",command:$cmd,args:["{prompt}"],format:"claude"}}' > "$silent/.avo/config.json"
+
+json="$(avo run --cwd "$silent" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.iterations[0].agent.summary == "unrolled the inner loop"' >/dev/null
+yes_no $? "a killed turn is salvaged from its last MESSAGE, not the last event on the wire" "the summary is a protocol event again (#49)"
+if git -C "$silent" log -1 --format=%B | grep -q thinking_tokens; then
+  bad "a raw stream-json event was committed as the rationale"
+else
+  ok "no protocol event reaches the commit body"
+fi
+
+# The same stub with nothing said at all: silence is recorded as silence, and it is visible.
+mute="$work/mute"
+make_repo "$mute"
+cat > "$mute/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "line at iteration ${AVO_FAN_PROBE:-?}" >> kernel.txt
+echo '{"type":"system","subtype":"thinking_tokens","estimated_tokens":3450,"session_id":"s"}'
+STUB
+chmod +x "$mute/stub.sh"
+jq -n --arg cmd "$mute/stub.sh" \
+  '{agent:{name:"stub",command:$cmd,args:["{prompt}"],format:"claude"}}' > "$mute/.avo/config.json"
+
+json="$(avo run --cwd "$mute" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.iterations[0].agent.summary == null' >/dev/null
+yes_no $? "an agent that said nothing reports no summary rather than an event" "the fallback still invents a rationale"
+printf '%s' "$json" | jq -e '.iterations[0].decision.action == "committed"' >/dev/null
+yes_no $? "the turn still did real work, so it is still a version" "a silent turn lost its version"
+printf '%s' "$json" | jq -e '[.iterations[0].warnings[] | test("no final message")] | any' >/dev/null
+yes_no $? "and the manifest says the version has no rationale" "an unexplained version is recorded silently"
+avo run --cwd "$mute" --agent stub --prompt "make kernel.txt longer" --max-iters 1 2>/dev/null | grep -q "no final message"
+yes_no $? "so does the rendering an operator reads" "renderRun hides the silence"
+
+# The record that was actually polluted in S9b-1, and the only one `--why` reaches: a REFUSED
+# candidate's dead end. recordDecisionMemory builds a committed version's detail from the commit
+# rule's own reason, but a dead end's from `opts.why` — so this is the path where a protocol event
+# became something the supervisor replays to later turns under "do not re-try these".
+dead="$work/deadend"
+make_repo "$dead" failing
+cp "$mute/stub.sh" "$dead/stub.sh"
+jq -n --arg cmd "$dead/stub.sh" \
+  '{agent:{name:"stub",command:$cmd,args:["{prompt}"],format:"claude"}}' > "$dead/.avo/config.json"
+avo run --cwd "$dead" --agent stub --prompt "make kernel.txt longer" --max-iters 1 >/dev/null 2>&1
+
+# The jsonl backend, because neither this machine nor CI has `bd` (#12). If that ever changes this
+# fails loudly rather than passing over a file nobody writes any more, which is the right direction
+# for a check whose whole subject is a record nobody reads until it is wrong.
+if [[ ! -s $dead/lineage/memory.jsonl ]]; then
+  bad "no memory record was written, so the dead-end check would prove nothing"
+elif ! grep -q '"kind":"failure"' "$dead/lineage/memory.jsonl"; then
+  bad "the refused candidate left no dead-end record to inspect"
+elif grep -q thinking_tokens "$dead/lineage/memory.jsonl"; then
+  bad "a protocol event is recorded as a dead end's rationale, and will be replayed to later turns"
+else
+  ok "a dead end with no rationale records none, rather than the last event on the wire"
+fi
+say ""
+
 say "## summary"
 if [[ $fails == 0 ]]; then
   say "all checks passed ($(grep -c '^PASS' "$evidence") of them)"

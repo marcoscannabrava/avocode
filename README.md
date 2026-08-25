@@ -367,6 +367,17 @@ rolling tail and marks the gap it elides, because in every stream `avo` reads, t
 last thing printed (#43, #22; `evidence/issue-43-replay.txt`, reproducible with
 `npx tsx bench/replay-tokens.ts <repo>/.avo/runs/<id>`).
 
+**A turn's rationale is what the agent *said*, and silence is recorded as silence.** The final
+message becomes `avo commit --why`, which lands in the commit body, `lineage/vNNN.md` and
+`memory.jsonl` — all permanent, and the last of them replayed to later turns as a known dead end.
+So a structured stream that never produced a parseable result falls back to the agent's last
+*message*, then to any prose it printed on the way down (`fatal: out of credits` explains a turn;
+keep it), and then to nothing. It never falls back to the last line on the wire: in a stream-json
+stdout every line is a protocol event, and a run once recorded
+`{"type":"system","subtype":"thinking_tokens",…}` as a dead end's rationale (#49). A turn that said
+nothing commits with no rationale and warns, in the manifest and in the rendered run, because an
+unexplained version is worth noticing — it usually means the turn was killed or timed out.
+
 The run manifest at `.avo/runs/<id>/manifest.json` is rewritten after **every** iteration, never at
 the end, and each turn's raw agent output is kept beside it under `logs/`. A loop meant to run for
 days will be killed at some point, and the difference between per-iteration and at-exit is the

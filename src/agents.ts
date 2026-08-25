@@ -242,6 +242,27 @@ function lastLine(stdout: string): string | null {
 }
 
 /**
+ * The last line, but only if it is something the agent *said* rather than something its protocol
+ * emitted (#49).
+ *
+ * A structured agent that dies still prints prose on the way down — `fatal: out of credits` is a
+ * real explanation and worth keeping. A protocol event is not: it becomes `avo commit --why`, and
+ * from there the commit body, `lineage/vNNN.md` and `memory.jsonl`, all of them permanent, and the
+ * last of them replayed to future turns as a known dead end.
+ *
+ * Anything opening a JSON object or array is treated as protocol, including a half-written line
+ * from a killed process — `{"type":"result","resu` is unparseable but obviously not prose. Only
+ * the LAST line is considered: prose that appeared *before* the event stream is startup noise
+ * (`npm notice`, a shell warning), not a rationale, and resurrecting it would be its own bug.
+ */
+function lastProseLine(stdout: string): string | null {
+  const line = lastLine(stdout);
+  if (line === null) return null;
+  const t = line.trim();
+  return t.startsWith("{") || t.startsWith("[") ? null : line;
+}
+
+/**
  * Pulls the final message, the token counts and the reported cost out of one agent's stdout.
  *
  * **All three agents report usage cumulatively for the turn**, so last-seen wins rather than being
@@ -258,6 +279,9 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
   if (format === "text") return { summary: lastLine(stdout), tokens: null, cost_usd: null };
 
   let summary: string | null = null;
+  // The last thing the agent said *before* the turn closed. Only ever used as a fallback: a turn
+  // killed mid-stream has no `result` event but has usually already described what it did.
+  let streamed: string | null = null;
   let tokens: AgentTokens | null = null;
   let costUsd: number | null = null;
 
@@ -271,6 +295,9 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
           tokens = tokensFrom(e["usage"]) ?? tokens;
           // Sibling of `usage`, not a member of it — and already what ralph.sh bills the loop by.
           costUsd = num(e["total_cost_usd"]) ?? costUsd;
+        } else if (e["type"] === "assistant") {
+          const m = obj(e["message"]);
+          if (m !== null) streamed = textOf(m["content"]) ?? streamed;
         }
         break;
       }
@@ -285,6 +312,8 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
             costUsd = costFrom(m["usage"]) ?? costUsd;
           }
         } else if (e["type"] === "message_update") {
+          const m = obj(e["message"]);
+          if (m !== null && m["role"] === "assistant") streamed = textOf(m["content"]) ?? streamed;
           tokens = tokensFrom(e["usage"]) ?? tokens;
           costUsd = costFrom(e["usage"]) ?? costUsd;
         }
@@ -304,8 +333,11 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
     }
   }
 
-  // A structured agent that died mid-stream still said something useful on the way down.
-  return { summary: summary ?? lastLine(stdout), tokens, cost_usd: costUsd };
+  // A structured agent that died mid-stream still said something useful on the way down — in its
+  // own last message first, and failing that in whatever prose it printed as it fell over. What it
+  // must never produce is a protocol event dressed up as the agent's rationale (#49): silence is
+  // the honest answer, and `avo run` records it as a warning rather than committing noise.
+  return { summary: summary ?? streamed ?? lastProseLine(stdout), tokens, cost_usd: costUsd };
 }
 
 // ---------------------------------------------------------------------------

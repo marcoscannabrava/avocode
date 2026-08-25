@@ -2,6 +2,11 @@
 
 > Read this first every Ralph cycle. `PROGRESS.jsonl`'s last `next` is the default task.
 > Slices are ordered; each is independently shippable and verifiable. Don't skip ahead.
+>
+> One handoff trap, learned the hard way: **never write `fixed`, `closes` or `resolves` next to an
+> issue number in a commit message unless you fixed it.** GitHub matches the keyword, not the
+> sentence — iteration 18's honest `Filed, not fixed: #49` closed #49 as completed, and the bug was
+> still live a full iteration later. Write `filed #49 (not fixed)` instead.
 
 ---
 
@@ -815,9 +820,10 @@ rate a 12-iteration default run is ~$33, and nothing in the harness would stop i
 `small`) was **discarded** from the working tree before resuming, not kept — it was already recorded
 as a dead-end memory, which is the channel designed to carry it. Kept as
 `evidence/s9b-refused-candidate-interleaved-entries.diff`. The agent reached the same idea again on
-its own and made it win as v5. Two harness bugs surfaced and are filed, not fixed:
+its own and made it win as v5. Two harness bugs surfaced and were filed:
 **#49** (the stream-json summary fallback writes a raw protocol event into permanent lineage — the
-polluted S9b-1 dead-end record is the evidence) and **#51** (`verify-run.sh`'s `vs v0` column uses
+polluted S9b-1 dead-end record is the evidence), **fixed in iteration 19**, and **#51**
+(`verify-run.sh`'s `vs v0` column uses
 the *run's* starting HEAD, so on this resumed run v1 is printed as a 0.1× slowdown; the 7837× above
 is computed from the lineage root by hand because the evidence file no longer states it).
 

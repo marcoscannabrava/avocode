@@ -335,6 +335,39 @@ test("the agent's own final message becomes the commit rationale", async () => {
   assert.match(f.git("log", "-1", "--format=%B", "HEAD"), /appended one line at depth/);
 });
 
+// #49. The stub speaks claude's stream-json and never emits a `result` event — a turn killed by
+// --timeout looks exactly like this. Before the fix the last event on the wire became `--why`, and
+// a `{"type":"system","subtype":"thinking_tokens",...}` object was written into the commit body,
+// lineage/vNNN.md and memory.jsonl, permanently, to be replayed to later turns as a rationale.
+const SILENT_STREAM_STUB = `#!/bin/sh
+echo "a line the agent added" >> kernel.txt
+echo '{"type":"system","subtype":"init","session_id":"s"}'
+echo '{"type":"system","subtype":"thinking_tokens","estimated_tokens":3450,"session_id":"s"}'
+`;
+
+test("a turn that ends in a protocol event commits with no rationale, and says so (#49)", async () => {
+  const f = fixture("runsilent");
+  writeFileSync(join(f.dir, "silent.sh"), SILENT_STREAM_STUB, { mode: 0o755 });
+  writeFileSync(
+    join(f.dir, ".avo/config.json"),
+    JSON.stringify({ agent: { name: "stub", command: join(f.dir, "silent.sh"), args: ["{prompt}"], format: "claude" } }),
+  );
+  f.git("add", "-A");
+  f.git("commit", "-qm", "a stub that says nothing");
+
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "1"]);
+  const it = json.iterations[0];
+  assert.equal(it?.agent.summary, null, "a protocol event is not something the agent said");
+  assert.equal(it?.decision?.action, "committed", "the turn still did real work and is still a version");
+
+  const body = f.git("log", "-1", "--format=%B", "HEAD");
+  assert.doesNotMatch(body, /thinking_tokens/, "nothing permanent may carry protocol noise");
+  assert.doesNotMatch(readFileSync(join(f.dir, "lineage/memory.jsonl"), "utf8"), /thinking_tokens/);
+  // Silence is recorded rather than papered over: an unexplained version is worth noticing.
+  assert.ok(it?.warnings.some((w) => /no final message/.test(w)), `warnings were ${JSON.stringify(it?.warnings)}`);
+  assert.match(renderRun(json), /no final message/);
+});
+
 test("each iteration is told what the previous one did", async () => {
   const f = fixture("runprompt");
   await run(f, ["--prompt", "make it longer", "--max-iters", "2"]);
