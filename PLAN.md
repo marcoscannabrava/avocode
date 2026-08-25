@@ -228,8 +228,11 @@ Each slice: build → verify with the stated command → commit → update `PROG
   missing binary — CI installed shellcheck, ran it, collected 32 findings and went green printing
   a false reason, for eight slices (**#2**). The gate is now `test/lint-sh.sh`: it discovers its
   targets from git rather than a hand-kept list, falls back to `npm exec -- shellcheck` when the
-  binary is absent, and **fails** when neither can run. `test/e2e-lint.sh` (11 checks) is the suite
-  that holds it shut; `shellcheck` joined `avo doctor`'s optional deps.
+  binary is absent, and **fails** when neither can run. The shellcheck *version* is pinned in
+  `SC_PIN` (CI derives its install from that line): 0.9.0, what `apt` gives on `ubuntu-latest`,
+  reports 20 `SC2317` hits on `ralph.sh` that 0.11.0 does not, so an unpinned gate is red in CI and
+  green on the laptop — which is how the last one stayed ignored. `test/e2e-lint.sh` (17 checks) is
+  the suite that holds it shut; `shellcheck` joined `avo doctor`'s optional deps.
 
 ### S1 — `f`: scoring `[x]`
 - `avo score [--parallel] [--json]` — runs `.avo/score`, validates against the typebox schema,

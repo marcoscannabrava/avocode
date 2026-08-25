@@ -607,6 +607,12 @@ which reported real findings under a false reason and kept CI green through eigh
 `test/e2e-lint.sh` is the suite that holds that shut — every one of its assertions is about the gate
 going red. `SHELLCHECK=<path>` pins a runner and disables the fallback.
 
+The shellcheck **version** is pinned too, in `SC_PIN`, and CI derives its install from that line
+rather than naming a version of its own. Findings are not stable across versions: 0.9.0, which is
+what `apt install shellcheck` gives on `ubuntu-latest`, reports 20 `SC2317` hits on `ralph.sh`'s trap
+bodies that 0.11.0 does not, having replaced them with one `SC2329` per function. A runner at the
+wrong version warns and still runs — refusing to lint would be a worse failure than the drift.
+
 ## Layout
 
 ```

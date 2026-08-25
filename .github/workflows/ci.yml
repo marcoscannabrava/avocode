@@ -16,10 +16,16 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: extractions/setup-just@v2
-      # `just lint` falls back to `npm exec -- shellcheck` when the binary is absent, so this
-      # step is a speed-up, not a prerequisite. It is NOT what makes the gate real — see #2.
-      - name: shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      # apt gives 0.9.0, which reports 20 findings on ralph.sh that 0.11.0 does not, so the
+      # version is read from test/lint-sh.sh's own pin rather than named twice. `just lint`
+      # falls back to `npm exec -- shellcheck` without this step; it is a speed-up, not a
+      # prerequisite, and it is NOT what makes the gate real — see #2.
+      - name: shellcheck (pinned to what test/lint-sh.sh expects)
+        run: |
+          ver="$(sed -n 's/^SC_PIN="\(.*\)"/\1/p' test/lint-sh.sh)"
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v$ver/shellcheck-v$ver.linux.x86_64.tar.xz" | tar -xJ
+          sudo install "shellcheck-v$ver/shellcheck" /usr/local/bin/
+          shellcheck --version
       - run: just lint
       - run: just typecheck
       - run: just test
@@ -37,6 +43,12 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: extractions/setup-just@v2
+      # test/e2e-lint.sh drives the same gate, so it wants the same pinned binary.
+      - name: shellcheck (pinned to what test/lint-sh.sh expects)
+        run: |
+          ver="$(sed -n 's/^SC_PIN="\(.*\)"/\1/p' test/lint-sh.sh)"
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v$ver/shellcheck-v$ver.linux.x86_64.tar.xz" | tar -xJ
+          sudo install "shellcheck-v$ver/shellcheck" /usr/local/bin/
       # The e2e scripts need git and jq (both present on ubuntu-latest) and at least one agent CLI
       # for `doctor` to report ok; that acceptance case deliberately runs without them.
       - run: just e2e

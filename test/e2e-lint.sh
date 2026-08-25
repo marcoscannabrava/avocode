@@ -22,7 +22,8 @@ yes_no() { if [[ $1 == 0 ]]; then ok "$2"; else bad "$3"; fi; }
 # An untracked-but-not-ignored script: it doubles as the probe for "a finding turns the gate red"
 # and for "a script is checked before anyone remembers to `git add` it".
 probe="$root/test/tmp-lint-probe.sh"
-trap 'rm -f "$probe"' EXIT
+work="$(mktemp -d)"
+trap 'rm -f "$probe"; rm -rf "$work"' EXIT
 rm -f "$probe"
 
 say "# avo lint-gate e2e — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -86,6 +87,42 @@ PROBE
   else bad "just lint exited 0 with a broken script present"; fi
 else
   say "SKIP  just is not installed; the recipe was checked as text only"
+fi
+say ""
+
+say "## 5. the version is pinned, because the findings are not stable across versions"
+pin="$(sed -n 's/^SC_PIN="\(.*\)"/\1/p' test/lint-sh.sh)"
+if [[ -n "$pin" ]]; then ok "test/lint-sh.sh pins a version ($pin)"
+else bad "no SC_PIN in test/lint-sh.sh"; fi
+if printf '%s' "$clean_out" | grep -q 'not the pinned'; then
+  bad "the runner here is not at the pin: $clean_out"
+else
+  ok "the runner resolved here is at the pin"
+fi
+# A stub at the wrong version must WARN and still run: refusing to lint at all would be a
+# worse failure mode than the drift it is warning about.
+stub="$work/shellcheck"
+cat > "$stub" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.0.1\n'
+  exit 0
+fi
+exit 0
+STUB
+chmod +x "$stub"
+skew_out="$(SHELLCHECK="$stub" ./test/lint-sh.sh 2>&1)"; skew_code=$?
+if printf '%s' "$skew_out" | grep -qF "not the pinned $pin"; then ok "a runner at the wrong version says so"
+else bad "no version warning from a 0.0.1 runner: $skew_out"; fi
+if [[ $skew_code -eq 0 ]]; then ok "and it still runs rather than refusing (exit $skew_code)"
+else bad "a version warning became a hard failure (exit $skew_code)"; fi
+# The pin is named once. CI derives it, so the two cannot drift apart.
+if grep -q 'SC_PIN' .github/workflows/ci.yml; then ok "CI reads the pin from test/lint-sh.sh"
+else bad "CI does not derive the shellcheck version from SC_PIN"; fi
+if grep -qE 'shellcheck-v[0-9]+\.[0-9]+' .github/workflows/ci.yml; then
+  bad "CI hardcodes a shellcheck version alongside SC_PIN"
+else
+  ok "CI names no shellcheck version of its own"
 fi
 say ""
 
