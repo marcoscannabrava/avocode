@@ -40,6 +40,7 @@ import {
   ensureTrajectoryIgnored,
   git,
   isGitRepo,
+  readLineage,
   recordDecisionMemory,
   type CommitDecision,
   type CommitOptions,
@@ -84,6 +85,21 @@ export interface TurnDecision {
   pass: boolean | null;
 }
 
+/**
+ * A version the *agent* committed during its own turn, read back from the trailers in
+ * `head_before..head_after`. The `avo-vary` skill has the agent run `avo commit` itself, so this is
+ * the normal case and not the exception: without it the tree is clean by the time the harness looks,
+ * every iteration records `noop`, and a run that produced a curve reads as a flat one (#42).
+ */
+export interface AgentVersion {
+  version: number;
+  sha: string;
+  primary: number | null;
+  unit: string;
+  /** The agent's own `--why`, which is the rationale that actually landed. */
+  why: string | null;
+}
+
 export interface TurnSupervision {
   triggered: boolean;
   signals: Signal[];
@@ -109,6 +125,8 @@ export interface Iteration {
   agent: AgentTurn;
   log_path: string;
   decision: TurnDecision | null;
+  /** Versions committed by the agent itself this turn — `decision`'s own is not among them. */
+  agent_versions: AgentVersion[];
   supervision: TurnSupervision | null;
   /** The directive this iteration produced, injected into the *next* turn. */
   directive: string | null;
@@ -269,20 +287,33 @@ const fmtScore = (primary: number | null, unit: string): string => (primary === 
  */
 const atScore = (primary: number | null, unit: string): string => (primary === null ? "" : ` at ${fmtScore(primary, unit)}`);
 
+/** `v3 at 0.408 ms, v4 at 0.345 ms` — the agent's own versions, named rather than counted. */
+const listVersions = (vs: readonly AgentVersion[]): string =>
+  vs.map((v) => `v${v.version}${atScore(v.primary, v.unit)}`).join(", ");
+
 /** One line an agent that was not there can act on. */
 export function describeOutcome(prev: Iteration): string {
   if (prev.agent.error !== null) return `the agent itself failed — ${prev.agent.error}`;
   const d = prev.decision;
   if (d === null) return "no commit decision was reached";
+  // Named first, because a turn that committed for itself already moved the lineage, and telling
+  // the next turn only that the harness saw a clean tree is the false negative #42 is about.
+  const byAgent = prev.agent_versions ?? [];
+  const own = byAgent.length === 0 ? "" : `the agent committed ${listVersions(byAgent)} itself`;
   switch (d.action) {
-    case "committed":
-      return `committed v${d.version} at ${fmtScore(d.primary, d.unit)} — ${d.reason}`;
+    case "committed": {
+      const line = `committed v${d.version} at ${fmtScore(d.primary, d.unit)} — ${d.reason}`;
+      return own === "" ? line : `${own}, and then the harness ${line}`;
+    }
     case "noop":
+      if (own !== "") return `${own}; the tree was clean afterwards, so there was nothing left to score`;
       return prev.head_after !== prev.head_before
         ? `the agent committed for itself (${prev.head_after.slice(0, 8)}); the tree was clean afterwards`
         : "nothing changed in the working tree, so there was nothing to score";
-    default:
-      return `refused${atScore(d.primary, d.unit)} — ${d.reason}`;
+    default: {
+      const line = `refused${atScore(d.primary, d.unit)} — ${d.reason}`;
+      return own === "" ? line : `${own}, but a later change was ${line}`;
+    }
   }
 }
 
@@ -423,6 +454,30 @@ async function recordIntervention(
 async function head(runner: Runner, cwd: string): Promise<string> {
   const r = await git(runner, cwd, ["rev-parse", "HEAD"]);
   return r.code === 0 ? r.stdout.trim() : "";
+}
+
+/**
+ * Versions that appeared between the head before the turn and the head after `avo commit`, minus
+ * the one this iteration's own decision produced. Whatever is left, the agent committed itself —
+ * which is exactly what the `avo-vary` skill tells it to do, so it is the run's output as much as a
+ * harness commit is (#42). Reading the trailers rather than trusting "HEAD moved" is what keeps
+ * invariant 1 intact: a commit without them is a commit, not a version.
+ */
+async function agentVersions(
+  runner: Runner,
+  cwd: string,
+  before: string,
+  after: string,
+  ownVersion: number | null,
+): Promise<{ versions: AgentVersion[]; warnings: string[] }> {
+  if (after === before || before === "" || after === "") return { versions: [], warnings: [] };
+  const l = await readLineage(runner, cwd, `${before}..${after}`);
+  return {
+    versions: l.versions
+      .filter((v) => v.version !== ownVersion)
+      .map((v) => ({ version: v.version, sha: v.sha, primary: v.score.primary, unit: v.score.unit, why: v.why })),
+    warnings: l.warnings,
+  };
 }
 
 export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunReport | { error: string }> {
@@ -577,6 +632,7 @@ async function iterate(
       agent: turn,
       log_path: logPath,
       decision: null,
+      agent_versions: [],
       supervision: null,
       directive: null,
       intervention: null,
@@ -618,6 +674,11 @@ async function iterate(
     it.decision = compact(decision);
     it.head_after = await head(runner, opts.cwd);
     report.head = it.head_after;
+    const own = await agentVersions(runner, opts.cwd, it.head_before, it.head_after, decision.version);
+    it.agent_versions = own.versions;
+    it.warnings.push(...own.warnings);
+    // The agent's own commits come first: they are already in history by the time step 2 runs.
+    for (const v of own.versions) report.committed.push(v.version);
     if (decision.action === "committed" && decision.version !== null) report.committed.push(decision.version);
 
     // A no-op only counts as one when HEAD did not move: an agent that ran `avo commit` itself
@@ -684,6 +745,7 @@ export function renderPlan(r: RunReport): string {
     "each iteration:",
     `  1. spawn the agent in ${r.cwd} with the turn prompt`,
     "  2. avo commit — score the tree, compare against the best version, persist only if it wins",
+    "     (a turn that ran avo commit itself leaves nothing here; its version is still recorded)",
     `  3. avo supervise — ${r.thresholds.stall} attempts with no improvement, or ${r.thresholds.thrash} failures`,
     "     with the same signature, emits a steering directive that cites P_t and K",
     "  4. inject that directive into the next turn's prompt and record it as an intervention",
@@ -708,6 +770,7 @@ export function renderRun(r: RunReport): string {
 
   for (const it of r.iterations) {
     const d = it.decision;
+    const own = it.agent_versions ?? [];
     const verdict =
       it.agent.error !== null
         ? `agent failed — ${it.agent.error}`
@@ -716,20 +779,27 @@ export function renderRun(r: RunReport): string {
           : d.action === "committed"
             ? `committed v${d.version} ${fmtScore(d.primary, d.unit)}`
             : d.action === "noop"
-              ? it.head_after === it.head_before
-                ? "no change"
-                : `agent committed ${it.head_after.slice(0, 8)}`
+              ? own.length > 0
+                ? `agent committed ${listVersions(own)}`
+                : it.head_after === it.head_before
+                  ? "no change"
+                  : `agent committed ${it.head_after.slice(0, 8)}`
               : `refused${atScore(d.primary, d.unit)} — ${d.reason}`;
     lines.push(`  ${String(it.iter).padStart(3)}  ${`${it.agent.wall_s}s`.padStart(7)}  ${verdict}`);
+    // A turn can do both: commit for itself and then leave more for the harness to score.
+    if (own.length > 0 && d?.action !== "noop") {
+      lines.push(`       ${" ".repeat(7)}  ↳ the agent also committed ${listVersions(own)} itself`);
+    }
     for (const s of it.supervision?.signals ?? []) lines.push(`       ${" ".repeat(7)}  ↳ ${s.kind}: ${s.detail}`);
     if (it.intervention !== null) lines.push(`       ${" ".repeat(7)}  ↳ steered; recorded as ${it.intervention.key}`);
   }
   lines.push("");
 
   const tok = r.tokens.input + r.tokens.output;
+  const byAgent = r.iterations.reduce((n, it) => n + (it.agent_versions ?? []).length, 0);
   lines.push(
     `  iterations   ${r.iterations.length} of ${r.max_iters}`,
-    `  committed    ${r.committed.length === 0 ? "nothing" : r.committed.map((v) => `v${v}`).join(", ")}`,
+    `  committed    ${r.committed.length === 0 ? "nothing" : r.committed.map((v) => `v${v}`).join(", ")}${byAgent === 0 ? "" : ` (${byAgent} by the agent itself)`}`,
     `  interventions ${r.interventions}`,
     ...(tok > 0 ? [`  tokens       ${r.tokens.input} in / ${r.tokens.output} out`] : []),
     `  manifest     ${join(RUNS_DIR, r.run_id, RUN_MANIFEST)}`,

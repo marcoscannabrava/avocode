@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-08-25T19:56:48Z
+# avo S7b e2e — 2026-08-25T21:06:32Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 0101f0a1, a stub agent and an f that counts lines
+PASS  repo at HEAD 4a802aad, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-848dfdf7)
+PASS  the injected directive is recorded (avo-intervention-9dca81cb)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive
@@ -86,8 +86,18 @@ PASS  one JSON object, every field typed as documented
 PASS  it is a single JSON object on stdout
 
 ## 9. #8 measured: readLineage runs once per iteration now
-      2000 commits: the git log readLineage runs took 4ms
-PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 4ms
+      2000 commits: the git log readLineage runs took 7ms
+PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 7ms
+
+## 10. #42: an agent that runs avo commit itself
+PASS  every iteration decides noop — the tree really was clean
+PASS  and the run still reports v1, v2, v3 as its output
+PASS  each iteration is credited with the version it committed
+PASS  the rationale recorded is the agent's own --why, not the harness's
+PASS  each version is the head its turn left behind
+PASS  git agrees: three versions, written by the one writer that may write them
+PASS  three self-committing turns never look like three idle ones (#29)
+PASS  the human rendering says so too
 
 ## summary
-all checks passed (67 of them)
+all checks passed (75 of them)

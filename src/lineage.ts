@@ -177,9 +177,13 @@ export async function isGitRepo(runner: Runner, cwd: string): Promise<boolean> {
  * `P_t` — the committed lineage, read from git and nothing else. Attempts live in
  * `.avo/attempts.jsonl` and are trajectory, not population: a version exists iff a commit carries
  * the trailers, which is what makes `avo commit` the only writer (invariant 1).
+ *
+ * `rev` is anything `git log` accepts, so a *range* (`before..after`) reads back the versions that
+ * appeared across some span of the loop rather than the whole lineage — which is how `avo run`
+ * finds out that the agent committed for itself (#42).
  */
-export async function readLineage(runner: Runner, cwd: string): Promise<Lineage> {
-  const log = await git(runner, cwd, ["log", `--format=%H${US}%aI${US}%B${RS}`, "HEAD"]);
+export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Promise<Lineage> {
+  const log = await git(runner, cwd, ["log", `--format=%H${US}%aI${US}%B${RS}`, rev]);
   if (log.code !== 0 || log.spawnError !== null) return { versions: [], warnings: [] };
 
   const warnings: string[] = [];

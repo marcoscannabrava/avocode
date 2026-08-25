@@ -332,8 +332,19 @@ read v3" from a run that ended days ago.
 | --- | --- |
 | `--max-iters` is reached | the budget is the operator's, not the agent's |
 | `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is genuinely done |
-| 3 iterations in a row change nothing | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. This is the one stop condition steering cannot express |
+| 3 iterations in a row change nothing **and leave HEAD where it was** | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. This is the one stop condition steering cannot express |
 | the agent binary cannot be started | it will not start on the next iteration either; retrying it nine more times is spinning |
+
+**The agent usually commits for itself, and the manifest says so.** The `avo-vary` skill — which
+`avo install` wires into the target, and which the turn prompt points at — has the agent run
+`avo commit --why "..."` before its turn ends. So by the time the loop's own step 2 looks, the tree
+is clean and the decision is honestly `noop`. Each iteration therefore also records
+`agent_versions`: the versions that appeared between `head_before` and `head_after`, read back from
+their `Avo-Version` trailers, minus the one step 2 committed itself. They count toward
+`committed`, they are named in the next turn's prompt, and they do not count as no-ops. Without
+this a run that produced a curve reads as a flat one, and three well-behaved turns in a row look
+exactly like three idle ones (#42). A commit *without* the trailers moves HEAD but is not a
+version — invariant 1 says `avo commit` is the only writer.
 
 The run manifest at `.avo/runs/<id>/manifest.json` is rewritten after **every** iteration, never at
 the end, and each turn's raw agent output is kept beside it under `logs/`. A loop meant to run for

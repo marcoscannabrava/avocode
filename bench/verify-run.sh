@@ -79,20 +79,23 @@ if [[ -n "$finished" ]]; then
 else
   bad "the run never finished — manifest has no finished_at"
 fi
+say "committed      $(m '(.committed // []) | if length == 0 then "nothing" else map("v" + (. | tostring)) | join(", ") end')"
 say "interventions  $(m '.interventions')"
 say "tokens         in $(m '.tokens.input'), out $(m '.tokens.output')"
 say ""
 
 say "### per iteration"
-# shellcheck disable=SC2016  # $agent/$decision/$steer are jq variables, not shell ones
+# shellcheck disable=SC2016  # $agent/$decision/$own/$verdict/$steer are jq variables, not shell ones
 m '.iterations[] |
   (if .agent.error == null then "agent ok" else "agent failed" end) as $agent
   | (if .decision == null then "no decision"
      elif .decision.action == "committed" then "committed v" + (.decision.version|tostring) + " " + (.decision.primary|tostring) + (.decision.unit // "")
      elif (.decision.reason // "") == "" then .decision.action
      else .decision.action + " — " + .decision.reason end) as $decision
+  | ((.agent_versions // []) | map("v" + (.version|tostring) + " " + (.primary|tostring) + (.unit // "")) | join(", ")) as $own
+  | (if $own == "" then $decision else "agent committed " + $own + "; step 2: " + $decision end) as $verdict
   | (if .intervention == null then "-" else "STEERED: " + (.intervention.signal // .intervention.reason // "directive") end) as $steer
-  | "  it " + (.iter|tostring) + "  |  " + $agent + "  |  " + $decision + "  |  since_best " + (.supervision.since_best|tostring) + "  |  " + $steer' | tee -a "$out"
+  | "  it " + (.iter|tostring) + "  |  " + $agent + "  |  " + $verdict + "  |  since_best " + (.supervision.since_best|tostring) + "  |  " + $steer' | tee -a "$out"
 say ""
 
 # ================================================================ 2. the curve
