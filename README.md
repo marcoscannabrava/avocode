@@ -593,10 +593,25 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test + `ralph-test` — the health check every Ralph cycle runs first |
+| `just lint` | oxlint, then `test/lint-sh.sh` — shellcheck over every shell script git knows about |
 | `just ralph-test` | drives `ralph.sh` against a stub agent in a throwaway repo (2s) |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b,8,9a}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b,8,9a}-e2e.txt` and `evidence/lint-gate-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
+
+`test/lint-sh.sh` discovers its own targets from `git ls-files` (plus untracked, non-ignored files),
+so a new script is checked before anyone remembers to list it. It needs shellcheck, but not
+*installed* shellcheck — absent from `PATH` it falls back to `npm exec --yes -- shellcheck`. If
+neither can run it **fails**: it used to end in `|| echo "shellcheck: skipped (not installed)"`,
+which reported real findings under a false reason and kept CI green through eight slices (#2).
+`test/e2e-lint.sh` is the suite that holds that shut — every one of its assertions is about the gate
+going red. `SHELLCHECK=<path>` pins a runner and disables the fallback.
+
+The shellcheck **version** is pinned too, in `SC_PIN`, and CI derives its install from that line
+rather than naming a version of its own. Findings are not stable across versions: 0.9.0, which is
+what `apt install shellcheck` gives on `ubuntu-latest`, reports 20 `SC2317` hits on `ralph.sh`'s trap
+bodies that 0.11.0 does not, having replaced them with one `SC2329` per function. A runner at the
+wrong version warns and still runs — refusing to lint would be a worse failure than the drift.
 
 ## Layout
 

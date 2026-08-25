@@ -63,10 +63,10 @@ yes_no $? "avo install --agent pi exits 0" "avo install failed: $(head -3 "$work
 # Two extensions, not one: the tools and the supervisor load separately, so an operator already
 # running `avo run` can take the first without the second.
 for ext in avo avo-supervisor; do
-  [[ -L "$repo/.pi/extensions/$ext" ]]
-  yes_no $? ".pi/extensions/$ext is a symlink, not a copy" ".pi/extensions/$ext is missing or is a copy"
-  [[ -f "$repo/.pi/extensions/$ext/index.ts" ]]
-  yes_no $? "$ext resolves to a real index.ts — pi loads <dir>/index.ts" "the $ext link is dangling"
+  if [[ -L "$repo/.pi/extensions/$ext" ]]; then ok ".pi/extensions/$ext is a symlink, not a copy"
+  else bad ".pi/extensions/$ext is missing or is a copy"; fi
+  if [[ -f "$repo/.pi/extensions/$ext/index.ts" ]]; then ok "$ext resolves to a real index.ts — pi loads <dir>/index.ts"
+  else bad "the $ext link is dangling"; fi
 done
 
 # Idempotency (invariant 5): the second install must report unchanged and rewrite nothing.
@@ -74,8 +74,8 @@ before="$(readlink "$repo/.pi/extensions/avo")"
 avo install --agent pi --cwd "$repo" --json > "$work/install2.json" 2>&1
 jq -e '[.steps[] | select(.name == ".pi/extensions/avo")][0].action == "unchanged"' "$work/install2.json" >/dev/null
 yes_no $? "a second install reports the extension unchanged" "the second install did not report unchanged"
-[[ "$(readlink "$repo/.pi/extensions/avo")" == "$before" ]]
-yes_no $? "the link is byte-identical after a re-run" "the link changed on a re-run"
+if [[ "$(readlink "$repo/.pi/extensions/avo")" == "$before" ]]; then ok "the link is byte-identical after a re-run"
+else bad "the link changed on a re-run"; fi
 say ""
 
 say "## 2. pi's own resource loader discovers it in a trusted project"

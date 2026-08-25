@@ -59,6 +59,7 @@ export const DEPS: readonly DepSpec[] = [
   { name: "bd", kind: "optional", why: "beads memory graph (S3); falls back to lineage/memory.jsonl", install: "npm i -g @beads/bd" },
   { name: "hyperfine", kind: "optional", why: "wall-clock scorer template (S1)", install: "https://github.com/sharkdp/hyperfine#installation" },
   { name: "just", kind: "optional", why: "task runner for lint/typecheck/test/e2e", install: "https://github.com/casey/just#installation" },
+  { name: "shellcheck", kind: "optional", why: "the lint gate for every shell script in the repo (#2); falls back to `npm exec -- shellcheck`", install: "https://github.com/koalaman/shellcheck#installing" },
 ];
 
 export const KEYS: readonly { name: string; why: string }[] = [

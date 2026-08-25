@@ -126,11 +126,11 @@ if (( elapsed < 15 )); then printf 'ok   %s\n' "does not wait out the session"; 
 else printf 'FAIL %s — took %ds\n' "does not wait out the session" "$elapsed"; (( fail++ )); fi
 
 sleep 0.5                                # reaping is asynchronous; give the tree a moment
-strays=""
-while read -r p; do [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null && strays+=" $p"; done <"$pidfile"
-if [[ -z "$strays" ]]; then printf 'ok   %s\n' "kills the agent it started"; (( pass++ ))
-else printf 'FAIL %s — still running:%s\n' "kills the agent it started" "$strays"; (( fail++ ))
-  kill $strays 2>/dev/null; fi
+strays=()
+while read -r p; do [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null && strays+=("$p"); done <"$pidfile"
+if (( ${#strays[@]} == 0 )); then printf 'ok   %s\n' "kills the agent it started"; (( pass++ ))
+else printf 'FAIL %s — still running: %s\n' "kills the agent it started" "${strays[*]}"; (( fail++ ))
+  kill "${strays[@]}" 2>/dev/null; fi
 
 # The breather between iterations is a wait like any other: it must not hold the interrupt.
 set -m

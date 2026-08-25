@@ -1,4 +1,4 @@
-# avo S9a e2e -- 2026-08-25T21:27:13Z
+# avo S9a e2e -- 2026-08-25T21:45:37Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 # target: bench/fuzzysearch -- thresholded edit-distance retrieval, median ms, lower is better
 
@@ -7,7 +7,7 @@ $ bench/init.sh $scratch/fuzzysearch -> exit 0
 PASS  materializes into a fresh git repo
 PASS  .avo/score is executable
 PASS  the gate records 5 protected file(s)
-PASS  the baseline is one commit: a117235 fuzzysearch v0: correct and slow
+PASS  the baseline is one commit: f8ede75 fuzzysearch v0: correct and slow
 PASS  the ladder fixtures are NOT materialized -- the optimizer is not handed the answer
 PASS  refuses a destination inside avocode's own checkout
 PASS  and wrote nothing there
@@ -16,14 +16,14 @@ PASS  --force is byte-identical on an unchanged target (invariant 5)
 PASS  --verify passes on an intact target
 
 ## 2. f on the baseline
-$ .avo/score -> {"ok":true,"correct":true,"primary":1635.4695000000002,"unit":"ms","scores":{"small":726.791,"large":2544.148}}
+$ .avo/score -> {"ok":true,"correct":true,"primary":1694.96,"unit":"ms","scores":{"small":761.624,"large":2628.296}}
 PASS  the baseline is ok and correct
 PASS  the metric is ms, lower is better
 PASS  two configs are scored, so the commit rule compares a vector
 PASS  --configs lists them, so avo score --parallel works
 PASS  --config small scores only that config
 PASS  an unknown config is a result, not a crash
-PASS  worst config spread 0.7% is under the 3% floor
+PASS  worst config spread 1.3% is under the 3% floor
 
 ## 3. f refuses to measure itself
 PASS  editing bench/reference.js makes the score incorrect, and names the file
@@ -46,28 +46,28 @@ PASS  a candidate that does not parse is a result, not a crash
 
 ## 5. a scripted optimizer walks the known path
 # each step replaces src/search.js, then avo score + avo commit decide
-  v1 -> v001  primary 141.968ms   improved
-  v2 -> v002  primary 70.35249999999999ms  large+small improved
-  v3 -> v003  primary 67.233ms  large+small improved
-  v4 -> v004  primary 16.797ms  large+small improved
-  v5 -> v005  primary 13.6475ms  large+small improved
-  v6 -> v006  primary 0.9175ms  large+small improved
+  v1 -> v001  primary 152.262ms   improved
+  v2 -> v002  primary 71.057ms  large+small improved
+  v3 -> v003  primary 69.4025ms  large+small improved
+  v4 -> v004  primary 17.197ms  large+small improved
+  v5 -> v005  primary 13.799999999999999ms  large+small improved
+  v6 -> v006  primary 0.9315ms  large+small improved
 
   6 committed, 0 refused, of 6 steps
 PASS  at least 5 versions were committed (S9 acceptance: >=5)
 PASS  best score is monotonically non-decreasing across the lineage
-  headroom walked: 1635.4695000000002ms -> 0.9175ms = 1782.5x
-PASS  the target has real headroom (1782.5x >= 5x), so a flat curve in S9b is the agent, not f
+  headroom walked: 1694.96ms -> 0.9315ms = 1819.6x
+PASS  the target has real headroom (1819.6x >= 5x), so a flat curve in S9b is the agent, not f
 PASS  avo lineage --json reports all 6 of them
 
 ## 6. every committed version reproduces its recorded score
 # S9's second acceptance criterion: a score in the lineage is a measurement, not a claim
-PASS  v1: recorded 144.931ms, fresh 144.9815ms (0%)
-PASS  v2: recorded 71.448ms, fresh 71.179ms (-0.4%)
-PASS  v3: recorded 67.3815ms, fresh 67.887ms (0.8%)
-PASS  v4: recorded 16.354ms, fresh 16.4355ms (0.5%)
-PASS  v5: recorded 13.695500000000001ms, fresh 13.7515ms (0.4%)
-PASS  v6: recorded 0.923ms, fresh 0.923ms (0%)
+PASS  v1: recorded 144.632ms, fresh 144.477ms (-0.1%)
+PASS  v2: recorded 71.335ms, fresh 71.643ms (0.4%)
+PASS  v3: recorded 67.3065ms, fresh 68.41ms (1.6%)
+PASS  v4: recorded 16.764000000000003ms, fresh 16.6535ms (-0.7%)
+PASS  v5: recorded 13.697500000000002ms, fresh 13.58ms (-0.9%)
+PASS  v6: recorded 0.9239999999999999ms, fresh 0.932ms (0.9%)
 
 ## summary
 all checks passed (41 of them)
