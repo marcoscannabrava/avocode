@@ -15,7 +15,10 @@ import {
   parseInstallArgs,
   PI_DEFAULT_TOOLS,
   PI_EXTENSION,
+  PI_EXTENSION_NAMES,
   PI_EXTENSION_SRC,
+  piExtension,
+  piExtensionSrc,
   PI_SETTINGS,
   renderAgentsBlock,
   renderInstall,
@@ -268,11 +271,29 @@ test("wiring pi links the native extension where pi discovers it, without copyin
   }
 });
 
+test("both extensions are linked: the tools and the supervisor are separate loads", () => {
+  const cwd = repo();
+  try {
+    const r = runInstall(opts(cwd, { agents: ["pi"] }));
+    assert.deepEqual([...PI_EXTENSION_NAMES], ["avo", "avo-supervisor"]);
+    for (const name of PI_EXTENSION_NAMES) {
+      const link = join(cwd, piExtension(name));
+      assert.ok(lstatSync(link).isSymbolicLink(), `${name} must be a link, not a copy`);
+      assert.equal(readlinkSync(link), join(avocodeRoot(), piExtensionSrc(name)));
+      assert.equal(step(r, piExtension(name))?.action, "created");
+    }
+    // Not the same file twice: the supervisor subscribes, it does not register tools.
+    assert.match(readFileSync(join(cwd, piExtension("avo-supervisor"), "index.ts"), "utf8"), /installSupervisor/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("only pi gets the extension; the other agents reach the same capabilities through bash", () => {
   const cwd = repo();
   try {
     runInstall(opts(cwd, { agents: ["claude", "codex"] }));
-    assert.ok(!existsSync(join(cwd, PI_EXTENSION)));
+    for (const name of PI_EXTENSION_NAMES) assert.ok(!existsSync(join(cwd, piExtension(name))));
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -285,11 +306,13 @@ test("avocode's own repo is told it owns the extension rather than linked to its
   const cwd = repo();
   try {
     mkdirSync(join(cwd, "pi/extensions"), { recursive: true });
-    symlinkSync(join(avocodeRoot(), PI_EXTENSION_SRC), join(cwd, PI_EXTENSION_SRC), "dir");
+    for (const name of PI_EXTENSION_NAMES) symlinkSync(join(avocodeRoot(), piExtensionSrc(name)), join(cwd, piExtensionSrc(name)), "dir");
     const r = runInstall(opts(cwd, { agents: ["pi"] }));
-    assert.equal(step(r, PI_EXTENSION)?.action, "unchanged");
-    assert.match(step(r, PI_EXTENSION)?.detail ?? "", /owns the extension/);
-    assert.ok(!existsSync(join(cwd, PI_EXTENSION)), "nothing was linked");
+    for (const name of PI_EXTENSION_NAMES) {
+      assert.equal(step(r, piExtension(name))?.action, "unchanged");
+      assert.match(step(r, piExtension(name))?.detail ?? "", /owns the extension/);
+      assert.ok(!existsSync(join(cwd, piExtension(name))), `${name}: nothing was linked`);
+    }
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -486,6 +509,6 @@ function snapshot(cwd: string): Record<string, string> {
       for (const name of readdirSync(abs).sort()) walk(join(rel, name));
     } else out[rel] = readFileSync(abs, "utf8");
   };
-  for (const rel of [SKILLS_DIR, AGENTS_FILE, CLAUDE_SKILLS, PI_SETTINGS, PI_EXTENSION]) walk(rel);
+  for (const rel of [SKILLS_DIR, AGENTS_FILE, CLAUDE_SKILLS, PI_SETTINGS, ...PI_EXTENSION_NAMES.map(piExtension)]) walk(rel);
   return out;
 }

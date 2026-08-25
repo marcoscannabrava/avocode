@@ -12,10 +12,18 @@ export const AGENT_NAMES: readonly AgentName[] = ["pi", "claude", "codex"];
 export const AGENTS_FILE = "AGENTS.md";
 export const CLAUDE_SKILLS = ".claude/skills";
 export const PI_SETTINGS = ".pi/settings.json";
+/**
+ * The project-local extensions Pi discovers, by directory name. Two, not one: `avo` registers the
+ * tools and `avo-supervisor` steers a stalling session, and an operator already running `avo run`
+ * wants the first without the second. Linking both is the default because the pair is the point.
+ */
+export const PI_EXTENSION_NAMES: readonly string[] = ["avo", "avo-supervisor"];
 /** Where Pi auto-discovers a project-local extension: `.pi/extensions/<name>/index.ts`. */
-export const PI_EXTENSION = ".pi/extensions/avo";
+export const piExtension = (name: string): string => `.pi/extensions/${name}`;
 /** Its source inside avocode's own checkout. */
-export const PI_EXTENSION_SRC = "pi/extensions/avo";
+export const piExtensionSrc = (name: string): string => `pi/extensions/${name}`;
+export const PI_EXTENSION = piExtension("avo");
+export const PI_EXTENSION_SRC = piExtensionSrc("avo");
 
 /** Delimits the block `avo install` owns, so re-running rewrites it instead of appending again. */
 export const BEGIN_MARKER = "<!-- BEGIN avo: managed by `avo install`, edits inside are overwritten -->";
@@ -347,31 +355,33 @@ function sameDir(a: string, b: string): boolean {
  * agent already reaches through `bash avo ...` (invariant 8), so an agent without it loses speed,
  * not ability.
  */
-function linkPiExtension(cwd: string, steps: InitStep[], warnings: string[], force: boolean): void {
-  const source = join(avocodeRoot(), PI_EXTENSION_SRC);
+function linkPiExtension(cwd: string, name: string, steps: InitStep[], warnings: string[], force: boolean): void {
+  const rel = piExtension(name);
+  const relSrc = piExtensionSrc(name);
+  const source = join(avocodeRoot(), relSrc);
   if (!existsSync(join(source, "index.ts"))) {
     // A checkout without the extension (or an install that stripped it) is not an error: the CLI
     // is the whole harness, and this is a shortcut.
-    steps.push({ name: PI_EXTENSION, action: "skipped", detail: `${PI_EXTENSION_SRC}/index.ts is not in this avocode checkout` });
+    steps.push({ name: rel, action: "skipped", detail: `${relSrc}/index.ts is not in this avocode checkout` });
     return;
   }
   // Ownership is "this repo IS where the extension lives", the same test the skills use — not "the
   // link already points at it". Installing into avocode's own checkout would otherwise create a
   // link to itself and leave avo's working tree dirty, which is the self-perturbation bug S3 and
   // S6 both hit: `avo commit` would count avo's own wiring as a candidate.
-  if (sameDir(join(cwd, PI_EXTENSION_SRC), source)) {
-    steps.push({ name: PI_EXTENSION, action: "unchanged", detail: `this repo owns the extension at ${PI_EXTENSION_SRC}` });
+  if (sameDir(join(cwd, relSrc), source)) {
+    steps.push({ name: rel, action: "unchanged", detail: `this repo owns the extension at ${relSrc}` });
     return;
   }
-  const linkPath = join(cwd, PI_EXTENSION);
+  const linkPath = join(cwd, rel);
   const r = ensureLink(linkPath, linkTargetFor(cwd, dirname(linkPath), source), force);
-  steps.push({ name: PI_EXTENSION, action: r.action, detail: r.detail });
-  if (r.action === "failed") warnings.push(`could not link ${PI_EXTENSION} — ${r.detail}`);
+  steps.push({ name: rel, action: r.action, detail: r.detail });
+  if (r.action === "failed") warnings.push(`could not link ${rel} — ${r.detail}`);
 }
 
 function installPi(cwd: string, steps: InitStep[], warnings: string[], force: boolean): void {
   steps.push({ name: "pi", action: "unchanged", detail: `discovers project ${SKILLS_DIR}/ natively — no copying, no config` });
-  linkPiExtension(cwd, steps, warnings, force);
+  for (const name of PI_EXTENSION_NAMES) linkPiExtension(cwd, name, steps, warnings, force);
   const path = join(cwd, PI_SETTINGS);
   let existing: unknown = null;
   if (existsSync(path)) {
