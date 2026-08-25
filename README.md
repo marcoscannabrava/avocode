@@ -10,10 +10,12 @@ See [PLAN.md](PLAN.md) for the architecture, the slice order, and the invariants
 
 S0 (skeleton + health check), S1 (`f` — scoring), S2 (`P_t` — lineage), S3 (memory), S4 (`K` —
 knowledge), S5 (agent-agnostic skills), S6 (concurrency) and S7 (supervisor + continuous loop) are
-done. `avo init`, `avo install`, `avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`,
-`avo mem`, `avo know`, `avo fan`, `avo supervise` and `avo run` work, and the five skills in
-`.agents/skills/` are wired for `pi`, Claude Code and Codex. Next is S8 (the native Pi extension)
-and S9 (end-to-end validation on a real optimization target).
+done, and S8's first half — the six native Pi tools — is shipped. `avo init`, `avo install`,
+`avo doctor`, `avo score`, `avo commit`, `avo lineage`, `avo best`, `avo mem`, `avo know`,
+`avo fan`, `avo supervise` and `avo run` work; the five skills in `.agents/skills/` are wired for
+`pi`, Claude Code and Codex; and a `pi` session in a wired repo gets `avo_score`, `avo_commit`,
+`avo_lineage`, `avo_know_query`, `avo_know_add` and `avo_fan` as native tools. Next is the rest of
+S8 (the supervisor extension) and S9 (end-to-end validation on a real optimization target).
 
 ## Quickstart
 
@@ -366,7 +368,7 @@ What each agent gets:
 
 | Agent | Wiring | Why |
 | --- | --- | --- |
-| pi | nothing to install — project `.agents/skills/` is discovered natively. `.pi/settings.json` gets `defaultTools` (including `bash`) and `enableSkillCommands` | `avo`, `bd` and `qmd` are CLIs; an agent without `bash` cannot drive any of them |
+| pi | project `.agents/skills/` is discovered natively, so only two things are wired: `.pi/settings.json` gets `defaultTools` (including `bash`) and `enableSkillCommands`, and `.pi/extensions/avo` is linked at the native tools | `avo`, `bd` and `qmd` are CLIs; an agent without `bash` cannot drive any of them. The extension is a shortcut past `bash`, not a capability the others lack |
 | claude | `.claude/skills` → `.agents/skills`, one directory symlink | a skill added later needs no re-install |
 | codex | the `AGENTS.md` skills index | Codex has no skill-discovery mechanism; naming the files *is* the wiring |
 
@@ -386,6 +388,38 @@ mode `avo fan` will drive it in. `avo install` says so every time it wires pi.
 existing `.claude/skills` full of your own skills gets avo's linked *inside* it instead. A symlink
 or file in the way needs `--force`.
 
+## The native `pi` extension — the same commands, one process closer
+
+Every capability is reachable from `bash` first (invariant 8); the extension is a *binding*, not new
+behaviour. `avo install --agent pi` links `.pi/extensions/avo` at avocode's `pi/extensions/avo`,
+which is where pi discovers a project-local extension, and a pi session in that repo gets six tools:
+
+| Tool | Wraps | Notes |
+| --- | --- | --- |
+| `avo_score` | `avo score` | measures the working tree; records the attempt the supervisor reads |
+| `avo_commit` | `avo commit` | the only writer of a version. `why` is **required** here |
+| `avo_lineage` | `avo lineage` / `avo best` | the table, or one version in full with its rationale |
+| `avo_know_query` | `avo know query` | hybrid search over `K` and the rendered lineage |
+| `avo_know_add` | `avo know add` | ingest a URL or file into `K` with provenance |
+| `avo_fan` | `avo fan` | N worktrees, N small-model probes, each scored |
+
+Three rules the tools follow, each for a reason worth keeping:
+
+- **A refusal is not an error.** Pi flags a tool result as failed only when `execute` throws, so
+  only a *harness* error throws — no scorer, malformed output, a guard refusal. `avo_commit`
+  declining a candidate comes back as an ordinary result, because it is a measurement the model is
+  meant to read and act on. Same split as the CLI's exit codes (2 = harness error, 1 = refused).
+- **`details` is always populated.** Pi rebuilds extension state from tool-result details when a
+  session branches, so every tool returns the CLI's structured result there and the CLI's own
+  rendering in `content` — the model reads exactly what a human reads.
+- **The repo comes from the session, never from the model.** No tool takes a `cwd`: an agent that
+  can retarget the repo can write a version into a repo nobody is watching.
+
+The same trust rule applies as for skills — pi ignores a project-local extension until the project
+is trusted, and headless runs never prompt. `--approve` or `defaultProjectTrust: "always"`.
+
+Nothing is lost without it: `claude` and `codex` reach every one of these through `bash avo ...`.
+
 ## `avo doctor`
 
 `avo doctor` exits 1 when a required dependency (`git`, `jq`) is missing, or when no coding agent
@@ -399,7 +433,7 @@ values never appear in any output.
 | Command | What it does |
 | --- | --- |
 | `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
-| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b}-e2e.txt` |
+| `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b,8}-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
 
@@ -425,12 +459,13 @@ src/fan.ts        avo fan — worktrees, probes, the four guards, promote and re
 src/supervise.ts  avo supervise — the stall/thrash detector and the directive it cites with
 src/run.ts        avo run — the continuous loop, its manifest and the intervention record
 src/io.ts         injectable output sink, so commands are unit-testable
+pi/extensions/    the native pi binding: avo/index.ts registers what avo/tools.ts defines
 .agents/skills/   THE agent-agnostic layer: avo-vary, avo-score, avo-lineage, avo-knowledge,
                   avo-fanout
 AGENTS.md         the always-on rules + the skills index (managed block, hand edits preserved)
 templates/score/  reference scorers + the authoring guide
 test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install,-fan,
-                  -supervise,-run}.sh
+                  -supervise,-run,-pi}.sh, plus pi-load.ts / pi-drive.ts (harnesses, not suites)
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 

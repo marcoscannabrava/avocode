@@ -14,6 +14,8 @@ import {
   mergePiSettings,
   parseInstallArgs,
   PI_DEFAULT_TOOLS,
+  PI_EXTENSION,
+  PI_EXTENSION_SRC,
   PI_SETTINGS,
   renderAgentsBlock,
   renderInstall,
@@ -23,7 +25,7 @@ import {
   type InstallResult,
 } from "../src/install.ts";
 import { bufferIo } from "../src/io.ts";
-import { bundledSkillsDir, readSkills, SKILLS_DIR } from "../src/skills.ts";
+import { avocodeRoot, bundledSkillsDir, readSkills, SKILLS_DIR } from "../src/skills.ts";
 
 function repo(): string {
   return mkdtempSync(join(tmpdir(), "avo-install-"));
@@ -248,6 +250,51 @@ test("runInstall links every skill into a fresh repo and wires all three agents"
   }
 });
 
+test("wiring pi links the native extension where pi discovers it, without copying it", () => {
+  const cwd = repo();
+  try {
+    const r = runInstall(opts(cwd, { agents: ["pi"] }));
+    assert.ok(r.ok, r.errors.join("; "));
+    const link = join(cwd, PI_EXTENSION);
+    assert.ok(lstatSync(link).isSymbolicLink(), "a copy is a fork that stops receiving fixes");
+    // Absolute, because avocode lives outside the target repo — a relative link out of the repo
+    // would encode this machine's layout and break in a clone or in a fan-out worktree.
+    assert.equal(readlinkSync(link), join(avocodeRoot(), PI_EXTENSION_SRC));
+    // And it is the real extension: pi loads `<dir>/index.ts`.
+    assert.match(readFileSync(join(link, "index.ts"), "utf8"), /registerTool/);
+    assert.equal(step(r, PI_EXTENSION)?.action, "created");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("only pi gets the extension; the other agents reach the same capabilities through bash", () => {
+  const cwd = repo();
+  try {
+    runInstall(opts(cwd, { agents: ["claude", "codex"] }));
+    assert.ok(!existsSync(join(cwd, PI_EXTENSION)));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("avocode's own repo is told it owns the extension rather than linked to itself", () => {
+  // A repo whose pi/extensions/avo already *is* the bundled one — which is avo's own checkout.
+  // Reproduced through a symlinked temp dir rather than by running against the real checkout, so
+  // the test cannot dirty the working tree. Installing into itself would do exactly that.
+  const cwd = repo();
+  try {
+    mkdirSync(join(cwd, "pi/extensions"), { recursive: true });
+    symlinkSync(join(avocodeRoot(), PI_EXTENSION_SRC), join(cwd, PI_EXTENSION_SRC), "dir");
+    const r = runInstall(opts(cwd, { agents: ["pi"] }));
+    assert.equal(step(r, PI_EXTENSION)?.action, "unchanged");
+    assert.match(step(r, PI_EXTENSION)?.detail ?? "", /owns the extension/);
+    assert.ok(!existsSync(join(cwd, PI_EXTENSION)), "nothing was linked");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("runInstall is idempotent: a second run changes nothing and creates nothing", () => {
   const cwd = repo();
   try {
@@ -439,6 +486,6 @@ function snapshot(cwd: string): Record<string, string> {
       for (const name of readdirSync(abs).sort()) walk(join(rel, name));
     } else out[rel] = readFileSync(abs, "utf8");
   };
-  for (const rel of [SKILLS_DIR, AGENTS_FILE, CLAUDE_SKILLS, PI_SETTINGS]) walk(rel);
+  for (const rel of [SKILLS_DIR, AGENTS_FILE, CLAUDE_SKILLS, PI_SETTINGS, PI_EXTENSION]) walk(rel);
   return out;
 }

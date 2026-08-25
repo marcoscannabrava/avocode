@@ -12,6 +12,15 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 export const SKILLS_DIR = ".agents/skills";
 export const SKILL_FILE = "SKILL.md";
 
+/**
+ * avocode's own checkout, wherever it was installed. Exported because `avo install` links a target
+ * repo at two things that ship with avo — the skills and the Pi extension — and computing the root
+ * twice is how the two ends come to disagree about which checkout is "ours".
+ */
+export function avocodeRoot(): string {
+  return repoRoot;
+}
+
 /** avocode's own bundled skills — the source `avo install` links a target repo to. */
 export function bundledSkillsDir(): string {
   return join(repoRoot, SKILLS_DIR);
