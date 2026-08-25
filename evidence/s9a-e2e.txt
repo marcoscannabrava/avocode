@@ -1,0 +1,82 @@
+# avo S9a e2e -- 2026-08-25T19:57:07Z
+# node v22.14.0, git version 2.55.0, jq jq-1.8.2
+# target: bench/fuzzysearch -- thresholded edit-distance retrieval, median ms, lower is better
+
+## 1. bench/init.sh
+$ bench/init.sh $scratch/fuzzysearch -> exit 0
+PASS  materializes into a fresh git repo
+PASS  .avo/score is executable
+PASS  the gate records 5 protected file(s)
+PASS  the baseline is one commit: 00aa7eb fuzzysearch v0: correct and slow
+PASS  the ladder fixtures are NOT materialized -- the optimizer is not handed the answer
+PASS  refuses a destination inside avocode's own checkout
+PASS  and wrote nothing there
+PASS  refuses a non-empty destination without --force
+PASS  --force is byte-identical on an unchanged target (invariant 5)
+PASS  --verify passes on an intact target
+
+## 2. f on the baseline
+$ .avo/score -> {"ok":true,"correct":true,"primary":1665.4335,"unit":"ms","scores":{"small":732.683,"large":2598.184}}
+PASS  the baseline is ok and correct
+PASS  the metric is ms, lower is better
+PASS  two configs are scored, so the commit rule compares a vector
+PASS  --configs lists them, so avo score --parallel works
+PASS  --config small scores only that config
+PASS  an unknown config is a result, not a crash
+PASS  worst config spread 1% is under the 3% floor
+
+## 3. f refuses to measure itself
+PASS  editing bench/reference.js makes the score incorrect, and names the file
+PASS  editing bench/corpus.js makes the score incorrect, and names the file
+PASS  editing bench/run.js makes the score incorrect, and names the file
+PASS  editing test/search.test.js makes the score incorrect, and names the file
+PASS  editing .avo/score makes the score incorrect, and names the file
+PASS  deleting the suite makes the score incorrect
+PASS  bench/init.sh --verify detects the same tampering from outside the repo
+PASS  a missing gate is a HARNESS error (ok:false), not a verdict on the candidate
+
+## 4. fast and wrong scores nothing
+PASS  returning nothing is instant and incorrect
+PASS  and avo commit refuses it (invariant 2): the candidate failed correctness; a failing f never yields a commit
+PASS  a candidate that passes the whole unit suite but is wrong at scale is still caught
+      run.js said: wrong result on config 'small': 306 pair(s) missing, 1 unexpected
+PASS  mutating the caller's arrays is caught and named
+PASS  a candidate with the wrong export shape is a result, not a crash
+PASS  a candidate that does not parse is a result, not a crash
+
+## 5. a scripted optimizer walks the known path
+# each step replaces src/search.js, then avo score + avo commit decide
+  v1 -> v001  primary 149.653ms   improved
+  v2 -> v002  primary 71.5615ms  large+small improved
+  v3 -> v003  primary 69.18900000000001ms  large+small improved
+  v4 -> v004  primary 16.4705ms  large+small improved
+  v5 -> v005  primary 13.784ms  large+small improved
+  v6 -> v006  primary 0.9235ms  large+small improved
+
+  6 committed, 0 refused, of 6 steps
+PASS  at least 5 versions were committed (S9 acceptance: >=5)
+PASS  best score is monotonically non-decreasing across the lineage
+  headroom walked: 1665.4335ms -> 0.9235ms = 1803.4x
+PASS  the target has real headroom (1803.4x >= 5x), so a flat curve in S9b is the agent, not f
+PASS  avo lineage --json reports all 6 of them
+
+## 6. every committed version reproduces its recorded score
+# S9's second acceptance criterion: a score in the lineage is a measurement, not a claim
+PASS  v1: recorded 149.7005ms, fresh 145.9705ms (-2.5%)
+PASS  v2: recorded 70.927ms, fresh 71.22800000000001ms (0.4%)
+PASS  v3: recorded 67.6495ms, fresh 68.2335ms (0.9%)
+PASS  v4: recorded 16.753ms, fresh 16.4525ms (-1.8%)
+PASS  v5: recorded 13.669ms, fresh 13.672ms (0%)
+PASS  v6: recorded 0.924ms, fresh 0.9319999999999999ms (0.9%)
+
+## summary
+all checks passed (41 of them)
+
+# f was still f at the end:
+ok        bench/reference.js
+ok        bench/corpus.js
+ok        bench/run.js
+ok        test/search.test.js
+ok        .avo/score
+
+f is intact: 5 protected file(s) match bench/fuzzysearch.

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# PROTECTED -- this file IS `f`. Editing it makes `bench/init.sh --verify` fail.
+#
+# avo scorer for the fuzzysearch target. Metric: median milliseconds per search, lower is better.
+#
+#   .avo/score                   one JSON line scoring every config
+#   .avo/score --configs         config names, one per line
+#   .avo/score --config <name>   one JSON line scoring just that config
+#
+# Always exits 0 -- see templates/score/README.md in avocode. Three things gate `correct`:
+#   1. the protected files still hash to what bench/init.sh recorded,
+#   2. the unit suite passes,
+#   3. the candidate still matches the reference on the exact input it is timed on (bench/run.js).
+set -uo pipefail
+
+UNIT="ms"
+HIGHER_IS_BETTER=false
+
+emit() { # $1=ok $2=correct $3=log
+  jq -cn --argjson ok "$1" --argjson correct "$2" --arg log "$3" --arg unit "$UNIT" \
+    --argjson hib "$HIGHER_IS_BETTER" --argjson d "$SECONDS" \
+    '{ok:$ok,correct:$correct,primary:null,unit:$unit,higher_is_better:$hib,log:$log,duration_s:$d}'
+  exit 0
+}
+
+command -v jq >/dev/null 2>&1 || {
+  printf '{"ok":false,"correct":false,"primary":null,"unit":"ms","higher_is_better":false,"log":"jq not found on PATH"}\n'
+  exit 0
+}
+command -v node >/dev/null 2>&1 && [[ -f bench/run.js ]] || {
+  emit false false "run me from the target repo root, with node on PATH"
+}
+
+mode=all
+want=""
+case "${1-}" in
+  --configs)
+    node bench/run.js --list
+    exit 0
+    ;;
+  --config)
+    mode=one
+    want="${2-}"
+    [[ -n "$want" ]] || emit true false "--config needs a config name"
+    ;;
+  "") ;;
+  *) emit true false "unknown argument '$1'" ;;
+esac
+
+# ---- 1. the gate files are untouched -------------------------------------------------------
+# A candidate is free to rewrite src/ however it likes. It is not free to rewrite the thing
+# measuring it, and "the tests got easier" is the cheapest possible way to score well.
+if [[ ! -f .avo/gate.sha256 ]]; then
+  emit false false "no .avo/gate.sha256 -- this target was not materialized by bench/init.sh, so f has no gate"
+fi
+if ! drift="$(sha256sum -c --quiet .avo/gate.sha256 2>&1)"; then
+  emit true false "a protected file changed -- f measures the candidate, not itself:
+$drift
+Revert those files (git checkout -- <path>) and optimize src/search.js instead."
+fi
+
+# ---- 2. the unit suite ---------------------------------------------------------------------
+if ! suite="$(node --test test/*.test.js 2>&1)"; then
+  emit true false "the correctness suite failed:
+$(printf '%s' "$suite" | tail -n 60)"
+fi
+
+# ---- 3. per-config: full-scale correctness, then timing ------------------------------------
+scores="{}"
+log=""
+while read -r name; do
+  [[ -n "$name" ]] || continue
+  if [[ "$mode" == one && "$name" != "$want" ]]; then continue; fi
+  line="$(node bench/run.js --config "$name" 2>&1)"
+  if ! jq -e 'has("ok")' >/dev/null 2>&1 <<<"$line"; then
+    emit false false "bench/run.js printed no JSON for config '$name':
+$(printf '%s' "$line" | head -c 4000)"
+  fi
+  if [[ "$(jq -r '.ok' <<<"$line")" != true ]]; then
+    emit false false "$(jq -r '.log' <<<"$line")"
+  fi
+  if [[ "$(jq -r '.correct' <<<"$line")" != true ]]; then
+    emit true false "$(jq -r '.log' <<<"$line")"
+  fi
+  ms="$(jq -r '.median_ms' <<<"$line")"
+  scores="$(jq -c --arg n "$name" --argjson v "$ms" '. + {($n): $v}' <<<"$scores")"
+  log="$log
+[$name] ${ms}ms median of $(jq -r '.reps' <<<"$line") ($(jq -r '.pairs' <<<"$line") pairs, spread $(jq -r '.spread_pct' <<<"$line")%)"
+done < <(node bench/run.js --list)
+
+[[ "$scores" != "{}" ]] || emit true false "no config matched '$want'"
+
+primary="$(jq -r '[.[]] | add / length' <<<"$scores")"
+jq -cn --argjson scores "$scores" --argjson primary "$primary" --arg unit "$UNIT" \
+  --argjson hib "$HIGHER_IS_BETTER" --arg log "$log" --argjson d "$SECONDS" \
+  '{ok:true,correct:true,primary:$primary,unit:$unit,higher_is_better:$hib,scores:$scores,log:$log,duration_s:$d}'

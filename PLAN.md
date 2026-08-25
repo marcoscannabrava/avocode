@@ -115,6 +115,11 @@ avocode/
     avo-supervisor/        # steers from inside the session: index.ts + supervisor.ts
                            #   (tool_result -> supervise() -> pi.sendMessage), episode-scoped
   templates/score/         # reference scorers: hyperfine, pytest, vitest, evals
+  bench/
+    init.sh                # materializes a target into ITS OWN repo; --verify audits f afterwards
+    fuzzysearch/           # the S9 target: edit-distance retrieval, median ms, lower is better
+                           #   src/search.js is the candidate; bench/ + test/ + avo/score are f
+  test/fixtures/fuzzysearch/  # the six-step ladder — the headroom proof, deliberately NOT in bench/
   knowledge/               # K corpus (markdown; qmd collection)
   lineage/                 # rendered vNNN.md per committed version (qmd collection)
   justfile                 # lint / typecheck / test / e2e
@@ -615,15 +620,83 @@ Each slice: build → verify with the stated command → commit → update `PROG
     nor offline, and the extension reacts to tool results, not to prose. Six worsening scores, one
     directive; then `resetLeaf()` and a seventh, steered again.
 
-### S9 — End-to-end validation `[ ]`
-- One real optimization target with a real `.avo/score` (candidate: a hot function in a small
-  benchmark repo scored by `hyperfine`, correctness by its own test suite). Not CUDA — we are
-  validating the harness, not chasing FlashAttention.
-- Seed `K` with the relevant docs via `avo know add`, run `avo run` for a bounded budget.
+### S9 — End-to-end validation `[~]`
+Split the way S7 and S8 were: the target is testable with no agent at all, the run is not.
+
+#### S9a — the optimization target `[x]`
+- One real target with a real `.avo/score`, materialized into **its own git repo** by
+  `bench/init.sh`. Not CUDA — we are validating the harness, not chasing FlashAttention.
+- **Verify:** a scripted optimizer walking a known path commits ≥5 versions with a monotonically
+  non-decreasing best score, and every committed version reproduces its recorded score from its own
+  commit. `test/e2e-bench.sh`, 41 checks, `evidence/s9a-e2e.txt`.
+
+**Shipped, with five deviations from the sketch above, each measured rather than argued:**
+- **The target is not `hyperfine`-timed, and it is not a "hot function in a benchmark repo".** It is
+  `bench/fuzzysearch` — thresholded edit-distance retrieval over a seeded pseudo-lexicon, timed
+  in-process. Two reasons. `hyperfine` is not installed here or on the CI runner, and pinning the
+  metric to a tool the harness cannot run would make "reproduces its recorded score" unverifiable
+  in the one place it has to hold. And process-granular timing cannot see a candidate that ends up
+  at 0.9ms, which this one does.
+- **Matmul was tried first and rejected on measurement.** A naive nested-array triple loop against
+  flat `Float64Array`, i-k-j order, transposed B, 64×64 tiling and a 2×-unrolled micro-kernel: the
+  whole ladder is **1.7×**, and most steps are noise or regressions, because V8's JIT already does
+  that work. A curve on that target would have proved only that the commit rule refuses things,
+  which is exactly what §S9 warned against. Edit distance is **385×** across six steps.
+- **`f` has three gates, not one.** (1) the protected files hash to what `bench/init.sh` recorded,
+  (2) the unit suite passes, (3) `bench/run.js` re-checks the candidate against an independent
+  reference **on the exact input it is about to be timed on**, and that it did not mutate its
+  arguments. Gate 3 is the expensive one (it runs the naive reference every score, ~0.7s) and it
+  is the one that earns its cost: `test/e2e-bench.sh` §4 ships a candidate that passes the entire
+  unit suite and returns `[]` for any corpus over 1000 words. A unit suite cannot see that, and
+  templates/score/README.md's own rule — keep the correctness check independent of the code under
+  optimization — is unenforceable without it.
+- **The gate is honest about its limits.** `.avo/gate.sha256` is generated at materialization time
+  (so the template stays the single source of truth) and covers `.avo/score` itself, but an agent
+  editing both the scorer and the hash file defeats it from inside. `bench/init.sh --verify` is the
+  external audit that does not, and S9b must run it after the loop. Claiming more than that would
+  be worse than the gate.
+- **Sample counts are adaptive, and `spread_pct` is an interquartile range, not max−min.** A ladder
+  spanning 385× makes any fixed rep count wrong at one end. `minReps: 3, maxReps: 500,
+  budgetMs: 300` gives the 556ms baseline 3 samples and the 0.9ms candidate 469. With max−min the
+  fast end reported 51% "spread" — a single GC pause, growing with the sample count, i.e. reading
+  as *noisier* precisely because the measurement got *better*. On the IQR every step is 0–2.5%,
+  which is what makes `floor: 0.03` the right band and not a guess.
+
+Measured ladder (`test/fixtures/fuzzysearch/v{1..6}.js`, one reference machine, both configs):
+
+| step | small | large | vs previous |
+| --- | --- | --- | --- |
+| v0 baseline (full DP, nested arrays) | 155.7ms | 556.4ms | — |
+| v1 two-row rolling DP over `Int32Array` | 61.3ms | 237.4ms | 2.4× |
+| v2 + length-difference prefilter | 30.6ms | 109.9ms | 2.1× |
+| v3 + common prefix/suffix trim | 29.1ms | 104.8ms | 1.05× |
+| v4 + Ukkonen band, row-minimum early exit | 8.2ms | 24.7ms | 3.9× |
+| v5 + length-bucketed corpus index | 6.8ms | 20.7ms | 1.2× |
+| v6 + letter-set bitmask prefilter | 0.66ms | 1.31ms | 13× |
+
+v3 is kept deliberately: at ~5% it is the borderline case `floor: 0.03` exists to adjudicate. v6
+was added because five steps left no slack — with only the first five, one marginal step falling
+under the floor on a slower machine would drop the lineage to 4 versions and fail the ≥5 criterion
+for a reason that has nothing to do with the harness.
+
+#### S9b — the run `[ ]`
+- Seed `K` with the relevant docs via `avo know add`, then run the loop on `bench/fuzzysearch` for a
+  bounded budget.
 - Record in `evidence/`: the score curve across versions, the number of supervisor interventions,
   token/cost split between probe (small) and commit (big) models, wall-clock.
-- **Verify:** `avo lineage --json` shows a monotonically non-decreasing best score across ≥5
-  versions; every committed version reproduces its recorded score on a fresh `avo score`.
+- **Verify:** the same two criteria S9a proves are reachable — ≥5 versions, non-decreasing best,
+  every score reproducible — now earned by an agent rather than by a script. Plus
+  `bench/init.sh --verify` clean at the end: if `f` was edited, the curve means nothing.
+- **Decided in S9a, do not re-open:** the target is `bench/fuzzysearch`; it must be materialized
+  outside this checkout (`bench/init.sh` refuses otherwise, because `avo commit` would otherwise
+  write the loop's whole lineage into avocode's own history — the S3/S6/S8 self-perturbation bug in
+  its worst form); the ladder fixtures live in `test/fixtures/`, never in the template, so the
+  optimizer is not handed the answer.
+- **Still open, and this is where §6 Q3 gets answered:** run it BOTH ways — `avo run`
+  (agent-agnostic, one process per turn) and a `pi` session with both extensions loaded — because
+  the intervention counts and token splits are the only way to settle whether the native supervisor
+  is worth its complexity, and #35 says the probe/commit split is what should settle the fan-out
+  model question too.
 
 ### S10 — Population branching `(deferred, not scheduled)`
 Paper §3.3 leaves it as future work; so do we. If we take it, this is where OpenEvolve's
@@ -670,6 +743,10 @@ MAP-Elites archive gets a second look — read it, don't depend on it.
   removed either way, or it would litter the working tree with files `avo commit` reads as a
   variation.
 - **Q3 (S7):** stall threshold N — the paper doesn't publish theirs. Start at 5 (the value in
-  [avo-pi.md](avo-pi.md)'s sketch), make it configurable, tune with S9 evidence.
+  [avo-pi.md](avo-pi.md)'s sketch), make it configurable, tune with S9 evidence. **Still open, and
+  now unblocked:** S9a built the target the tuning run needs, and left `.avo/config.json` in
+  `bench/fuzzysearch` at the defaults precisely so S9b can move `supervise.stall` and see what it
+  costs. What S9a did settle is the *other* threshold: `floor: 0.03`, from a measured 0–2.5%
+  interquartile spread across the whole 385× ladder.
 - **Q4 (S7):** if the loop proves fragile across days, adopt **absurd** (Postgres durable execution)
   for checkpointing rather than growing our own resume logic.
