@@ -69,6 +69,9 @@ export const MAX_CONSECUTIVE_NOOPS = 3;
 /** How much of the agent's own words become the commit rationale. A commit body is not a log. */
 const WHY_CAP_CHARS = 2_000;
 
+/** Said once per silent turn, in the manifest and in the rendered run (#49). */
+const NO_SUMMARY = "the agent produced no final message, so this turn is recorded with no rationale";
+
 // ---------------------------------------------------------------------------
 // what a run records
 // ---------------------------------------------------------------------------
@@ -671,6 +674,12 @@ async function iterate(
     // `decideCommit` the command itself calls, so the rule cannot differ between them. The agent's
     // own final message is the rationale, which is what `--why` is for.
     const why = capOutput(turn.summary ?? "", WHY_CAP_CHARS, 40).text.trim();
+    // A turn that said nothing commits without a rationale rather than with protocol noise (#49).
+    // That silence is worth seeing: it almost always means the turn was killed or timed out, and a
+    // version whose `--why` is empty is otherwise indistinguishable from one nobody explained.
+    // Recorded for any silent turn, not just a committing one — a turn that said nothing and did
+    // nothing is the same fact, and the manifest is where an operator goes looking for it.
+    if (why === "") it.warnings.push(NO_SUMMARY);
     const commitOpts: CommitOptions = {
       json: true,
       parallel: false,
@@ -803,6 +812,7 @@ export function renderRun(r: RunReport): string {
     if (own.length > 0 && d?.action !== "noop") {
       lines.push(`       ${" ".repeat(7)}  ↳ the agent also committed ${listVersions(own)} itself`);
     }
+    if (it.warnings.includes(NO_SUMMARY)) lines.push(`       ${" ".repeat(7)}  ↳ ${NO_SUMMARY}`);
     for (const s of it.supervision?.signals ?? []) lines.push(`       ${" ".repeat(7)}  ↳ ${s.kind}: ${s.detail}`);
     if (it.intervention !== null) lines.push(`       ${" ".repeat(7)}  ↳ steered; recorded as ${it.intervention.key}`);
   }

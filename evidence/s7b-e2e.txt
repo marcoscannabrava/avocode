@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-08-25T21:45:15Z
+# avo S7b e2e — 2026-08-25T23:25:00Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 27ac4e95, a stub agent and an f that counts lines
+PASS  repo at HEAD b2eaddc2, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-04fefdab)
+PASS  the injected directive is recorded (avo-intervention-84c08e5a)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive
@@ -58,7 +58,7 @@ PASS  an unchanged tree is never scored, which is why the supervisor cannot see 
 PASS  .avo/STOP halts the loop before the first turn is spawned
 PASS  a loop that never ran a turn exits 1
 PASS  and nothing was committed
-PASS  a STOP file dropped mid-run halts it after 25 of 50 iterations
+PASS  a STOP file dropped mid-run halts it after 24 of 50 iterations
 PASS  an agent binary that cannot be started stops the loop after one try, not five
 PASS  and it exits 1
 PASS  a turn past its --timeout is killed
@@ -111,5 +111,14 @@ PASS  the human rendering shows the cached/uncached split
 PASS  and what it cost
 PASS  an agent that reports no cost leaves it null, not 0
 
+## 12. #49: what an unexplained turn writes into the permanent record
+PASS  a killed turn is salvaged from its last MESSAGE, not the last event on the wire
+PASS  no protocol event reaches the commit body
+PASS  an agent that said nothing reports no summary rather than an event
+PASS  the turn still did real work, so it is still a version
+PASS  and the manifest says the version has no rationale
+PASS  so does the rendering an operator reads
+PASS  a dead end with no rationale records none, rather than the last event on the wire
+
 ## summary
-all checks passed (85 of them)
+all checks passed (92 of them)

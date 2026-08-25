@@ -212,6 +212,51 @@ test("a structured agent that printed no final message falls back to its last li
   });
 });
 
+// #49: the fallback that used to end this parser was `lastLine(stdout)`, which is right for a
+// prose agent and never right for a structured one — every line of a stream-json stdout is a
+// protocol event. The summary becomes `avo commit --why`, and from there the commit body,
+// lineage/vNNN.md and memory.jsonl, all permanent. The line below is verbatim from the S9b-1 run,
+// where it was stored as the rationale for a dead end the supervisor replays to future turns.
+const THINKING_EVENT = `{"type":"system","subtype":"thinking_tokens","estimated_tokens":3450,"estimated_tokens_delta":100,"uuid":"c7a8bcdf","session_id":"10968f1a"}`;
+
+test("a stream ending in a protocol event has no summary, rather than the event as its rationale", () => {
+  const out = `{"type":"system","subtype":"init"}\n${THINKING_EVENT}`;
+  assert.equal(parseAgentOutput("claude", out).summary, null);
+});
+
+test("a killed turn is salvaged from the last thing the agent SAID, not the last thing on the wire", () => {
+  // No `result` event — the turn was killed — but it had already said what it did. That is a real
+  // rationale; the trailing event is not.
+  const out = [
+    `{"type":"system","subtype":"init"}`,
+    `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"replaced the band with Myers bit-parallel"}]}}`,
+    THINKING_EVENT,
+  ].join("\n");
+  assert.equal(parseAgentOutput("claude", out).summary, "replaced the band with Myers bit-parallel");
+});
+
+test("thinking is not a rationale, in the mid-stream salvage either", () => {
+  const out = `{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"maybe unroll"}]}}\n${THINKING_EVENT}`;
+  assert.equal(parseAgentOutput("claude", out).summary, null);
+});
+
+test("pi: a stream cut off before message_end keeps its usage and reports no summary", () => {
+  const out = `{"type":"session","version":3,"id":"u"}\n{"type":"message_update","usage":{"input":12,"output":3,"cacheRead":0,"cacheWrite":0,"cost":0}}`;
+  const r = parseAgentOutput("pi", out);
+  assert.equal(r.summary, null, "a message_update is not something the agent said");
+  assert.deepEqual(r.tokens, { input: 12, output: 3, cache_read: 0, cache_write: 0 }, "the usage still counts");
+});
+
+test("codex: turn.completed without an agent_message is usage, not a rationale", () => {
+  const out = `{"type":"thread.started","thread_id":"t"}\n{"type":"turn.completed","usage":{"input_tokens":13138,"cached_input_tokens":0,"output_tokens":5}}`;
+  assert.equal(parseAgentOutput("codex", out).summary, null);
+});
+
+test("a half-written JSON line is still an event, so it is not mistaken for prose", () => {
+  const out = `{"type":"system","subtype":"init"}\n{"type":"result","resu`;
+  assert.equal(parseAgentOutput("claude", out).summary, null);
+});
+
 test("a text agent's summary is its last non-empty line", () => {
   assert.deepEqual(parseAgentOutput("text", "step one\nstep two\n\n"), {
     summary: "step two",
