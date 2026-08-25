@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { Io } from "./io.ts";
-import { bundledSkillsDir, readSkills, SKILL_FILE, SKILLS_DIR, type Skill } from "./skills.ts";
+import { avocodeRoot, bundledSkillsDir, readSkills, SKILL_FILE, SKILLS_DIR, type Skill } from "./skills.ts";
 import type { InitStep } from "./steps.ts";
 
 export type { InitStep, StepAction } from "./steps.ts";
@@ -12,6 +12,10 @@ export const AGENT_NAMES: readonly AgentName[] = ["pi", "claude", "codex"];
 export const AGENTS_FILE = "AGENTS.md";
 export const CLAUDE_SKILLS = ".claude/skills";
 export const PI_SETTINGS = ".pi/settings.json";
+/** Where Pi auto-discovers a project-local extension: `.pi/extensions/<name>/index.ts`. */
+export const PI_EXTENSION = ".pi/extensions/avo";
+/** Its source inside avocode's own checkout. */
+export const PI_EXTENSION_SRC = "pi/extensions/avo";
 
 /** Delimits the block `avo install` owns, so re-running rewrites it instead of appending again. */
 export const BEGIN_MARKER = "<!-- BEGIN avo: managed by `avo install`, edits inside are overwritten -->";
@@ -317,7 +321,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
   }
 
   for (const agent of opts.agents) {
-    if (agent === "pi") installPi(cwd, steps, warnings);
+    if (agent === "pi") installPi(cwd, steps, warnings, opts.force);
     else if (agent === "claude") installClaude(cwd, ownRepo ? source : target, skills, opts.force, steps);
     else steps.push({ name: "codex", action: "unchanged", detail: `discovers skills through the ${AGENTS_FILE} index; it has no skills mechanism of its own` });
   }
@@ -333,8 +337,41 @@ function sameDir(a: string, b: string): boolean {
   }
 }
 
-function installPi(cwd: string, steps: InitStep[], warnings: string[]): void {
+/**
+ * Links `.pi/extensions/avo` at avocode's own `pi/extensions/avo`, which is the discovery path Pi
+ * documents for a project-local extension — any `.pi/extensions/<name>/index.ts`. A symlink rather than a
+ * copy, for the same reason the skills are linked: a copy is a fork that stops receiving fixes, and
+ * two copies of the commit rule is exactly what invariant 1 forbids.
+ *
+ * Pi is the only agent that gets this. The extension is a native binding for capabilities every
+ * agent already reaches through `bash avo ...` (invariant 8), so an agent without it loses speed,
+ * not ability.
+ */
+function linkPiExtension(cwd: string, steps: InitStep[], warnings: string[], force: boolean): void {
+  const source = join(avocodeRoot(), PI_EXTENSION_SRC);
+  if (!existsSync(join(source, "index.ts"))) {
+    // A checkout without the extension (or an install that stripped it) is not an error: the CLI
+    // is the whole harness, and this is a shortcut.
+    steps.push({ name: PI_EXTENSION, action: "skipped", detail: `${PI_EXTENSION_SRC}/index.ts is not in this avocode checkout` });
+    return;
+  }
+  // Ownership is "this repo IS where the extension lives", the same test the skills use — not "the
+  // link already points at it". Installing into avocode's own checkout would otherwise create a
+  // link to itself and leave avo's working tree dirty, which is the self-perturbation bug S3 and
+  // S6 both hit: `avo commit` would count avo's own wiring as a candidate.
+  if (sameDir(join(cwd, PI_EXTENSION_SRC), source)) {
+    steps.push({ name: PI_EXTENSION, action: "unchanged", detail: `this repo owns the extension at ${PI_EXTENSION_SRC}` });
+    return;
+  }
+  const linkPath = join(cwd, PI_EXTENSION);
+  const r = ensureLink(linkPath, linkTargetFor(cwd, dirname(linkPath), source), force);
+  steps.push({ name: PI_EXTENSION, action: r.action, detail: r.detail });
+  if (r.action === "failed") warnings.push(`could not link ${PI_EXTENSION} — ${r.detail}`);
+}
+
+function installPi(cwd: string, steps: InitStep[], warnings: string[], force: boolean): void {
   steps.push({ name: "pi", action: "unchanged", detail: `discovers project ${SKILLS_DIR}/ natively — no copying, no config` });
+  linkPiExtension(cwd, steps, warnings, force);
   const path = join(cwd, PI_SETTINGS);
   let existing: unknown = null;
   if (existsSync(path)) {

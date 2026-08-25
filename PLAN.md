@@ -110,7 +110,8 @@ avocode/
     avo-fanout/SKILL.md    #   when and how to parallelize with small models
   AGENTS.md                # always-on rules + the skills index; only the marked block is managed
   pi/extensions/
-    avo/index.ts           # native Pi tools (thin wrappers over src/)
+    avo/index.ts           # the entry point Pi discovers; registers what tools.ts defines
+    avo/tools.ts           # native Pi tools (thin wrappers over src/); typebox schemas
     avo-supervisor/index.ts# event-interception supervisor
   templates/score/         # reference scorers: hyperfine, pytest, vitest, evals
   knowledge/               # K corpus (markdown; qmd collection)
@@ -522,7 +523,7 @@ Each slice: build → verify with the stated command → commit → update `PROG
     caught rather than assumed away.
   - Two real bugs the loop caught by being run, not by being read — see PROGRESS.jsonl iter 9.
 
-### S8 — Pi implementation `[ ]`
+### S8 — Pi implementation `[~]` (tools shipped; supervisor extension next)
 - `pi/extensions/avo/index.ts` — `pi.registerTool` for `avo_score`, `avo_commit`, `avo_lineage`,
   `avo_know_query`, `avo_know_add`, `avo_fan`. Thin wrappers over `src/`; typebox schemas; use
   `promptSnippet`/`promptGuidelines` so they land in the system prompt properly. Persist state in
@@ -536,6 +537,46 @@ Each slice: build → verify with the stated command → commit → update `PROG
 - **Verify:** an SDK-driven test (`createAgentSession` + `SessionManager.inMemory()` +
   `tools: [...]`) that scripts a stalling sequence and asserts the steering message is injected
   exactly once; extension loads cleanly under `pi --mode json` in the fixture repo.
+
+- **Shipped (iter 10) — the tools half.** `pi/extensions/avo/{index.ts,tools.ts}`: the six tools,
+  registered and discovered by real Pi 0.84.3. Split from the supervisor extension the way S7 split
+  detector from driver — the tools are testable with no session at all, the supervisor needs a
+  scripted stalling sequence. Recorded deviations, each with its reason:
+  - **The tools live in `pi/`, never `src/`.** They need `typebox` at *runtime* for the schemas, and
+    `typebox` (v1 — the package Pi resolves, a different package from the `@sinclair/typebox` v0.34
+    `src/` uses, with a different `TSchema`) is a devDependency. Everything under `src/` is reachable
+    from `bin/avo`, and `avo` must keep working in a checkout that never installed Pi.
+  - **A harness error throws; a refusal does not.** Pi marks a tool result failed only when
+    `execute` throws, so a thrown refusal would teach the model that a losing candidate is a
+    malfunction. Same split as the CLI's exit codes (2 = harness error, 1 = refused). Both branches
+    are tested per tool.
+  - **`ctx.cwd` is the only source of the repo root** — no tool takes a `cwd`, `repo`, `dir` or
+    `path` parameter, and a test asserts none ever gains one. An agent that can retarget the repo
+    can write a version into a repo nobody is watching.
+  - **`why` is required on `avo_commit`** while the CLI's `--why` is optional. A Pi turn is the one
+    caller that always has the rationale in hand, and S7's directive is only worth reading because
+    it can quote a real one back.
+  - **`avo install --agent pi` now links `.pi/extensions/avo`**, which is where Pi discovers a
+    project-local extension. A symlink, like the skills — a copy is a fork that stops receiving
+    fixes, and two copies of the commit rule is what invariant 1 forbids. `skills.ts` exports
+    `avocodeRoot()` so the skills link and the extension link cannot disagree about which checkout
+    is ours.
+  - **Ownership means "this repo IS the source", not "the link already points there"** — a bug the
+    e2e caught: installing into avocode's own checkout linked it to itself and left avo's working
+    tree dirty, which is the S3/S6 self-perturbation bug a fourth time.
+  - **Project trust is resolved by the CALLER**, not read from settings by the loader: `reload()`
+    takes a `resolveProjectTrust` callback, which is the seam `pi` fills from `defaultProjectTrust`,
+    a saved `trust.json`, or `--approve`. The first e2e attempt asserted against the wrong layer and
+    passed for the wrong reason until it was driven.
+  - **`test/pi-drive.ts` is a checked-in harness**, not a file the e2e writes into the repo root at
+    run time: a stray file in avocode's own tree is that same self-perturbation bug.
+  - **Not yet built:** the supervisor extension, and `registerProvider`/`setModel` for pinning
+    `AVO_PROBE_MODEL`. The SDK-driven stalling test belongs with the supervisor, so this half is
+    verified by unit tests over `execute` plus an e2e that loads the extension through Pi's own
+    `DefaultResourceLoader` in a repo wired by the real `avo install`.
+  - **Decided early, as the handoff asked:** the Pi supervisor will count the same attempts
+    `avo supervise` counts — `.avo/attempts.jsonl`, read through `supervise()` — rather than keeping
+    its own in-session tally, so an operator running both cannot be steered twice for one stall.
 
 ### S9 — End-to-end validation `[ ]`
 - One real optimization target with a real `.avo/score` (candidate: a hot function in a small

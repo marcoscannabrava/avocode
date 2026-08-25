@@ -1,0 +1,27 @@
+# avo S8a e2e — 2026-08-25T18:57:36Z
+# node v22.14.0, pi 0.84.3
+
+## 1. avo install --agent pi wires the extension where pi looks for it
+PASS  avo install --agent pi exits 0
+PASS  .pi/extensions/avo is a symlink, not a copy
+PASS  the link resolves to a real index.ts — pi loads <dir>/index.ts
+PASS  a second install reports the extension unchanged
+PASS  the link is byte-identical after a re-run
+
+## 2. pi's own resource loader discovers it in a trusted project
+PASS  the extension loads with zero errors
+PASS  it was found by DISCOVERY, at .pi/extensions/avo/index.ts
+PASS  all six tools register: score, commit, lineage, know_query, know_add, fan
+
+## 3. an untrusted project gets nothing — the warning avo prints is real
+PASS  an untrusted project loads no project-local extension, exactly as avo install warns
+PASS  avo install says so out loud rather than leaving it to be discovered
+
+## 4. the tools are the CLI: a version committed through the extension is a version
+PASS  avo_commit persisted v1
+PASS  the commit carries the Avo-Version trailer the CLI writes
+PASS  the CLI reads back the version the extension wrote
+PASS  the rationale reaches lineage/v001.md
+
+## summary
+all checks passed (14 of them)
