@@ -679,24 +679,83 @@ was added because five steps left no slack — with only the first five, one mar
 under the floor on a slower machine would drop the lineage to 4 versions and fail the ≥5 criterion
 for a reason that has nothing to do with the harness.
 
-#### S9b — the run `[ ]`
-- Seed `K` with the relevant docs via `avo know add`, then run the loop on `bench/fuzzysearch` for a
-  bounded budget.
-- Record in `evidence/`: the score curve across versions, the number of supervisor interventions,
-  token/cost split between probe (small) and commit (big) models, wall-clock.
-- **Verify:** the same two criteria S9a proves are reachable — ≥5 versions, non-decreasing best,
-  every score reproducible — now earned by an agent rather than by a script. Plus
-  `bench/init.sh --verify` clean at the end: if `f` was edited, the curve means nothing.
-- **Decided in S9a, do not re-open:** the target is `bench/fuzzysearch`; it must be materialized
-  outside this checkout (`bench/init.sh` refuses otherwise, because `avo commit` would otherwise
-  write the loop's whole lineage into avocode's own history — the S3/S6/S8 self-perturbation bug in
-  its worst form); the ladder fixtures live in `test/fixtures/`, never in the template, so the
-  optimizer is not handed the answer.
-- **Still open, and this is where §6 Q3 gets answered:** run it BOTH ways — `avo run`
-  (agent-agnostic, one process per turn) and a `pi` session with both extensions loaded — because
-  the intervention counts and token splits are the only way to settle whether the native supervisor
-  is worth its complexity, and #35 says the probe/commit split is what should settle the fan-out
-  model question too.
+#### S9b — the run `[~]`
+Split again, and for the same reason S9 itself was: `avo run` needs no second agent harness, a `pi`
+session with both extensions does. **S9b-1 is done; S9b-2 is the comparison.**
+
+##### S9b-1 — the agent-agnostic run `[x]`
+`avo run --agent claude` against `bench/fuzzysearch`, K seeded first, `bench/init.sh --verify`
+afterwards. `bench/verify-run.sh <target> [run-id]` turns a finished run into
+`evidence/s9b-run.txt` and checks S9's two criteria; every number below is read back from the run
+manifest and the lineage, not retyped.
+
+| | |
+| --- | --- |
+| iterations | 6 of 12, stopped by `.avo/STOP` (a wall-clock watchdog, not convergence) |
+| wall-clock | 34m 43s |
+| versions | **4** committed, 0 regressions, 1 refusal |
+| speedup | 1810.4ms → 0.345ms = **5255×** |
+| interventions | **0** — `since_best` never reached the stall threshold of 5 |
+| `f` intact | yes, `bench/init.sh --verify` clean on all 5 protected files |
+
+```
+v1  6.854ms   264×   rolling Int32Array band (Ukkonen) + length-bucketed corpus + flat code units
+v2  0.642ms   10.7×  character-set bitmask prefilter, gated to k <= 6
+v3  0.408ms   1.57×  partition (pigeonhole) hash index — NOT in the S9a ladder
+v4  0.345ms   1.18×  PassJoin position-aware probe window on that index
+```
+
+**The result that matters is v3.** `test/fixtures/fuzzysearch/` holds six hand-written steps and the
+agent's first commit fused five of them; its third went somewhere the ladder does not go — cut each
+corpus word into `k+1` disjoint segments, hash them, and by pigeonhole one segment of any match
+survives an edit budget of `k` verbatim, so the scan becomes a handful of substring probes. It cited
+K's bucketing note as the reason ("the same idea applies to any filter whose key is discrete"). So
+K earned its seeding, and the ladder is a floor on this target, not a ceiling.
+
+**Criterion 1 is not met: 4 versions, not ≥5.** The loop was cut off by a watchdog at 34 minutes
+because a Ralph iteration has one hour total, not because it converged — iteration 6's candidate was
+*refused* (`'small' regressed -4.74%`, floor ±3%), which is the commit rule working, and the target
+still had room. The target repo persists, so S9b-2 resumes the same lineage rather than restarting.
+
+**Five things the run measured that no test could have:**
+- **`avo run`'s manifest under-reports a well-behaved agent.** Every iteration recorded `noop —
+  the working tree holds no change to score`, and `committed` stayed empty, while git grew four
+  versions. The `avo-vary` skill has the agent call `avo commit` itself, so by step 2 the tree is
+  clean. Read alone, the manifest says the run was flat. Filed as **#42**, which also notes that
+  #29's no-op counter miscounts these and would cut a *working* loop short.
+- **The token totals are unusable.** 24 input tokens for a turn that read a README, four K
+  documents and a source file: `tokensFrom` takes `input_tokens` only, and Anthropic reports the
+  bulk as `cache_read_input_tokens`. Filed as **#43**. This is the half of S9b's evidence that did
+  not land — the probe-vs-commit cost split is still unmeasured, and needs #43 plus a small-model
+  key (none of `GROQ`/`CEREBRAS`/`OPENROUTER` is set here, so `avo fan` had no small probe model to
+  be cheap with).
+- **Nothing in the harness puts `avo` on the target's `PATH`.** Five wired skills all open with
+  `avo ...`, and every one would have been `command not found`. Worked around with
+  `PATH=…/avocode/bin:$PATH avo run …`; filed as **#41**, because the failure mode is a flat curve
+  that reads as a fact about the target.
+- **480s per turn was too short at the end.** Iterations 5 and 6 were both killed on the timeout —
+  the later a candidate is, the more scoring and differential testing a turn does. Not a bug; a
+  number S9b-2 should raise.
+- **`avo know add <path>` slugs the whole path**, so K docs get named after the directory they were
+  ingested from (`knowledge/tmp-s9b-k-ukkonen-…`). Filed as **#40**.
+
+**Deviation:** K was seeded from four notes written offline (Ukkonen's band, Myers bit-parallel,
+BK-trees + Levenshtein automata + cheap filters, V8 numeric-loop performance) rather than via
+`avo know search --ingest`. No `FIRECRAWL_API_KEY`, no `ddgs`, no `SEARXNG_URL` on this machine, and
+no `qmd` either — so K was also served by the local-scan fallback rather than by hybrid search. The
+notes are the standard literature and deliberately do not contain the ladder.
+
+##### S9b-2 — the comparison `[ ]`
+- Resume the same target repo (`/home/marcos/code/avo-s9b-fuzzysearch`, lineage at v4) — `rm
+  .avo/STOP` first — and carry it past 5 versions so criterion 1 is met on an agent's curve.
+- Then the same target under a `pi` session with both extensions loaded, and compare: intervention
+  counts, and the probe/commit token split that #35 says should settle the fan-out model question.
+  Needs **#43** fixed first, or the token half is unmeasurable again.
+- **§6 Q3 is still open and is now sharper than it was.** The stall threshold of 5 never fired,
+  because `since_best` never got past 2 — on a target with this much headroom the agent improves
+  faster than any stall detector can notice. Q3 needs the *converged* end of this target, where real
+  wins fall under `floor: 0.03` and nothing commits; that is where a threshold of 5 either steers
+  usefully or burns five turns. Raise `--timeout` above 480s before trying.
 
 ### S10 — Population branching `(deferred, not scheduled)`
 Paper §3.3 leaves it as future work; so do we. If we take it, this is where OpenEvolve's
@@ -744,9 +803,10 @@ MAP-Elites archive gets a second look — read it, don't depend on it.
   variation.
 - **Q3 (S7):** stall threshold N — the paper doesn't publish theirs. Start at 5 (the value in
   [avo-pi.md](avo-pi.md)'s sketch), make it configurable, tune with S9 evidence. **Still open, and
-  now unblocked:** S9a built the target the tuning run needs, and left `.avo/config.json` in
-  `bench/fuzzysearch` at the defaults precisely so S9b can move `supervise.stall` and see what it
-  costs. What S9a did settle is the *other* threshold: `floor: 0.03`, from a measured 0–2.5%
+  sharper after S9b-1:** in a 6-iteration run the supervisor fired **zero** times, because
+  `since_best` never got past 2 — a target with 5000x of headroom is improved faster than a stall
+  detector can notice one. The threshold has to be tuned at the *converged* end, where real wins
+  fall under `floor: 0.03` and nothing commits. What S9a did settle is the *other* threshold: `floor: 0.03`, from a measured 0–2.5%
   interquartile spread across the whole 385× ladder.
 - **Q4 (S7):** if the loop proves fragile across days, adopt **absurd** (Postgres durable execution)
   for checkpointing rather than growing our own resume logic.

@@ -16,8 +16,10 @@ knowledge), S5 (agent-agnostic skills), S6 (concurrency), S7 (supervisor + conti
 a `pi` session in a wired repo gets `avo_score`, `avo_commit`, `avo_lineage`, `avo_know_query`,
 `avo_know_add` and `avo_fan` as native tools, plus an `avo-supervisor` extension that steers a
 stalling session from inside it. S9a is done: `bench/fuzzysearch` is a real optimization target with
-a real `f`, and a scripted optimizer walking it commits six versions for a 385x speedup. Next is
-S9b — the same target, driven by an actual agent.
+a real `f`, and a scripted optimizer walking it commits six versions for a 385x speedup. S9b-1 is
+done too: `avo run --agent claude` on that target commits four versions for **5255x** in 35 minutes,
+one of them a technique the hand-written ladder does not contain. Next is S9b-2 — the same target
+under `pi`, to find out whether the native supervisor earns its complexity.
 
 ## Quickstart
 
@@ -517,6 +519,27 @@ Six committed versions, best score monotonically non-decreasing, and every recor
 reproduces from its own commit within 3.2%. So when an agent's curve on this target comes out flat,
 the target is not what is wrong.
 
+### An agent on it
+
+`bench/verify-run.sh <target-repo> [run-id]` turns a finished `avo run` into evidence: the curve
+from `avo lineage`, the manifest's interventions and wall-clock, every recorded score re-measured
+from its own commit, and `bench/init.sh --verify` last, because if `f` was edited the curve means
+nothing.
+
+```sh
+PATH="$PWD/bin:$PATH" avo run --cwd ~/work/fuzzysearch --agent claude \
+  --prompt-file task.md --max-iters 12 --timeout 900
+./bench/verify-run.sh ~/work/fuzzysearch      # -> evidence/s9b-run.txt
+```
+
+(The `PATH` prefix is not optional and nothing else supplies it — the wired skills all begin with
+`avo ...`. See [#41](https://github.com/marcoscannabrava/avocode/issues/41).)
+
+`evidence/s9b-run.txt` is one such run: 6 iterations, 34m43s, four committed versions,
+1810.4ms -> 0.345ms = **5255x**, zero supervisor interventions, `f` intact. Its third version is the
+interesting one — a pigeonhole partition index that is *not* one of the six hand-written steps
+below, reached by citing K's note that bucketing generalizes to any discrete filter key.
+
 They live in `test/fixtures/`, not in `bench/fuzzysearch/` — `bench/init.sh` materializes every file
 in the template directory, and a ladder stored there would hand the optimizer the answer.
 
@@ -571,6 +594,7 @@ pi/extensions/    the native pi bindings: avo/ registers the six tools, avo-supe
 AGENTS.md         the always-on rules + the skills index (managed block, hand edits preserved)
 templates/score/  reference scorers + the authoring guide
 bench/init.sh     materializes an optimization target into its own repo; --verify audits f after
+bench/verify-run.sh  renders a finished `avo run` into evidence and checks S9's two criteria
 bench/fuzzysearch the S9 target: src/search.js is the candidate, everything else is f
 test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-install,-fan,
                   -supervise,-run,-pi,-bench}.sh, plus pi-{load,drive,supervise-drive}.ts
