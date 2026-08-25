@@ -293,7 +293,7 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
         if (e["type"] === "result") {
           if (typeof e["result"] === "string") summary = e["result"];
           tokens = tokensFrom(e["usage"]) ?? tokens;
-          // Sibling of `usage`, not a member of it — and already what ralph.sh bills the loop by.
+          // Sibling of `usage`, not a member of it — and already what the ralph loop bills by.
           costUsd = num(e["total_cost_usd"]) ?? costUsd;
         } else if (e["type"] === "assistant") {
           const m = obj(e["message"]);

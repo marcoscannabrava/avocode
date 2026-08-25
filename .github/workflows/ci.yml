@@ -16,10 +16,10 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: extractions/setup-just@v2
-      # apt gives 0.9.0, which reports 20 findings on ralph.sh that 0.11.0 does not, so the
-      # version is read from test/lint-sh.sh's own pin rather than named twice. `just lint`
-      # falls back to `npm exec -- shellcheck` without this step; it is a speed-up, not a
-      # prerequisite, and it is NOT what makes the gate real — see #2.
+      # apt gives 0.9.0, whose findings differ from 0.11.0's, so the version is read from
+      # test/lint-sh.sh's own pin rather than named twice. `just lint` falls back to
+      # `npm exec -- shellcheck` without this step; it is a speed-up, not a prerequisite,
+      # and it is NOT what makes the gate real — see #2.
       - name: shellcheck (pinned to what test/lint-sh.sh expects)
         run: |
           ver="$(sed -n 's/^SC_PIN="\(.*\)"/\1/p' test/lint-sh.sh)"
@@ -29,9 +29,6 @@ jobs:
       - run: just lint
       - run: just typecheck
       - run: just test
-      # The loop harness. Signals and process groups are exactly what differs between a
-      # laptop and a runner, so the interrupt tests need to run where they can surprise us.
-      - run: just ralph-test
 
   e2e:
     runs-on: ubuntu-latest

@@ -16,10 +16,10 @@ cd "$root" || exit 1
 
 # --- which shellcheck -------------------------------------------------------------------
 # The version is pinned because the findings are not stable across versions: 0.9.0 (what
-# `apt install shellcheck` gives on ubuntu-latest) reports 20 SC2317 "unreachable command" hits
-# on ralph.sh's trap bodies that 0.11.0 does not, having replaced them with one SC2329 per
-# function. A gate whose verdict depends on the machine is a gate that goes red in CI and green
-# on the laptop, which is how the last one got ignored.
+# `apt install shellcheck` gives on ubuntu-latest) reported 20 SC2317 "unreachable command" hits
+# on the trap bodies in the old ralph.sh that 0.11.0 did not, having replaced them with one
+# SC2329 per function. A gate whose verdict depends on the machine is a gate that goes red in CI
+# and green on the laptop, which is how the last one got ignored.
 #
 # Resolution prefers a runner AT the pin over a faster one at the wrong version:
 #   $SHELLCHECK   an explicit override; disables every fallback, so the no-runner path is

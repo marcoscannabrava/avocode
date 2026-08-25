@@ -603,9 +603,8 @@ values never appear in any output.
 
 | Command | What it does |
 | --- | --- |
-| `just check` | lint + typecheck + test + `ralph-test` — the health check every Ralph cycle runs first |
+| `just check` | lint + typecheck + test — the health check every Ralph cycle runs first |
 | `just lint` | oxlint, then `test/lint-sh.sh` — shellcheck over every shell script git knows about |
-| `just ralph-test` | drives `ralph.sh` against a stub agent in a throwaway repo (2s) |
 | `just e2e` | exercises the real `bin/avo`; writes `evidence/s{0,1,2,3,4,5,6,7,7b,8,9a}-e2e.txt` and `evidence/lint-gate-e2e.txt` |
 | `just all` | `check` + `e2e` |
 | `just doctor` | `./bin/avo doctor` |
@@ -620,9 +619,10 @@ going red. `SHELLCHECK=<path>` pins a runner and disables the fallback.
 
 The shellcheck **version** is pinned too, in `SC_PIN`, and CI derives its install from that line
 rather than naming a version of its own. Findings are not stable across versions: 0.9.0, which is
-what `apt install shellcheck` gives on `ubuntu-latest`, reports 20 `SC2317` hits on `ralph.sh`'s trap
-bodies that 0.11.0 does not, having replaced them with one `SC2329` per function. A runner at the
-wrong version warns and still runs — refusing to lint would be a worse failure than the drift.
+what `apt install shellcheck` gives on `ubuntu-latest`, reported 20 `SC2317` hits on the trap bodies
+in the old `ralph.sh` that 0.11.0 did not, having replaced them with one `SC2329` per function. A
+runner at the wrong version warns and still runs — refusing to lint would be a worse failure than
+the drift.
 
 ## Layout
 
@@ -660,12 +660,19 @@ test/             node:test unit tests + e2e{,-score,-lineage,-mem,-know,-instal
 evidence/         artifacts proving user-facing behavior works end to end
 ```
 
-`ralph.sh` is the meta loop that builds this repo; it is not part of `avo` itself.
+## The meta loop
 
-Ctrl+C stops it, and stopping means the session is *gone*: the loop signals the whole process
-tree pid by pid, waits, and escalates to `KILL` if the session ignores the `TERM`. This is not a
-nicety. A session that outlives its loop is reparented to init and goes on editing the repo,
-which is how two agents end up committing to one working tree — observed, not hypothesized (#33).
-The session runs as an async job rather than a foreground pipeline because bash defers trap
-handlers until the running foreground command returns, so a foreground session swallows the
-interrupt for however long it lasts. `just ralph-test` is what holds all of this in place.
+The loop that *builds* this repo is [`ralph`](https://github.com/marcoscannabrava/ralph) — it was
+`ralph.sh` here until it earned its own repo, and it was never part of `avo` itself. Install it and
+point it at `PROMPT.md`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/marcoscannabrava/ralph/main/ralph -o ~/.local/bin/ralph
+chmod +x ~/.local/bin/ralph
+ralph                      # loop until RALPH_STOP or Ctrl+C
+```
+
+Its interrupt handling is load-bearing history for this repo, not a nicety: a session that outlives
+its loop is reparented to init and goes on editing the working tree, which is how two agents ended
+up committing to one checkout here (#33). The fix, and the tests that hold it in place, live in that
+repo now.

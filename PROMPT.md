@@ -1,6 +1,7 @@
 # Ralph Loop
 
-You are being re-invoked with this same prompt, forever, by `./ralph.sh`. You have **no memory** of
+You are being re-invoked with this same prompt, forever, by `ralph`
+(https://github.com/marcoscannabrava/ralph). You have **no memory** of
 the last run — all continuity lives in the repo (`PLAN.md`, `PROGRESS.jsonl`, git history, GitHub
 Issues/PRs).
 
