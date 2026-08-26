@@ -1,4 +1,4 @@
-# avo arcagi3 e2e -- 2026-08-26T07:39:20Z
+# avo arcagi3 e2e -- 2026-08-26T07:52:44Z
 # git version 2.55.0, jq jq-1.8.2
 # target: bench/arcagi3 -- ARC-AGI-3 levels completed, higher is better, 10 games
 
@@ -9,7 +9,7 @@ PASS  .avo/score is executable
 PASS  bench/setup.sh is executable
 PASS  the gate covers exactly the 7 path(s) in avo/protected.txt
 PASS  the manifest protects itself (a candidate that may edit the list has no list)
-PASS  the baseline is one commit: c81d15b arcagi3 v0: blind
+PASS  the baseline is one commit: b41dfba arcagi3 v0: blind
 PASS  the baseline commit message came from the template
 PASS  the template's own .gitignore was kept (.venv/, not node_modules/)
 PASS  no holdout game leaked into the target

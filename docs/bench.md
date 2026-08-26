@@ -16,6 +16,104 @@ it a test of the *loop*. Each target declares its own `f` and its own protected 
 
 ---
 
+# How to run one
+
+**Prerequisites.** `git`, `jq`, Node ≥ 22, and — for `arcagi3` only — Python ≥ 3.12. Plus a coding
+agent (`claude`, `pi` or `codex`) for step 4. `avo doctor` tells you what is missing.
+
+**`avo` must resolve as `avo`, not `./bin/avo`** — every wired skill calls it by bare name (#41).
+From an uninstalled checkout, export it once per shell:
+
+```sh
+cd /path/to/avocode
+export PATH="$PWD/bin:$PATH"      # or run ./install.sh once, which links it into ~/.local/bin
+```
+
+## fuzzysearch — the fast one (no setup at all, seconds per score)
+
+```sh
+# 1. materialize the target into ITS OWN git repo, outside this checkout
+./bench/init.sh ~/work/fuzzysearch
+
+# 2. see f work before spending an agent on it. No install step: the target has no dependencies,
+#    only node and jq.
+cd ~/work/fuzzysearch && .avo/score | jq .
+#    -> {"ok":true,"correct":true,"primary":...,"unit":"ms","higher_is_better":false,...}
+
+# 3. scaffold K, memory and the trajectory ignore (config + scorer already came with the target)
+avo init    --cwd ~/work/fuzzysearch
+avo install --cwd ~/work/fuzzysearch --agent claude     # wire the skills for your agent
+
+# 4. the loop
+avo run --cwd ~/work/fuzzysearch --agent claude \
+  --prompt "make src/search.js faster without changing its results" \
+  --max-iters 12 --timeout 900
+
+# 5. read the curve, and check f was still f
+./bench/verify-run.sh ~/work/fuzzysearch          # -> evidence/s9b-run.txt
+./bench/init.sh --verify ~/work/fuzzysearch
+```
+
+## arcagi3 — the hard one (one setup step, ~20s per score)
+
+```sh
+# 1. materialize
+./bench/init.sh ~/work/arcagi3 --target arcagi3
+
+# 2. ONE EXTRA STEP the other target does not need: a .venv with the ARC-AGI-3 toolkit, and the
+#    pinned game corpus. Needs the network once. Safe to re-run; `--check` reports what is missing.
+cd ~/work/arcagi3 && ./bench/setup.sh
+
+# 3. see f work
+.avo/score | jq .
+#    -> {"ok":true,"correct":true,"primary":0.277,"unit":"levels","higher_is_better":true,...}
+
+# 4. scaffold, then loop. task.md ships with the target and carries the rules.
+avo init    --cwd ~/work/arcagi3
+avo install --cwd ~/work/arcagi3 --agent claude
+avo run     --cwd ~/work/arcagi3 --agent claude \
+  --prompt-file ~/work/arcagi3/task.md --max-iters 12 --timeout 900
+
+# 5. the curve, then the two checks f cannot make about itself
+./bench/verify-run.sh ~/work/arcagi3 --target arcagi3    # -> evidence/arcagi3-run.txt
+./bench/init.sh --verify ~/work/arcagi3 --target arcagi3
+```
+
+Step 5 for `arcagi3` also scores the best committed version on **eight games it has never seen** and,
+if `ARC_API_KEY` is set, against the **official** ARC-AGI-3 games. Both are `SKIP`ped rather than
+faked when unavailable.
+
+## While it runs
+
+```sh
+avo score   --cwd <target> --json | jq .     # what f says right now
+avo best    --cwd <target>                   # what every candidate is ranked against
+avo lineage --cwd <target>                   # P_t, the versions that survived
+touch <target>/.avo/STOP                     # stop the loop cleanly after this turn
+```
+
+There is no `--max-cost` yet (#28). The cost knobs are `--max-iters`, `--timeout`, and `.avo/STOP`.
+
+## When it does not work
+
+| What you see | What it means |
+| --- | --- |
+| `is inside avocode (...)` | you pointed `bench/init.sh` into this checkout. Targets need their own repo — see below |
+| `no such target 'x' (have: ...)` | typo in `--target`; the message lists what exists |
+| `ok:false`, `... not installed in .venv` | `arcagi3` only: you skipped step 2. Run `bench/setup.sh` |
+| `ok:false`, `jq not found` | install `jq`; the scorers pipe through it |
+| `correct:false`, `a protected file changed` | something edited `f`. `git checkout -- <the named path>` |
+| `correct:false`, `the game corpus does not match` | `bench/setup.sh --games-only` restores it |
+| `avo: command not found` inside an agent turn | the `PATH` export above, or `./install.sh` |
+| `avo run` exits having done nothing | no agent on `PATH`, or one that asks for permission — `avo doctor` |
+| the curve is flat | that is the agent, not `f`: both targets ship a measured ladder proving headroom |
+
+**Never materialize a target inside this checkout.** `avo commit` writes `Avo-Version` commits into
+the repo it is pointed at, so a target living here would put the loop's entire lineage into avocode's
+history and score a tree the loop is also editing. `bench/init.sh` refuses it outright.
+
+---
+
 ## `fuzzysearch`
 
 ```sh
