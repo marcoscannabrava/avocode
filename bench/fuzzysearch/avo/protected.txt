@@ -1,0 +1,12 @@
+# PROTECTED -- this file IS part of `f`, and it lists itself: a candidate free to rewrite the list
+# of protected files has no protected files.
+#
+# Every path is where the file lands in the MATERIALIZED target, which is why the scorer appears as
+# `.avo/score` and not `avo/score`. bench/init.sh hashes exactly these into .avo/gate.sha256, and
+# `bench/init.sh --verify` diffs exactly these against the template afterwards.
+bench/reference.js
+bench/corpus.js
+bench/run.js
+test/search.test.js
+.avo/score
+.avo/protected.txt

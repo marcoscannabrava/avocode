@@ -1,4 +1,4 @@
-# avo S9a e2e -- 2026-08-26T03:39:10Z
+# avo S9a e2e -- 2026-08-26T07:52:45Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 # target: bench/fuzzysearch -- thresholded edit-distance retrieval, median ms, lower is better
 
@@ -6,8 +6,8 @@
 $ bench/init.sh $scratch/fuzzysearch -> exit 0
 PASS  materializes into a fresh git repo
 PASS  .avo/score is executable
-PASS  the gate records 5 protected file(s)
-PASS  the baseline is one commit: c6e4d4c fuzzysearch v0: correct and slow
+PASS  the gate records 6 protected file(s)
+PASS  the baseline is one commit: 08239a0 fuzzysearch v0: correct and slow
 PASS  the ladder fixtures are NOT materialized -- the optimizer is not handed the answer
 PASS  refuses a destination inside avocode's own checkout
 PASS  and wrote nothing there
@@ -16,14 +16,14 @@ PASS  --force is byte-identical on an unchanged target (invariant 5)
 PASS  --verify passes on an intact target
 
 ## 2. f on the baseline
-$ .avo/score -> {"ok":true,"correct":true,"primary":1740.201,"unit":"ms","scores":{"small":781.365,"large":2699.037}}
+$ .avo/score -> {"ok":true,"correct":true,"primary":1719.368,"unit":"ms","scores":{"small":771.895,"large":2666.841}}
 PASS  the baseline is ok and correct
 PASS  the metric is ms, lower is better
 PASS  two configs are scored, so the commit rule compares a vector
 PASS  --configs lists them, so avo score --parallel works
 PASS  --config small scores only that config
 PASS  an unknown config is a result, not a crash
-PASS  worst config spread 0.8% is under the 3% floor
+PASS  worst config spread 0.1% is under the 3% floor
 
 ## 3. f refuses to measure itself
 PASS  editing bench/reference.js makes the score incorrect, and names the file
@@ -46,28 +46,28 @@ PASS  a candidate that does not parse is a result, not a crash
 
 ## 5. a scripted optimizer walks the known path
 # each step replaces src/search.js, then avo score + avo commit decide
-  v1 -> v001  primary 154.9485ms   improved
-  v2 -> v002  primary 73.1985ms  large+small improved
-  v3 -> v003  primary 68.8355ms  large improved
-  v4 -> v004  primary 16.729ms  large+small improved
-  v5 -> v005  primary 13.907ms  large+small improved
-  v6 -> v006  primary 0.9335ms  large+small improved
+  v1 -> v001  primary 145.09300000000002ms   improved
+  v2 -> v002  primary 72.60300000000001ms  large+small improved
+  v3 -> v003  primary 67.434ms  large+small improved
+  v4 -> v004  primary 16.693ms  large+small improved
+  v5 -> v005  primary 13.7455ms  large+small improved
+  v6 -> v006  primary 0.931ms  large+small improved
 
   6 committed, 0 refused, of 6 steps
 PASS  at least 5 versions were committed (S9 acceptance: >=5)
 PASS  best score is monotonically non-decreasing across the lineage
-  headroom walked: 1740.201ms -> 0.9335ms = 1864.2x
-PASS  the target has real headroom (1864.2x >= 5x), so a flat curve in S9b is the agent, not f
+  headroom walked: 1719.368ms -> 0.931ms = 1846.8x
+PASS  the target has real headroom (1846.8x >= 5x), so a flat curve in S9b is the agent, not f
 PASS  avo lineage --json reports all 6 of them
 
 ## 6. every committed version reproduces its recorded score
 # S9's second acceptance criterion: a score in the lineage is a measurement, not a claim
-PASS  v1: recorded 153.0925ms, fresh 149.064ms (-2.6%)
-PASS  v2: recorded 74.92150000000001ms, fresh 71.08699999999999ms (-5.1%)
-PASS  v3: recorded 67.621ms, fresh 69.168ms (2.3%)
-PASS  v4: recorded 16.925ms, fresh 16.855ms (-0.4%)
-PASS  v5: recorded 14.362ms, fresh 14.099ms (-1.8%)
-PASS  v6: recorded 0.9245ms, fresh 0.934ms (1%)
+PASS  v1: recorded 142.878ms, fresh 151.236ms (5.8%)
+PASS  v2: recorded 72.15ms, fresh 71.3175ms (-1.2%)
+PASS  v3: recorded 69.4035ms, fresh 67.875ms (-2.2%)
+PASS  v4: recorded 16.8755ms, fresh 16.607ms (-1.6%)
+PASS  v5: recorded 13.7ms, fresh 13.932500000000001ms (1.7%)
+PASS  v6: recorded 0.9295ms, fresh 0.93ms (0.1%)
 
 ## summary
 all checks passed (41 of them)
@@ -78,5 +78,6 @@ ok        bench/corpus.js
 ok        bench/run.js
 ok        test/search.test.js
 ok        .avo/score
+ok        .avo/protected.txt
 
-f is intact: 5 protected file(s) match bench/fuzzysearch.
+f is intact: 6 protected file(s) match bench/fuzzysearch.

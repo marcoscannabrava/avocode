@@ -45,7 +45,12 @@ fi
 manifest="$dest/.avo/runs/$run_id/manifest.json"
 [[ -f "$manifest" ]] || die "no manifest at $manifest"
 
-out="${out:-$root/evidence/s9b-run.txt}"
+# s9b-run.txt is fuzzysearch's by history; any other target gets its own file rather than
+# overwriting it.
+if [[ -z "$out" ]]; then
+  if [[ "$target" == fuzzysearch ]]; then out="$root/evidence/s9b-run.txt"
+  else out="$root/evidence/$target-run.txt"; fi
+fi
 mkdir -p "$(dirname "$out")"
 : > "$out"
 
@@ -124,13 +129,20 @@ else
   fi
   say ""
   say "version  primary      vs v0     vs previous   why"
-  jq -r --argjson base "${base:-null}" '"" as $_ | . as $v | range(0; length) |
+  # The ratio has to know which way is up: for a lower-is-better metric an improvement is
+  # base/current, for a higher-is-better one it is current/base. Printing one formula for both
+  # reports a 1.1x gain as 0.9x, which reads as a regression that did not happen.
+  jq -r --argjson base "${base:-null}" '. as $v
+    | (if ($v[0].score.higher_is_better // false) then 1 else 0 end) as $hib
+    | def ratio($from; $to): if $from == null or $from == 0 or $to == 0 then "-"
+        else (((if $hib == 1 then $to / $from else $from / $to end) * 100 | round) / 100 | tostring) + "x" end;
+      range(0; length) |
     $v[.] as $cur
     | (if . == 0 then $base else $v[.-1].score.primary end) as $prev
     | "v" + ($cur.version|tostring)
-      + "       " + (($cur.score.primary * 1000 | round) / 1000 | tostring) + ($cur.score.unit // "")
-      + "   " + (if $base == null then "-" else (($base / $cur.score.primary * 10 | round) / 10 | tostring) + "x" end)
-      + "   " + (if $prev == null then "-" else (($prev / $cur.score.primary * 100 | round) / 100 | tostring) + "x" end)
+      + "       " + (($cur.score.primary * 1000 | round) / 1000 | tostring) + " " + ($cur.score.unit // "")
+      + "   " + ratio($base; $cur.score.primary)
+      + "   " + ratio($prev; $cur.score.primary)
       + "   " + (($cur.why // "") | split("\n")[0][0:64])' <<<"$lineage" | tee -a "$out"
   say ""
   say "per-config:"
@@ -165,6 +177,8 @@ say "## 4. criterion 2 — every committed version reproduces its recorded score
 say "# a score in the lineage is a measurement, not a claim"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"; git -C "$dest" worktree prune 2>/dev/null' EXIT
+# The unit comes from the lineage; hardcoding "ms" here reported an arcagi3 level count as "0.32ms".
+unit="$(jq -r 'if length > 0 then (" " + (.[0].score.unit // "")) else "" end' <<<"$lineage")"
 # Not a pipeline: `bad` in a subshell would increment a copy of $fails and every failure here would
 # be printed and then silently dropped.
 while read -r n sha recorded; do
@@ -184,9 +198,9 @@ while read -r n sha recorded; do
   # code that earned the score, on a machine that may be doing something else. A gamed or empty
   # version is off by orders of magnitude, not by a scheduler hiccup.
   if awk -v d="$abs" 'BEGIN {exit !(d <= 50)}'; then
-    ok "v$n: recorded ${recorded}ms, fresh ${fresh}ms (${drift}%)"
+    ok "v$n: recorded ${recorded}${unit}, fresh ${fresh}${unit} (${drift}%)"
   else
-    bad "v$n: recorded ${recorded}ms but re-scores at ${fresh}ms (${drift}%)"
+    bad "v$n: recorded ${recorded}${unit} but re-scores at ${fresh}${unit} (${drift}%)"
   fi
 done < <(jq -r '.[] | "\(.version) \(.sha) \(.score.primary)"' <<<"$lineage")
 say ""
@@ -202,8 +216,77 @@ printf '%s\n' "$verify_out" | sed 's/^/  /'
 if (( verify_rc == 0 )); then ok "bench/init.sh --verify clean"; else bad "f drifted — the curve above means nothing"; fi
 say ""
 
-# ================================================================ 6. verdict
-say "## 6. verdict"
+# ================================================================ 6. the holdout
+# Only for targets that ship one. `f` measures games that live inside the target repo, so it cannot
+# distinguish a candidate that learned the task from one that memorised the fixtures. This is the
+# same policy, the same harness, different games.
+holdout="$root/test/fixtures/$target/score-holdout.sh"
+if [[ -x "$holdout" ]]; then
+  say "## 6. the holdout — games the target has never seen"
+  say "# a large train/holdout gap is memorisation; it is reported either way, because the number is"
+  say "# the point even when it is not a failure"
+  # Score the BEST COMMITTED version, not the working tree. After a run the tree holds the last
+  # attempt, which is usually the one that was just refused -- scoring that reported a holdout number
+  # for a policy the lineage had rejected, and compared it against a different policy's train score.
+  best_sha="$(avo best --cwd "$dest" --json 2>/dev/null | jq -r '.sha // empty')"
+  hold_wt="$scratch/holdout-best"
+  hold=""
+  if [[ -n "$best_sha" ]] && git -C "$dest" worktree add -q --detach "$hold_wt" "$best_sha" 2>/dev/null; then
+    # The worktree has no venv of its own; the corpus comes from --games-dir, so this is all it needs.
+    ln -s "$(cd "$dest/.venv" && pwd -P)" "$hold_wt/.venv" 2>/dev/null
+    hold="$("$holdout" "$hold_wt" --json 2>&1)"
+    git -C "$dest" worktree remove --force "$hold_wt" 2>/dev/null
+  else
+    hold="could not check out the best version ($best_sha) to score it"
+  fi
+  if jq -e 'has("primary")' >/dev/null 2>&1 <<<"$hold"; then
+    train="$(jq -r 'last | .score.primary // empty' <<<"$lineage" 2>/dev/null)"
+    hp="$(jq -r '.primary' <<<"$hold")"
+    say "train (best committed)  ${train:-unknown}"
+    say "holdout                 $hp  over $(jq -r '.games' <<<"$hold") games"
+    jq -r '.scores | to_entries[] | "  \(.key)  \(.value)"' <<<"$hold" | tee -a "$out"
+    if [[ -n "$train" ]]; then
+      # Relative, because the two corpora have different achievable ceilings; the sign is what reads.
+      gap="$(jq -n --argjson t "$train" --argjson h "$hp" \
+        'if $t == 0 then 0 else (($t - $h) / $t * 1000 | round) / 10 end')"
+      say "gap                     ${gap}% of train"
+      ok "holdout measured (gap ${gap}%)"
+    else
+      ok "holdout measured ($hp)"
+    fi
+  else
+    bad "the holdout did not run: $(printf '%s' "$hold" | tail -n 3)"
+  fi
+  say ""
+fi
+
+# ================================================================ 7. the official games
+api="$root/test/fixtures/$target/score-api.sh"
+if [[ -x "$api" ]]; then
+  say "## 7. the official ARC-AGI-3 games"
+  if [[ -z "${ARC_API_KEY:-}" ]]; then
+    say "SKIP  ARC_API_KEY is not set — the offline curve above stands, but nothing here was measured"
+    say "      against the real benchmark"
+  else
+    say "# the network, once, on the best version only"
+    apiout="$("$api" "$dest" --json 2>&1)"
+    if jq -e 'has("card_id")' >/dev/null 2>&1 <<<"$apiout"; then
+      jq -r '"scorecard       \(.card_id)",
+             "url             \(.url)",
+             "official score  \(.official_score // "not reported")",
+             "levels          \(.total_levels_completed // "?") in \(.total_actions // "?") actions"' \
+        <<<"$apiout" | tee -a "$out"
+      ok "an official scorecard was earned"
+    else
+      # Not a FAIL: the API being unreachable says nothing about the candidate.
+      say "SKIP  the API run did not complete: $(printf '%s' "$apiout" | tail -n 2)"
+    fi
+  fi
+  say ""
+fi
+
+# ================================================================ 8. verdict
+say "## 8. verdict"
 if (( fails == 0 )); then
   say "all checks passed ($(grep -c '^PASS' "$out") of them)"
 else

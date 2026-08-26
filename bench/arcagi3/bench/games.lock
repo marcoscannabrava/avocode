@@ -1,0 +1,26 @@
+# PROTECTED -- the pinned game corpus. bench/setup.sh fetches and verifies against it, and
+# .avo/score re-verifies on every scoring run. A game file that changes changes what f measures.
+#
+# upstream  https://github.com/theredbluepill/arc-interactive (MIT)
+# commit    b6cbf21a36f029882b72c702bbbfd45455ce330d
+#
+31c69c9411fe3d07b4c0c39ad6b9af23bcb778fdcde58b90a13d98dcc2a14413  bench/games/ez02/63be02fb/ez02.py
+897c8af7dba649136639bef8053462103a54322b8aa59a0865b2d73ca4a243c1  bench/games/ez02/63be02fb/metadata.json
+f6f95f8a834e64c92fffd0251285884d56df38b563a0583e991b65581703c94d  bench/games/tt01/63be02fb/metadata.json
+d54581214dd5a76b9140334ac12e44c720a0dddd96c20dbd1afcd44e5fbe39f9  bench/games/tt01/63be02fb/tt01.py
+a09d7232d7193407be4cd99af4ed6fe5f51495a2740b4f5465291813d213a89e  bench/games/va01/63be02fb/metadata.json
+a15370fe925e65ed80fc7bd5c07d84c6dda651d2f275b11d45e9aa2e35f61f09  bench/games/va01/63be02fb/va01.py
+ad589f242d72d124b3c7f404b102334fd791e2682272291870c7cb95d58a8844  bench/games/ul01/63be02fb/metadata.json
+d0712045e84c1833f4e985bcbcff291263f5bf251403de6352b7a9ed27b7ac97  bench/games/ul01/63be02fb/ul01.py
+8c6f52a85d5ce605904e9290780dcf0c13170c11376c333cfb869767af75c141  bench/games/fs01/63be02fb/fs01.py
+0555f3f4451752d426809c7ed920a45186346a9d66313099229b3861143e2949  bench/games/fs01/63be02fb/metadata.json
+f66452e5a34ee29bc9a7424d8beb3d24afa3a2a441081d7fcee111e371449ec7  bench/games/tp01/63be02fb/metadata.json
+fdcfddceafd0216f4cfbf4c5b41d9682a5b8c1c6f80ed578a2ec9aa0aa0cb91d  bench/games/tp01/63be02fb/tp01.py
+6209f912301f1f5ad724a690596b8c68304da2b719c8a46ab25b5473a8a9ad36  bench/games/nw01/63be02fb/metadata.json
+7b08e366d180f2ffe7454fb1dbb5202cc48ac04733e625bce4ded95a8ee51e46  bench/games/nw01/63be02fb/nw01.py
+b3d9467945b03f5259366e668ca3ea4ec86a3c5d62cbdf972b082cd723ebdc15  bench/games/mm01/63be02fb/metadata.json
+0ac57e05608ed9255461c43d76d091007e37da805692306c2ec202ba4398fd47  bench/games/mm01/63be02fb/mm01.py
+fa507bb051384513f7b1293620bedd2f33006d4c183907af6a704d719a974830  bench/games/ff01/63be02fb/ff01.py
+6692861885deafdb038e723b5a5a27484598db6325a47a6b9f92445dbd3fe08e  bench/games/ff01/63be02fb/metadata.json
+611434433916d8946d9dbb5df2f632dc34af1d7c5297ad2717332a70ee66e803  bench/games/ff03/63be02fb/ff03.py
+a868c913b5ccc956b0ba41517e7be7826ec0cb86be64db1f7a27cb4ce6daac5f  bench/games/ff03/63be02fb/metadata.json

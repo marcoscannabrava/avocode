@@ -59,6 +59,10 @@ agent changes the code  →  avo score  →  avo commit  →  avo supervise  →
 `avo run --agent claude` committed four versions for a **5255x** speedup — including a technique
 the hand-written reference ladder does not contain.
 
+**Try that yourself:** two ready-made targets live in [`bench/`](bench/README.md) — a speed problem
+and an ARC-AGI-3 agent — with a copy-pasteable runbook in
+**[docs/bench.md § How to run one](docs/bench.md#how-to-run-one)**.
+
 ---
 
 ## Install (2 minutes)

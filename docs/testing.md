@@ -60,6 +60,7 @@ user-facing behavior is backed by a file showing the commands and their output.
 | `e2e-run.sh` | the continuous loop, its manifest, token accounting, the stop conditions |
 | `e2e-pi.sh` | the native pi tools and the supervisor extension |
 | `e2e-bench.sh` | replays the six-step ladder through `avo score`/`avo commit` — the headroom proof |
+| `e2e-arcagi3.sh` | the ARC-AGI-3 target: the target-aware protected manifest, `f`'s gates and sandbox, and its two-rung ladder. The half that needs the python toolkit is `SKIP`ped unless `ARCAGI3_TARGET` names a set-up target, so CI never installs a game engine |
 | `e2e-lint.sh` | the lint gate itself: every assertion is about it going **red** |
 
 ## The lint gate is deliberately unskippable

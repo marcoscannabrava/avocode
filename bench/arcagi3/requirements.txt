@@ -1,0 +1,4 @@
+# PROTECTED -- this file is part of `f`. The toolkit version decides what the games do, so it is
+# pinned: an upgrade that changes the engine changes every score in the lineage.
+arc-agi==0.9.9
+arcengine==0.9.3

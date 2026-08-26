@@ -38,9 +38,20 @@ done
 src="$root/bench/$target"
 [[ -d "$src" ]] || die "no such target '$target' (have: $(cd "$root/bench" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f ' ))"
 
-# The protected set: every file that is part of `f`. `avo/score` is listed at its materialized path
-# because that is where the hash has to match.
-protected=(bench/reference.js bench/corpus.js bench/run.js test/search.test.js .avo/score)
+# The protected set: every file that is part of `f`, at its MATERIALIZED path -- that is where the
+# hash has to match. Each target declares its own in `avo/protected.txt`, one path per line, because
+# a hardcoded list here can only ever describe one target. The manifest lists itself: it is part of
+# `f` too, and a candidate that may rewrite the list of protected files has no protected files.
+protected=()
+manifest="$src/avo/protected.txt"
+[[ -f "$manifest" ]] || die "bench/$target has no avo/protected.txt, so nothing about its f is protected"
+while read -r line; do
+  line="${line%%#*}"                       # strip comments
+  line="${line#"${line%%[![:space:]]*}"}"  # and surrounding whitespace
+  line="${line%"${line##*[![:space:]]}"}"
+  [[ -n "$line" ]] && protected+=("$line")
+done < "$manifest"
+[[ ${#protected[@]} -gt 0 ]] || die "bench/$target/avo/protected.txt lists no files"
 
 # Template path -> materialized path. Only `avo/` moves, so that the template dir stays greppable
 # and does not collide with an `.avo` of avocode's own.
@@ -106,12 +117,18 @@ if [[ ! -d "$abs_dest/.git" ]]; then
   git -C "$abs_dest" config user.email "avo@example.com"
   git -C "$abs_dest" config user.name "avo bench"
 fi
-printf 'node_modules/\n' > "$abs_dest/.gitignore"
+# Only write a default when the template did not ship one -- a python target needs .venv/, not
+# node_modules/, and the template is the only thing that knows which.
+[[ -f "$abs_dest/.gitignore" ]] || printf 'node_modules/\n' > "$abs_dest/.gitignore"
 git -C "$abs_dest" add -A
 if [[ -n "$(git -C "$abs_dest" status --porcelain)" ]]; then
-  git -C "$abs_dest" commit -qm "$target v0: correct and slow
+  if [[ -f "$src/avo/baseline-msg.txt" ]]; then
+    git -C "$abs_dest" commit -qF "$src/avo/baseline-msg.txt"
+  else
+    git -C "$abs_dest" commit -qm "$target v0: correct and slow
 
 The baseline. src/search.js is the candidate; everything hashed in .avo/gate.sha256 is f."
+  fi
 fi
 
 cat <<EOF

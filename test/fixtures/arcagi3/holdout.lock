@@ -1,0 +1,22 @@
+# The HOLDOUT corpus: games the target never sees. Same upstream commit as the training
+# corpus in bench/arcagi3/bench/games.lock, so the two are measured against the same engine.
+#
+# upstream  https://github.com/theredbluepill/arc-interactive (MIT)
+# commit    b6cbf21a36f029882b72c702bbbfd45455ce330d
+#
+323233a053194d51214bc9cb7826e21badff8655c098b305dce1c864b5f6994d  bench/games/ez04/63be02fb/ez04.py
+12def59902bd71b7bf40627de0a809ad6da7da6b6750c1f8d08494d1cd17385a  bench/games/ez04/63be02fb/metadata.json
+2426cb935794671c7f0b40328d7985c1c25f742d7672e6e3f76cf867fac40d3a  bench/games/fs03/63be02fb/fs03.py
+ab87e355aa0d7a6df1695eaf2a8fd292778b96178f5712af04a338b79ce7f380  bench/games/fs03/63be02fb/metadata.json
+7f59291144db39556f8146722c3de3f9bcf1b481cd447ac6923b8d5de4061568  bench/games/tp02/63be02fb/metadata.json
+f804dc993352377dc22d4dbbb7e36f59b85364a334721992bad99e453095c442  bench/games/tp02/63be02fb/tp02.py
+99b0365276b1a5199c823c1b0a291ca886680f3d4489af02471306b8cb422ce5  bench/games/bd01/63be02fb/bd01.py
+90e326c2eb5fc3a33c1e697d06e339f96e2a467f639a3f25f6152a890da08b42  bench/games/bd01/63be02fb/metadata.json
+cbfb75bf5a3bee4df390b5c5aad38838329d1b535766ecc3393d89b376a4ccb8  bench/games/sv01/63be02fb/metadata.json
+d0d03dd9da2ed0a612be27754d87c9d1888b66d602d84026bcafc2c41b1740df  bench/games/sv01/63be02fb/sv01.py
+dc20b08198b8f8a164c91155d89e2b0bdde8d71201b8efb11995684d872d98c6  bench/games/pb01/63be02fb/metadata.json
+195c068d1e8ec9bd38fd200ed7c6c18bd43d5582a19d9bef479319dba996a298  bench/games/pb01/63be02fb/pb01.py
+95bfff55063e06644b84658d0d0f9c9f6571a19bd8c5f9f6bf676f3e4027d6eb  bench/games/cs01/v1/cs01.py
+c5f98bdf1f480379cd96ad863b3c4012bfe69e326bc47cf23e5fe45faadb644c  bench/games/cs01/v1/metadata.json
+093f1eb0a76f25ed62c982c80671c71976dae90ba603ec6a5f7e5ccc9637065c  bench/games/mm02/63be02fb/metadata.json
+35ee85e1328239dea21e142cfb0049a118077c0bbd15df5c4dec7d3a6cc8218a  bench/games/mm02/63be02fb/mm02.py

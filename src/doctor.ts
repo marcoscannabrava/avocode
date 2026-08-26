@@ -70,6 +70,7 @@ export const KEYS: readonly { name: string; why: string }[] = [
   { name: "GROQ_API_KEY", why: "small probe model for avo fan (S6)" },
   { name: "CEREBRAS_API_KEY", why: "small probe model for avo fan (S6)" },
   { name: "OPENROUTER_API_KEY", why: "small probe model for avo fan (S6)" },
+  { name: "ARC_API_KEY", why: "the official ARC-AGI-3 games, for verifying a bench/arcagi3 run; the offline f never needs it" },
 ];
 
 /** Real prober: runs `<name> --version` and keeps the first line. */

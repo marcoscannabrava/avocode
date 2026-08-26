@@ -9,6 +9,7 @@ One document per question. Start with whichever one you actually have.
 | **look up a command** — every flag, every exit code | [commands.md](commands.md) |
 | **wire my agent to it** — skills, `avo install`, the pi extensions | [agents.md](agents.md) |
 | **run the tests** | [testing.md](testing.md) |
+| **run a bench target end to end** — the runbook, prerequisites, troubleshooting | [bench.md#how-to-run-one](bench.md#how-to-run-one) |
 | **point the loop at a real target** and judge the curve | [bench.md](bench.md) |
 | **write a scorer** — the `f` authoring guide | [../templates/score/README.md](../templates/score/README.md) |
 | **see the plan** — slice order, invariants, open questions | [../PLAN.md](../PLAN.md) |
