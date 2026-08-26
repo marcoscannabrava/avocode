@@ -2,6 +2,10 @@
 
 default: check
 
+# Install: dependencies + `avo` linked into ~/.local/bin (override with AVO_BIN_DIR).
+install:
+    ./install.sh
+
 # The Ralph health check: everything that must be green before any task starts.
 check: lint typecheck test
 
@@ -31,6 +35,7 @@ e2e:
     ./test/e2e-pi.sh
     ./test/e2e-bench.sh
     ./test/e2e-lint.sh
+    ./test/e2e-install-sh.sh
 
 # Everything, including the slow end-to-end pass.
 all: check e2e

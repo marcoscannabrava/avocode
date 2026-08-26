@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-08-25T23:25:00Z
+# avo S7b e2e — 2026-08-26T03:41:48Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD b2eaddc2, a stub agent and an f that counts lines
+PASS  repo at HEAD 5229af0a, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-84c08e5a)
+PASS  the injected directive is recorded (avo-intervention-901c6379)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive

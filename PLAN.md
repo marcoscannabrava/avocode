@@ -12,7 +12,7 @@
 
 ## 1. What we are building
 
-The [AVO paper](avo-paper.md) replaces classical evolutionary variation operators with an
+The [AVO paper](docs/avo-paper.md) replaces classical evolutionary variation operators with an
 autonomous coding agent: `Vary(P_t) = Agent(P_t, K, f)`. Its result (SOTA attention kernels on
 B200) is domain-specific; its **harness** is not. `avocode` extracts that harness and makes it
 general and agent-agnostic.
@@ -71,7 +71,7 @@ Validated prior art we copy the *pattern* from, not the code: `mjakl/pi-subagent
 **child `pi` processes in headless mode** — OS-level isolation, no shared state, depth + cycle
 guards. `avo fan` does the same with a configurable command template, so it drives `pi`,
 `claude -p`, `codex exec`, or anything else. (`pi-subagents`/`pi-crew` explicitly ruled out by
-[avo-pi.md](avo-pi.md); we take inspiration only.)
+[avo-pi.md](docs/avo-pi.md); we take inspiration only.)
 
 ### Deliberately rejected
 
@@ -89,7 +89,9 @@ guards. `avo fan` does the same with a configurable command template, so it driv
 
 ```
 avocode/
-  bin/avo                  # single entrypoint, dispatches subcommands
+  bin/avo                  # single entrypoint; walks its own symlink chain, then dispatches
+  install.sh               # deps + `avo` linked onto PATH; idempotent, --force/--uninstall
+  docs/                    # install, architecture, commands, agents, testing, bench, meta-loop
   src/
     cli.ts                 # dispatcher
     score.ts               # f  — run + validate .avo/score
@@ -885,7 +887,7 @@ MAP-Elites archive gets a second look — read it, don't depend on it.
   removed either way, or it would litter the working tree with files `avo commit` reads as a
   variation.
 - **Q3 (S7):** stall threshold N — the paper doesn't publish theirs. Start at 5 (the value in
-  [avo-pi.md](avo-pi.md)'s sketch), make it configurable, tune with S9 evidence. **Still open, and
+  [avo-pi.md](docs/avo-pi.md)'s sketch), make it configurable, tune with S9 evidence. **Still open, and
   sharper after S9b-1:** in a 6-iteration run the supervisor fired **zero** times, because
   `since_best` never got past 2 — a target with 5000x of headroom is improved faster than a stall
   detector can notice one. The threshold has to be tuned at the *converged* end, where real wins

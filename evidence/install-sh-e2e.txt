@@ -1,0 +1,52 @@
+# install.sh e2e — 2026-08-26T03:36:41Z
+# node v22.14.0, bin-dir /tmp/tmp.ebD1QPYM7C/bin
+
+$ ./install.sh --bin-dir <sandbox> --skip-doctor -> exit 0
+    
+    avocode installer (/home/marcos/code/avocode)
+    
+      found        node v22.14.0
+      found        npm 10.9.2
+      found        git version 2.55.0
+    
+    dependencies
+      unchanged    node_modules (npm install was a no-op or a top-up)
+      found        tsx tsx v4.23.12
+    
+    avo on PATH
+      created      /tmp/tmp.ebD1QPYM7C/bin/avo -> /home/marcos/code/avocode/bin/avo
+      works        avo 0.1.0
+    
+    Installed, but /tmp/tmp.ebD1QPYM7C/bin is not on your PATH.
+    
+      Add this to ~/.zshrc, then open a new shell:
+    
+        export PATH="/tmp/tmp.ebD1QPYM7C/bin:$PATH"
+    
+    Next:  avo init      in the repo you want to optimize
+           avo install   wire your coding agent to avo's skills
+           avo --help    every subcommand
+PASS  first install exits 0
+PASS  created a symlink at <bin>/avo
+PASS  link points into this checkout
+PASS  reports 'created'
+$ (cd <elsewhere> && <bin>/avo --version) -> 0.1.0 (exit 0)
+PASS  avo runs through the link from outside the checkout
+$ ./install.sh (again) -> exit 0
+PASS  second install exits 0
+PASS  second install reports the link 'unchanged'
+PASS  second install created nothing
+$ ./install.sh with a foreign link in the way -> exit 1
+PASS  refuses a foreign link and names --force
+PASS  left the foreign link alone
+$ ./install.sh --force -> exit 0
+PASS  --force replaces the link
+$ ./install.sh --uninstall -> exit 0
+PASS  --uninstall removes the link
+PASS  --uninstall did not touch the checkout
+$ ./install.sh --uninstall with a foreign link -> skipped?
+PASS  --uninstall leaves a foreign avo alone
+$ ./install.sh --frobnicate -> exit 2
+PASS  unknown option exits 2
+
+install.sh e2e: all checks passed

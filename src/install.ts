@@ -173,7 +173,7 @@ export function renderAgentsBlock(skills: readonly Skill[]): string {
     "",
     "## avocode",
     "",
-    "This repo is an [avocode](https://github.com/mcannabrava/avocode) optimization loop: a scorer",
+    "This repo is an [avocode](https://github.com/marcoscannabrava/avocode) optimization loop: a scorer",
     "`.avo/score` defines what better means, and a committed lineage of versions records every",
     "improvement. Some rules always apply here.",
     "",

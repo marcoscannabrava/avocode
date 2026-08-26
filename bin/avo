@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 # avo entrypoint. Runs the TypeScript CLI through tsx, no build step.
 set -euo pipefail
-root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Walk the symlink chain before resolving the checkout root. `install.sh` links this file into
+# a directory on PATH, so ${BASH_SOURCE[0]} is usually ~/.local/bin/avo — taking its dirname
+# without following the link would look for src/ next to the link instead of in the checkout.
+# Done by hand rather than with `readlink -f`, which BSD/macOS did not have until 12.3.
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+  dir="$(cd -P -- "$(dirname -- "$src")" && pwd)"
+  src="$(readlink -- "$src")"
+  [[ "$src" == /* ]] || src="$dir/$src"
+done
+root="$(cd -P -- "$(dirname -- "$src")/.." && pwd)"
+
 tsx="$root/node_modules/.bin/tsx"
 if [[ ! -x "$tsx" ]]; then
-  echo "avo: $tsx not found — run 'npm install' in $root" >&2
+  echo "avo: $tsx not found — run './install.sh' or 'npm install' in $root" >&2
   exit 127
 fi
 exec "$tsx" "$root/src/main.ts" "$@"
