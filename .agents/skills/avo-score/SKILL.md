@@ -6,10 +6,10 @@ description: The `f` contract in avocode — run `avo score` to measure a candid
 # avo score — the `f` contract
 
 `f` is a single executable, `.avo/score`, run from the repo root. It is the only thing that decides
-whether a candidate is better, so it is frozen: change its *meaning* and every earlier version in
-the lineage becomes incomparable.
+whether a candidate is better, so it is frozen: change its *meaning* and every earlier version in the
+lineage becomes incomparable.
 
-## Running it
+## Run it
 
 ```bash
 avo score                    # human-readable
@@ -18,8 +18,8 @@ avo score --parallel         # fan the configs out concurrently (needs `--config
 avo score --timeout 600      # kill a runaway scorer after 600s
 ```
 
-Exit codes: `0` pass, `1` ran but failed (a real measurement — a failing candidate), `2` harness
-error (no scorer, malformed output, timeout — fix the harness, not the candidate).
+Exit codes: `0` pass, `1` ran but failed (a real measurement — a failing candidate), `2` harness error
+(no scorer, malformed output, timeout — fix the harness, not the candidate).
 
 Every run appends one attempt to `.avo/attempts.jsonl`. **Attempts are not commits**; the log is
 gitignored trajectory, not lineage.
@@ -27,7 +27,7 @@ gitignored trajectory, not lineage.
 ## The contract
 
 `.avo/score` prints **one line of JSON to stdout** and should **always exit 0** — a failure belongs
-*in* the JSON so you receive a diagnosable payload instead of a crash.
+*in* the JSON, so you receive a diagnosable payload instead of a crash.
 
 ```json
 {"ok":true,"correct":true,"primary":1668.2,"unit":"TFLOPS","higher_is_better":true,
@@ -45,15 +45,15 @@ gitignored trajectory, not lineage.
 | `log` | no | build/test output, for diagnosis |
 | `duration_s` | no | wall-clock of the scoring run |
 
-Unknown fields are allowed but warned about, so a misspelled `higherIsBetter` reads as both
-"required field missing" and "unknown field".
+Unknown fields are allowed but warned about, so a misspelled `higherIsBetter` reads as both "required
+field missing" and "unknown field".
 
-**`ok:false` or `correct:false` ⇒ `primary` becomes `null`**, whatever was measured. `null`, not
-zero, because zero is the *best* value for a lower-is-better metric and so cannot also mean failure.
+**`ok:false` or `correct:false` ⇒ `primary` becomes `null`**, whatever was measured. `null`, not zero,
+because zero is the *best* value for a lower-is-better metric and so cannot also mean failure.
 `avo score` adds a `normalized` field — `primary` flipped so higher is always better — so nothing
 downstream branches on direction.
 
-## Scaffolding one
+## Scaffold one
 
 ```bash
 avo score --init hyperfine     # wall-clock benchmark
@@ -62,11 +62,11 @@ avo score --init vitest        # js/ts test pass rate
 avo init --scorer hyperfine    # same thing, during setup
 ```
 
-`--init` writes a commented, working scorer — that is the authoring guide in executable form, so
-read the file it produces. Start from a template rather than hand-rolling: the failure sentinel
-(`primary: null`, not `0`) and the "always exit 0" rule are what hand-rolled scorers get wrong.
-`avo score --init <t> --force` replaces an existing one. The full prose guide lives at
-`templates/score/README.md` in the avocode checkout.
+`--init` writes a commented, working scorer — the authoring guide in executable form, so read the file
+it produces. Start from a template rather than hand-rolling: the failure sentinel (`primary: null`,
+not `0`) and the "always exit 0" rule are what hand-rolled scorers get wrong. `avo score --init <t>
+--force` replaces an existing one. The full prose guide is at `templates/score/README.md` in the
+avocode checkout.
 
 ## Parallel configs (optional)
 
@@ -77,13 +77,13 @@ Implement two extra invocations and `avo score --parallel` works:
 .avo/score --config b1_s4096   # score just that one; same JSON shape
 ```
 
-Anything else on `--configs` stdout means "unsupported" and degrades to one serial run with a
-warning. Declaring `configs` in `.avo/config.json` skips the probe entirely, saving a scoring run.
+Anything else on `--configs` stdout means "unsupported" and degrades to one serial run with a warning.
+Declaring `configs` in `.avo/config.json` skips the probe entirely, saving a scoring run.
 
 ## Authoring rules
 
-- **Measure the thing you actually want.** The lineage is monotone in `f` and nothing else. If `f`
-  is wall-clock on one input size, that is exactly what will get optimized, correctness gate aside.
+- **Measure the thing you actually want.** The lineage is monotone in `f` and nothing else. If `f` is
+  wall-clock on one input size, that is exactly what gets optimized, correctness gate aside.
 - **Make `correct` strict and cheap.** It runs on every attempt and it is the only thing standing
   between the loop and a fast wrong answer.
 - **Be deterministic, or set a `floor`.** Noise commits noise. `.avo/config.json`'s `floor` is a

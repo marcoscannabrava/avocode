@@ -14,8 +14,8 @@ export const CLAUDE_SKILLS = ".claude/skills";
 export const PI_SETTINGS = ".pi/settings.json";
 /**
  * The project-local extensions Pi discovers, by directory name. Two, not one: `avo` registers the
- * tools and `avo-supervisor` steers a stalling session, and an operator already running `avo run`
- * wants the first without the second. Linking both is the default because the pair is the point.
+ * tools, `avo-supervisor` steers a stalling session, and an operator already running `avo run`
+ * wants the first alone. Both are linked by default because the pair is the point.
  */
 export const PI_EXTENSION_NAMES: readonly string[] = ["avo", "avo-supervisor"];
 /** Where Pi auto-discovers a project-local extension: `.pi/extensions/<name>/index.ts`. */
@@ -30,9 +30,8 @@ export const BEGIN_MARKER = "<!-- BEGIN avo: managed by `avo install`, edits ins
 export const END_MARKER = "<!-- END avo -->";
 
 /**
- * Pi's standard built-ins plus `grep`/`find`/`ls`. `bash` is the one that matters: avo, `bd` and
- * `qmd` are CLIs, which is what makes the harness agent-agnostic (PLAN §2) — an agent without
- * `bash` cannot drive any of it.
+ * Pi's built-ins plus `grep`/`find`/`ls`. `bash` is the one that matters: avo, `bd` and `qmd` are
+ * CLIs, which is what makes the harness agent-agnostic (PLAN §2).
  */
 export const PI_DEFAULT_TOOLS: readonly string[] = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
@@ -66,8 +65,7 @@ export function parseInstallArgs(argv: readonly string[]): InstallOptions | { er
       if (v === undefined) return { error: `avo install: ${a} needs a value` };
       if (a === "--cwd") opts.cwd = v;
       else {
-        // Repeatable and comma-separated, so `--agent pi --agent codex` and `--agent pi,codex` both
-        // work; the first `--agent` replaces the default of all three.
+        // Repeatable and comma-separated; the first `--agent` replaces the default of all three.
         const names: AgentName[] = [];
         for (const part of v.split(",").map((s) => s.trim())) {
           if (part === "all") names.push(...AGENT_NAMES);
@@ -91,9 +89,8 @@ export function parseInstallArgs(argv: readonly string[]): InstallOptions | { er
 export type LinkState = "absent" | "match" | "other-link" | "directory" | "file";
 
 /**
- * What is at `linkPath`, relative to the link we want there. `match` compares the resolved targets
- * rather than the raw link text, so an equivalent absolute link counts as already-correct instead of
- * being needlessly rewritten.
+ * What is at `linkPath`, relative to the link we want. `match` compares resolved targets, not raw
+ * link text, so an equivalent absolute link counts as already-correct.
  */
 export function linkState(linkPath: string, wantTarget: string): LinkState {
   let st;
@@ -108,7 +105,7 @@ export function linkState(linkPath: string, wantTarget: string): LinkState {
     try {
       if (realpathSync(linkPath) === realpathSync(resolve(dirname(linkPath), wantTarget))) return "match";
     } catch {
-      // A dangling link, or a want-target that does not exist yet: not a match, and safe to replace.
+      // A dangling link or a not-yet-existing target: no match, safe to replace.
     }
     return "other-link";
   }
@@ -139,10 +136,9 @@ function ensureLink(linkPath: string, wantTarget: string, force: boolean): { act
 /**
  * Where a link at `fromDir` should point to reach `to`.
  *
- * Relative when both ends live under the same repo, so the pair survives being cloned or moved
- * wholesale. Absolute when they do not: a relative link reaching *out* of the repo encodes the
- * repo's own location, which breaks the moment the repo is checked out somewhere else — including
- * into the git worktrees `avo fan` will create.
+ * Relative when both ends are in one repo, so the pair survives a clone or a move. Absolute
+ * otherwise: a relative link reaching *out* encodes the repo's own location, which breaks on
+ * checkout elsewhere — including into the worktrees `avo fan` creates.
  */
 export function linkTargetFor(cwd: string, fromDir: string, to: string): string {
   const inside = !relative(cwd, to).startsWith("..");
@@ -163,9 +159,8 @@ function linkEachSkill(cwd: string, intoDir: string, sourceDir: string, skills: 
 // ---------------------------------------------------------------------------
 
 /**
- * The always-on rules, plus a skills index. The index exists for Codex, which has no skill
- * discovery mechanism at all — for it, "wiring" means naming the files and what each is for, so the
- * agent can `read` the right one. Pi and Claude Code get the same table for free.
+ * Always-on rules plus a skills index. Codex has no skill discovery, so naming the files IS its
+ * wiring; pi and Claude Code get the table for free.
  */
 export function renderAgentsBlock(skills: readonly Skill[]): string {
   const lines = [
@@ -173,24 +168,23 @@ export function renderAgentsBlock(skills: readonly Skill[]): string {
     "",
     "## avocode",
     "",
-    "This repo is an [avocode](https://github.com/marcoscannabrava/avocode) optimization loop: a scorer",
-    "`.avo/score` defines what better means, and a committed lineage of versions records every",
-    "improvement. Some rules always apply here.",
+    "This repo is an [avocode](https://github.com/marcoscannabrava/avocode) optimization loop:",
+    "`.avo/score` defines what better means, and a committed lineage records every improvement.",
+    "These rules always apply here.",
     "",
     "- **`avo commit` is the only thing that persists a version.** Never hand-write a version commit,",
     "  never edit `lineage/`, and never edit `.avo/score` to make a candidate pass.",
     "- **Measure before you claim.** `avo score --json` is the only evidence that a change helped.",
-    "- **Read the past before you vary.** `avo mem prime`, `avo best`, and",
+    "- **Read the past before you vary.** `avo mem prime`, `avo best` and",
     '  `avo know query "<idea>"` cost one command each and hold what earlier sessions learned.',
-    "- **Record what you learn.** `avo mem add \"<insight>\"` — especially dead ends. A refusal you do",
-    "  not write down is a refusal the next session earns again.",
+    "- **Record what you learn.** `avo mem add \"<insight>\"` — especially dead ends. An unrecorded",
+    "  refusal is one the next session earns again.",
     "- **Use `bd` for task state, never markdown TODO lists.** `bd create`, `bd ready`, `bd close`.",
-    "  Markdown checklists are exactly what beads exists to replace, and they do not survive a",
-    "  session boundary.",
+    "  Markdown checklists are what beads exists to replace, and they do not survive a session.",
     "",
     "### Skills",
     "",
-    `Full instructions live in \`${SKILLS_DIR}/<name>/${SKILL_FILE}\`. Read the one that matches the task.`,
+    `Full instructions live in \`${SKILLS_DIR}/<name>/${SKILL_FILE}\`. Read the one matching the task.`,
     "",
     "| Skill | Read this when |",
     "| --- | --- |",
@@ -207,9 +201,8 @@ function firstSentence(description: string): string {
 }
 
 /**
- * Splices the managed block into `AGENTS.md`, preserving everything outside the markers. An
- * unmarked existing file keeps all of its content and gains the block at the end — `avo install`
- * has no business rewriting rules a human wrote.
+ * Splices the managed block into `AGENTS.md`, preserving everything outside the markers. An unmarked
+ * file keeps its content and gains the block at the end: never rewrite rules a human wrote.
  */
 export function spliceBlock(existing: string | null, block: string): { text: string; action: "created" | "unchanged" | "updated" | "appended" } {
   if (existing === null) return { text: `${block}\n`, action: "created" };
@@ -230,11 +223,10 @@ export function spliceBlock(existing: string | null, block: string): { text: str
 // ---------------------------------------------------------------------------
 
 /**
- * Merges avo's keys into whatever is already there, and reports whether anything changed.
+ * Merges avo's keys into whatever is there, and reports whether anything changed.
  *
- * `.agents/skills/` is deliberately *not* added to `skills`: Pi discovers project `.agents/skills/`
- * natively, and Pi warns on a name collision between two skill locations — so declaring it again
- * would buy a warning and nothing else. What Pi does need from us is `bash`.
+ * `.agents/skills/` is deliberately *not* added to `skills`: Pi discovers it natively and warns on a
+ * name collision between two skill locations, so declaring it buys a warning. Pi needs `bash`.
  */
 export function mergePiSettings(existing: unknown): { settings: Record<string, unknown>; changed: string[]; warnings: string[] } {
   const settings: Record<string, unknown> = existing !== null && typeof existing === "object" && !Array.isArray(existing) ? { ...(existing as Record<string, unknown>) } : {};
@@ -246,7 +238,7 @@ export function mergePiSettings(existing: unknown): { settings: Record<string, u
     settings.defaultTools = [...PI_DEFAULT_TOOLS];
     changed.push("defaultTools");
   } else if (Array.isArray(tools) && !tools.includes("bash")) {
-    // Someone's deliberate choice; widening it silently would be worse than saying so.
+    // A deliberate choice; widening it silently is worse than saying so.
     warnings.push(`${PI_SETTINGS} sets defaultTools without 'bash'; avo, bd and qmd are CLIs, so the agent cannot run any of them`);
   }
   if (settings.enableSkillCommands === undefined) {
@@ -282,8 +274,8 @@ export function runInstall(opts: InstallOptions): InstallResult {
     steps.push({ name: SKILLS_DIR, action: "failed", detail: `nothing to install from ${source}` });
     return result();
   }
-  // A skill that violates the spec loads in Pi (lenient) and not in Claude Code (strict), which is
-  // the worst outcome: the harness would look installed and behave differently per agent.
+  // A spec-violating skill loads in Pi (lenient) but not Claude Code (strict): installed-looking,
+  // and behaving differently per agent.
   const broken = skills.filter((s) => s.errors.length > 0);
   if (broken.length > 0) {
     for (const s of broken) errors.push(`${s.dir}/${SKILL_FILE} violates the Agent Skills spec: ${s.errors.join("; ")}`);
@@ -306,8 +298,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
     }
   }
 
-  // AGENTS.md is unconditional: every agent here reads it, and it carries the rules that hold
-  // whether or not a skill was loaded.
+  // AGENTS.md is unconditional: every agent reads it, and its rules hold unloaded.
   const agentsPath = join(cwd, AGENTS_FILE);
   try {
     const existing = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : null;
@@ -346,29 +337,25 @@ function sameDir(a: string, b: string): boolean {
 }
 
 /**
- * Links `.pi/extensions/avo` at avocode's own `pi/extensions/avo`, which is the discovery path Pi
- * documents for a project-local extension — any `.pi/extensions/<name>/index.ts`. A symlink rather than a
- * copy, for the same reason the skills are linked: a copy is a fork that stops receiving fixes, and
- * two copies of the commit rule is exactly what invariant 1 forbids.
+ * Links `.pi/extensions/avo` at avocode's own `pi/extensions/avo`, Pi's documented discovery path
+ * for a project-local extension. A symlink, like the skills: a copy is a fork that stops receiving
+ * fixes, and two copies of the commit rule is what invariant 1 forbids.
  *
- * Pi is the only agent that gets this. The extension is a native binding for capabilities every
- * agent already reaches through `bash avo ...` (invariant 8), so an agent without it loses speed,
- * not ability.
+ * Pi only. The extension binds capabilities every agent already reaches through `bash avo ...`
+ * (invariant 8), so an agent without it loses speed, not ability.
  */
 function linkPiExtension(cwd: string, name: string, steps: InitStep[], warnings: string[], force: boolean): void {
   const rel = piExtension(name);
   const relSrc = piExtensionSrc(name);
   const source = join(avocodeRoot(), relSrc);
   if (!existsSync(join(source, "index.ts"))) {
-    // A checkout without the extension (or an install that stripped it) is not an error: the CLI
-    // is the whole harness, and this is a shortcut.
+    // A checkout without the extension is not an error: the CLI is the whole harness.
     steps.push({ name: rel, action: "skipped", detail: `${relSrc}/index.ts is not in this avocode checkout` });
     return;
   }
-  // Ownership is "this repo IS where the extension lives", the same test the skills use — not "the
-  // link already points at it". Installing into avocode's own checkout would otherwise create a
-  // link to itself and leave avo's working tree dirty, which is the self-perturbation bug S3 and
-  // S6 both hit: `avo commit` would count avo's own wiring as a candidate.
+  // Ownership is "this repo IS where the extension lives" — the skills' test — not "the link
+  // already points there". Otherwise installing into avocode's own checkout links it to itself and
+  // dirties the tree: the S3/S6 self-perturbation bug, with avo's wiring read as a candidate.
   if (sameDir(join(cwd, relSrc), source)) {
     steps.push({ name: rel, action: "unchanged", detail: `this repo owns the extension at ${relSrc}` });
     return;
@@ -407,9 +394,8 @@ function installPi(cwd: string, steps: InitStep[], warnings: string[], force: bo
     steps.push({ name: PI_SETTINGS, action: "failed", detail: (e as Error).message });
     warnings.push(`could not write ${PI_SETTINGS} — ${(e as Error).message}`);
   }
-  // The trap worth naming: headless pi (-p, --mode json) never prompts for project trust, and
-  // without a saved decision it ignores project .agents/skills and .pi/settings.json entirely — so
-  // an installed harness silently does nothing in exactly the mode `avo fan` will drive it in.
+  // The trap: headless pi (-p, --mode json) never prompts for project trust, and untrusted it
+  // ignores project .agents/skills and .pi/settings.json — silently, in `avo fan`'s exact mode.
   warnings.push(
     "pi ignores project-local skills and settings until the project is trusted, and headless runs (-p, --mode json) never prompt: " +
       "pass --approve, run 'pi' once and answer the trust prompt, or set defaultProjectTrust to 'always' in ~/.pi/agent/settings.json",
@@ -420,8 +406,7 @@ function installClaude(cwd: string, skillsDir: string, skills: readonly Skill[],
   const linkPath = join(cwd, CLAUDE_SKILLS);
   const want = linkTargetFor(cwd, join(cwd, dirname(CLAUDE_SKILLS)), join(cwd, SKILLS_DIR));
   if (linkState(linkPath, want) === "directory") {
-    // A real .claude/skills means the repo already has Claude-only skills. Linking each of ours
-    // inside it adds avo's without touching theirs; replacing the directory would delete them.
+    // A real .claude/skills holds the repo's own skills. Link ours inside rather than replace it.
     steps.push({ name: CLAUDE_SKILLS, action: "unchanged", detail: "already a real directory with its own skills; linking avo's inside it instead" });
     linkEachSkill(cwd, linkPath, skillsDir, skills, force, steps);
     return;

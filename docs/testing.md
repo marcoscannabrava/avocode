@@ -1,4 +1,4 @@
-# Running the tests
+# Run the tests
 
 ## The short answer
 
@@ -17,13 +17,13 @@ node_modules/.bin/tsx --test test/*.test.ts                       # = just test
 ./test/e2e.sh                                                     # ...and the rest of test/e2e-*.sh
 ```
 
-Run one unit file while working on it:
+One unit file while you work on it:
 
 ```sh
 node_modules/.bin/tsx --test test/compare.test.ts
 ```
 
-## What the tasks are
+## The tasks
 
 | Command | What it does |
 | --- | --- |
@@ -38,9 +38,9 @@ node_modules/.bin/tsx --test test/compare.test.ts
 
 ## Two kinds of test
 
-**Unit tests** (`test/*.test.ts`, `node:test` through `tsx`) — every `src/` module has one.
-They are fast and hermetic: `src/io.ts` exists so commands can be driven without a terminal, and
-`websearch.ts` takes an injectable `Fetcher` so the backends are testable without a network.
+**Unit tests** (`test/*.test.ts`, `node:test` through `tsx`) — every `src/` module has one. Fast and
+hermetic: `src/io.ts` exists so commands can be driven without a terminal, and `websearch.ts` takes an
+injectable `Fetcher` so the backends are testable without a network.
 
 **End-to-end suites** (`test/e2e-*.sh`) — they spawn the real `bin/avo` against real temporary git
 repos, and each writes a transcript into `evidence/`. That directory is the point: a claim about
@@ -60,36 +60,35 @@ user-facing behavior is backed by a file showing the commands and their output.
 | `e2e-run.sh` | the continuous loop, its manifest, token accounting, the stop conditions |
 | `e2e-pi.sh` | the native pi tools and the supervisor extension |
 | `e2e-bench.sh` | replays the six-step ladder through `avo score`/`avo commit` — the headroom proof |
-| `e2e-arcagi3.sh` | the ARC-AGI-3 target: the target-aware protected manifest, `f`'s gates and sandbox, and its two-rung ladder. The half that needs the python toolkit is `SKIP`ped unless `ARCAGI3_TARGET` names a set-up target, so CI never installs a game engine |
+| `e2e-arcagi3.sh` | the ARC-AGI-3 target: the target-aware protected manifest, `f`'s gates and sandbox, and its two-rung ladder. The half needing the python toolkit is `SKIP`ped unless `ARCAGI3_TARGET` names a set-up target, so CI never installs a game engine |
 | `e2e-lint.sh` | the lint gate itself: every assertion is about it going **red** |
 
 ## The lint gate is deliberately unskippable
 
-`test/lint-sh.sh` discovers its own targets from `git ls-files` (plus untracked, non-ignored
-files), so a new script is checked before anyone remembers to list it. It needs shellcheck — but not
-*installed* shellcheck: absent from `PATH` it falls back to `npm exec --yes -- shellcheck`. If
-neither can run, it **fails**.
+`test/lint-sh.sh` discovers its own targets from `git ls-files` (plus untracked, non-ignored files),
+so a new script is checked before anyone remembers to list it. It needs shellcheck — but not
+*installed* shellcheck: absent from `PATH` it falls back to `npm exec --yes -- shellcheck`. If neither
+can run, it **fails**.
 
-That is the whole point. It used to end in `|| echo "shellcheck: skipped (not installed)"`, which
-reported 32 real findings under a false reason and kept CI green through eight slices
-([#2](https://github.com/marcoscannabrava/avocode/issues/2)). `test/e2e-lint.sh` is the suite that
-holds it shut.
+That is the point. It used to end in `|| echo "shellcheck: skipped (not installed)"`, which reported
+32 real findings under a false reason and kept CI green through eight slices
+([#2](https://github.com/marcoscannabrava/avocode/issues/2)). `test/e2e-lint.sh` holds it shut.
 
 The shellcheck **version** is pinned in `SC_PIN`, and CI derives its install from that line rather
-than naming a version of its own — findings are not stable across versions. A runner at the wrong
-version warns and still runs; refusing to lint would be a worse failure than the drift.
-`SHELLCHECK=<path>` pins a runner and disables the fallback.
+than naming its own — findings are not stable across versions. A runner at the wrong version warns
+and still runs; refusing to lint would be a worse failure than the drift. `SHELLCHECK=<path>` pins a
+runner and disables the fallback.
 
 ## CI
 
-`.github/workflows/ci.yml` runs two jobs on every push to `main` and every PR: `check`
-(lint + typecheck + test) and `e2e`, which uploads `evidence/` as an artifact. Both install the
-shellcheck version read out of `test/lint-sh.sh`'s own pin.
+`.github/workflows/ci.yml` runs two jobs on every push to `main` and every PR: `check` (lint +
+typecheck + test) and `e2e`, which uploads `evidence/` as an artifact. Both install the shellcheck
+version read out of `test/lint-sh.sh`'s own pin.
 
-The e2e job runs **without any agent CLI installed** — that is deliberate, because the S0
-acceptance case is `avo doctor` behaving correctly when the tools it drives are missing.
+The e2e job runs **without any agent CLI installed** — deliberately, because the S0 acceptance case is
+`avo doctor` behaving correctly when the tools it drives are missing.
 
-## Benchmarking a real run
+## Benchmark a real run
 
-Tests prove the harness works. Whether the *loop* works is a separate question with its own
-tooling — see [bench.md](bench.md).
+Tests prove the harness works. Whether the *loop* works is a separate question with its own tooling —
+see [bench.md](bench.md).

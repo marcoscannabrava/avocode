@@ -1,9 +1,9 @@
-# Installing avocode
+# Install avocode
 
-`avo` is a TypeScript CLI that runs through `tsx` — **there is no build step**. Installing it means
-fetching dependencies once and putting the entrypoint on your `PATH`.
+`avo` is a TypeScript CLI run through `tsx` — **there is no build step**. Installing means fetching
+dependencies once and putting the entrypoint on your `PATH`.
 
-## The one command
+## Install it
 
 ```sh
 git clone https://github.com/marcoscannabrava/avocode
@@ -11,7 +11,7 @@ cd avocode
 ./install.sh
 ```
 
-That script does exactly three things, and reports each as `created` / `unchanged` / `skipped`:
+The script does three things, reporting each as `created` / `unchanged` / `skipped`:
 
 | Step | What it does |
 | --- | --- |
@@ -21,7 +21,7 @@ That script does exactly three things, and reports each as `created` / `unchange
 
 It finishes with an `avo doctor` report.
 
-**Re-running is safe.** A second run creates nothing (invariant 5). That is what the `unchanged`
+**Re-running is safe.** A second run creates nothing (invariant 5) — that is what the `unchanged`
 lines mean, and `test/e2e-install-sh.sh` asserts it.
 
 ## Options
@@ -36,15 +36,15 @@ lines mean, and `test/e2e-install-sh.sh` asserts it.
 
 ## Why a symlink and not a copy
 
-`git pull` in the checkout is then the whole upgrade path — there is no second copy to keep in step.
-It is also why `bin/avo` walks the symlink chain before resolving its own root: taking `dirname` of
-the *link* would make it look for `src/` next to `~/.local/bin/avo` and exit 127
+`git pull` in the checkout is then the whole upgrade path — no second copy to keep in step. It is
+also why `bin/avo` walks the symlink chain before resolving its own root: taking `dirname` of the
+*link* would make it look for `src/` next to `~/.local/bin/avo` and exit 127
 ([#41](https://github.com/marcoscannabrava/avocode/issues/41)). The e2e suite runs `avo --version`
-from a directory that is not the checkout for exactly this reason.
+from outside the checkout for exactly this reason.
 
-## `~/.local/bin` is not on my PATH
+## Fix a PATH that lacks `~/.local/bin`
 
-The installer says so and prints the line to paste. For the record:
+The installer prints the line to paste. For the record:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"     # bash/zsh — add to ~/.bashrc or ~/.zshrc
@@ -61,7 +61,7 @@ exits 1 only when a **required** dependency or *all* agents are missing.
 | **required** | `git` | nothing works; `P_t` is git commits |
 | **required** | `jq` | scorers and skills pipe through it |
 | **one agent** | `pi`, `claude` or `codex` | there is no variation operator — `avo fan` and `avo run` have nothing to spawn |
-| optional | `qmd` | `avo know query` falls back to a local file scan, returning the identical JSON |
+| optional | `qmd` | `avo know query` falls back to a local file scan, returning identical JSON |
 | optional | `bd` (beads) | memory falls back to `lineage/memory.jsonl` |
 | optional | `hyperfine` | the wall-clock scorer template is unavailable; write your own `.avo/score` |
 | optional | `just` | run the npm scripts directly instead |
@@ -73,7 +73,7 @@ Every optional dependency degrades with a named fallback and one warning — nev
 
 ### API keys
 
-Reported by `avo doctor` as present/unset only; their values never appear in any output
+`avo doctor` reports these as present/unset only; their values never appear in any output
 (invariant 6).
 
 | Key | Enables |
@@ -84,11 +84,11 @@ Reported by `avo doctor` as present/unset only; their values never appear in any
 | `SEARXNG_URL` | keyless `avo know search` (the instance must enable `format=json`) |
 | `GROQ_API_KEY` / `CEREBRAS_API_KEY` / `OPENROUTER_API_KEY` | small probe models for `avo fan` |
 
-## Working on avocode itself
+## Work on avocode itself
 
-You do not need `install.sh` — `./bin/avo` works from the checkout after `npm install`. But note
-that **the wired skills all begin with `avo ...`**, so an agent driving the loop needs the real
-command resolvable:
+You do not need `install.sh` — `./bin/avo` works from the checkout after `npm install`. But **the
+wired skills all begin with `avo ...`**, so an agent driving the loop needs the bare name
+resolvable:
 
 ```sh
 PATH="$PWD/bin:$PATH" avo run --cwd ~/work/target --agent claude ...
@@ -96,7 +96,7 @@ PATH="$PWD/bin:$PATH" avo run --cwd ~/work/target --agent claude ...
 
 See [testing.md](testing.md) for the health check and the test suites.
 
-## Uninstalling
+## Uninstall
 
 ```sh
 ./install.sh --uninstall    # removes the link, and only if it points at this checkout

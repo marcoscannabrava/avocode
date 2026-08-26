@@ -1,7 +1,7 @@
 # `bench/` — the optimization targets
 
-A target is a **template**, not a working repo. `bench/init.sh` materializes one into a fresh git
-repo of its own, outside this checkout, and the loop is pointed at that with `--cwd`.
+A target is a **template**, not a working repo. `bench/init.sh` materializes one into a fresh git repo
+of its own, outside this checkout, and the loop is pointed at that with `--cwd`.
 
 | Target | `f` | Direction | Extra setup |
 | --- | --- | --- | --- |
@@ -22,8 +22,8 @@ avo run  --cwd ~/work/arcagi3 --agent claude --prompt-file ~/work/arcagi3/task.m
 ./bench/init.sh --verify ~/work/arcagi3 --target arcagi3
 ```
 
-**Full runbook, prerequisites and troubleshooting: [`docs/bench.md`](../docs/bench.md).**
-Each target also ships its own `README.md` describing what it is and what counts as cheating.
+**Full runbook, prerequisites and troubleshooting: [`docs/bench.md`](../docs/bench.md).** Each target
+also ships its own `README.md` describing what it is and what counts as cheating.
 
 ## What is in here
 

@@ -2,23 +2,20 @@
  * The native Pi tools: thin wrappers over `src/`, one per capability the CLI already exposes.
  *
  * "Thin" is the whole design. Invariant 8 says every capability must be reachable from bash before
- * it gets a Pi binding, and S1..S7 built exactly that — so nothing here decides anything. The
- * commit rule lives in `decideCommit`, the `f` contract in `runScore`, the guards in `runFan`. A
- * second implementation of any of those, however small, is a second thing that can disagree with
- * the CLI, and an operator who runs `avo commit` in one terminal and `avo_commit` in a Pi session
- * would then get two different answers about what P_t contains.
+ * it gets a Pi binding, and S1..S7 built exactly that, so nothing here decides anything: the commit
+ * rule is `decideCommit`, the `f` contract `runScore`, the guards `runFan`. A second implementation
+ * of any of them is a second thing that can disagree with the CLI, and an operator running
+ * `avo commit` in one terminal and `avo_commit` in Pi would get two answers about P_t.
  *
- * The division of labour in each result is the one Pi's docs ask for:
- *   - `content` is the CLI's OWN renderer, verbatim. The model reads the same words a human does.
+ * Each result splits the way Pi's docs ask:
+ *   - `content` is the CLI's OWN renderer, verbatim. The model reads what a human reads.
  *   - `details` is the structured result, because Pi reconstructs extension state from tool-result
  *     details when a session branches (docs/extensions.md, "State Management"). The supervisor
- *     extension recovers its counters from these records, so they must be complete.
+ *     recovers its counters from these, so they must be complete.
  *
- * This file lives under `pi/`, not `src/`, for one concrete reason: it needs `typebox` at RUNTIME
- * for the schemas, and `typebox` (v1, the package Pi resolves — NOT `@sinclair/typebox` v0.34,
- * which `src/` uses and which is a different package with a different `TSchema`) is a
- * devDependency. Anything under `src/` is reachable from `bin/avo`, and `avo` must keep working in
- * a checkout that never installed Pi.
+ * Lives under `pi/`, not `src/`, for one reason: the schemas need `typebox` at RUNTIME, and
+ * `typebox` (v1, what Pi resolves — NOT the `@sinclair/typebox` v0.34 `src/` uses, a different
+ * package with a different `TSchema`) is a devDependency. `src/` must work in a Pi-less checkout.
  */
 
 import { relative, resolve } from "node:path";
@@ -49,8 +46,8 @@ import { parseFanArgs, renderFan, runFan, type FanResult } from "../../../src/fa
 import { globalFetcher, type Fetcher } from "../../../src/websearch.ts";
 
 /**
- * Everything the tools reach the outside world through. Injected so the tests can drive every
- * branch without a repo, a network or an agent binary; the defaults are what Pi gets.
+ * The tools' only reach outside. Injected so tests drive every branch with no repo, network or agent
+ * binary; the defaults are what Pi gets.
  */
 export interface PiToolDeps {
   runner: Runner;
@@ -76,18 +73,16 @@ export const AVO_TOOL_NAMES = [
 const text = (s: string) => [{ type: "text" as const, text: s }];
 
 /**
- * `ctx.cwd` is the ONLY source of the repo root. No tool takes a `cwd` parameter, deliberately: an
- * agent that can retarget the repo can write a version into a repo nobody is watching, and the
- * lineage is the one thing in this system that is supposed to be hard to forge.
+ * `ctx.cwd` is the ONLY source of the repo root. No tool takes a `cwd`, deliberately: an agent that
+ * can retarget the repo can write a version into a repo nobody is watching.
  */
 const repoOf = (ctx: ExtensionContext): string => ctx.cwd;
 
 /**
- * A harness error is a thrown error, because Pi sets `isError` on the result only when `execute`
- * throws — returning an object never marks a failure however it is shaped (docs/extensions.md,
- * "Signaling errors"). A REFUSAL is not an error: `avo commit` declining a candidate is a
- * measurement, and it comes back as an ordinary result the model is expected to read and act on.
- * This is the same split the CLI's exit codes make (2 = harness error, 1 = refused).
+ * A harness error throws, because Pi sets `isError` only when `execute` throws — a returned object
+ * never marks a failure, however shaped (docs/extensions.md, "Signaling errors"). A REFUSAL is not
+ * an error: `avo commit` declining a candidate is a measurement the model should act on. The same
+ * split the CLI's exit codes make (2 = harness error, 1 = refused).
  */
 function harnessError(message: string): never {
   throw new Error(message);
@@ -111,8 +106,8 @@ const scoreTool = (deps: PiToolDeps): ToolDefinition =>
       "Use avo_score to measure a change before deciding whether to keep it; never guess at a score or read one from a previous turn.",
       "avo_score measures the working tree as it is now, so make the edit first and score after.",
     ],
-    // Sequential: the scorer is a whole process and the attempt log is append-only repo-global
-    // state. Two concurrent scores also fight over whatever the scorer builds into.
+    // Sequential: the scorer is a process, the attempt log is repo-global, and two concurrent
+    // scores fight over whatever the scorer builds into.
     executionMode: "sequential",
     parameters: Type.Object({
       parallel: Type.Optional(
@@ -142,8 +137,8 @@ const scoreTool = (deps: PiToolDeps): ToolDefinition =>
         deps.runner,
         deps.now,
       );
-      // Nothing ran at all — no scorer, or not executable. There is no attempt to reason about,
-      // which is precisely the case the model must not mistake for "it scored badly".
+      // Nothing ran — no scorer, or not executable. No attempt to reason about, and the model
+      // must not read it as "it scored badly".
       if (attempt === null) harnessError(error ?? "avo score: the scorer did not run");
       return { content: text(renderAttempt(attempt)), details: attempt satisfies Attempt };
     },
@@ -176,9 +171,8 @@ const commitTool = (deps: PiToolDeps): ToolDefinition =>
           "The rationale: what you changed and why you expected it to help. Recorded in the commit and in lineage/vNNN.md.",
       }),
       dry_run: Type.Optional(
-        // "Creates no version" rather than "writes nothing": the candidate is still SCORED, so the
-        // attempt lands in .avo/attempts.jsonl like any other. Saying "writes nothing" would be a
-        // promise the CLI does not make either.
+        // "Creates no version", not "writes nothing": the candidate is still scored, so the
+        // attempt lands in .avo/attempts.jsonl like any other.
         Type.Boolean({ description: "Score and compare, and report the decision, but create no version." }),
       ),
       parallel: Type.Optional(Type.Boolean({ description: "Fan the scorer's configs out concurrently." })),
@@ -186,9 +180,8 @@ const commitTool = (deps: PiToolDeps): ToolDefinition =>
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const p = params;
-      // `why` is REQUIRED here while the CLI's --why is optional. Deliberate: a Pi turn is the one
-      // caller that always has the rationale in hand, and S7's directive is only worth reading
-      // because it can quote a real one back. An empty rationale is a silently worse lineage.
+      // `why` is REQUIRED here while the CLI's --why is optional: a Pi turn always has the
+      // rationale in hand, and S7's directive is only worth reading because it quotes a real one.
       if (p.why.trim() === "") harnessError("avo_commit: `why` is empty — the lineage records rationales, not just diffs");
       const decision = await decideCommit(
         {
@@ -327,9 +320,8 @@ const knowAddTool = (deps: PiToolDeps): ToolDefinition =>
       const p = params;
       const cwd = repoOf(ctx);
       const backend = await resolveKnowledge(deps.runner, cwd);
-      // Some models include the @ prefix in path arguments; pi's built-in tools strip it and the
-      // docs ask custom tools to do the same. A URL never starts with @, so this only ever touches
-      // a path, and a path is then confined to the repo for the same reason `cwd` is not a param.
+      // Models sometimes prefix paths with @; pi's built-ins strip it and the docs ask custom
+      // tools to. A URL never starts with @, and the path is then confined to the repo.
       const raw = p.target.startsWith("@") ? p.target.slice(1) : p.target;
       const target = /^https?:\/\//i.test(raw) ? raw : confineToRepo(cwd, raw);
       const result = await knowAdd(
@@ -390,8 +382,8 @@ const fanTool = (deps: PiToolDeps): ToolDefinition =>
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const p = params;
-      // Built through parseFanArgs rather than a hand-made FanOptions so the defaults, the env
-      // fallbacks ($AVO_AGENT, $AVO_PROBE_MODEL) and any later flag all come from one place.
+      // Through parseFanArgs, not a hand-made FanOptions: defaults, env fallbacks ($AVO_AGENT,
+      // $AVO_PROBE_MODEL) and later flags all come from one place.
       const argv = ["--prompt", p.prompt, "--cwd", repoOf(ctx)];
       if (p.n !== undefined) argv.push("--n", String(p.n));
       if (p.agent !== undefined) argv.push("--agent", p.agent);
@@ -401,9 +393,8 @@ const fanTool = (deps: PiToolDeps): ToolDefinition =>
       const opts = parseFanArgs(argv, deps.env);
       if ("error" in opts) harnessError(`avo_fan: ${opts.error}`);
       const result = await runFan(opts, { runner: deps.runner, now: deps.now, env: deps.env });
-      // A guard refusal arrives here as an error string. It IS a refusal rather than a crash, but
-      // it is also the one case where no probe ran at all, so the model must not read it as a
-      // fan-out that found nothing.
+      // A guard refusal arrives as an error string: a refusal, not a crash, but also the one case
+      // where no probe ran, so the model must not read it as a fan-out that found nothing.
       if ("error" in result) harnessError(`avo_fan: ${result.error}`);
       return { content: text(renderFan(result)), details: result satisfies FanResult };
     },
@@ -412,10 +403,9 @@ const fanTool = (deps: PiToolDeps): ToolDefinition =>
 // ---------------------------------------------------------------------------
 
 /**
- * Every avo tool, in registration order. A factory rather than a constant because the deps are
- * injected and because Pi's docs are explicit that an extension factory may run in an invocation
- * that never starts a session — so nothing here may touch the filesystem or spawn anything until
- * `execute` is actually called.
+ * Every avo tool, in registration order. A factory, not a constant: the deps are injected, and Pi's
+ * docs are explicit that a factory may run in an invocation that never starts a session — so nothing
+ * here touches the filesystem or spawns until `execute` is called.
  */
 export function avoTools(deps: PiToolDeps = defaultDeps()): ToolDefinition[] {
   return [scoreTool(deps), commitTool(deps), lineageTool(deps), knowQueryTool(deps), knowAddTool(deps), fanTool(deps)];

@@ -51,8 +51,8 @@ function writeIfAbsent(path: string, body: string): InitStep["action"] {
 }
 
 /**
- * `avo init` — scaffolds everything the loop needs and is safe to re-run. It is the only place that
- * touches `bd init`, whose one visible side effect is a git commit of the beads config files.
+ * `avo init` — scaffolds what the loop needs, safe to re-run. The only caller of `bd init`, whose
+ * one visible side effect is a git commit of the beads config files.
  */
 export async function runInit(opts: InitOptions, runner: Runner = spawnRunner): Promise<InitResult> {
   const steps: InitStep[] = [];
@@ -104,14 +104,13 @@ export async function runInit(opts: InitOptions, runner: Runner = spawnRunner): 
     });
   }
 
-  // K next: qmd is optional too, and runKnowInit creates lineage/ and knowledge/ whether or not it
-  // is installed, so the collections exist the moment qmd does.
+  // K next: runKnowInit creates lineage/ and knowledge/ with or without qmd.
   const know = await runKnowInit(opts.cwd, runner);
   steps.push(...know.steps);
   warnings.push(...know.warnings);
   errors.push(...know.errors);
 
-  // beads last: it is optional, and everything above must land whether or not it is installed.
+  // beads last: optional, and everything above must land regardless.
   const backend = await resolveBackend(runner, opts.cwd);
   if (backend.kind === "beads") {
     steps.push({

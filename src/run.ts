@@ -1,17 +1,11 @@
 /**
- * The continuous driver — `avo run`. One prompt, N iterations of
- * *agent turn → `avo commit` → `avo supervise` → inject the directive*, until the budget runs out
- * or something says stop.
+ * `avo run` — the continuous driver. N iterations of
+ * *agent turn → `avo commit` → `avo supervise` → inject the directive*.
  *
- * This is `avo fan`'s probe loop with the worktree taken away: the agent works in the root tree,
- * because that is the case where uncommitted work is the point rather than a hazard (#21). Nothing
- * here re-implements a step — `agents.ts` starts the agent, `lineage.ts` decides the commit,
- * `supervise.ts` decides whether to steer. What is genuinely new is the *between*: what a fresh
- * agent process is told about the turn before it, and what gets written down so a run that took
- * three days can still be read afterwards.
- *
- * The last part matters more than it looks. Every iteration is a *new process* with no memory of
- * the last one, so the turn prompt is the only continuity there is.
+ * `avo fan`'s probe loop without the worktree: the agent works in the root tree, where uncommitted
+ * work is the point rather than a hazard (#21). Steps live elsewhere — `agents.ts` starts the agent,
+ * `lineage.ts` decides the commit, `supervise.ts` decides whether to steer. New here is the
+ * *between*: every iteration is a fresh process, so the turn prompt is the only continuity.
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -52,18 +46,12 @@ import { supervise, type Signal, type SignalKind } from "./supervise.ts";
 /** Every run lives here. In TRAJECTORY_PATHS and gitignored: trajectory, not lineage. */
 export const RUNS_DIR = ".avo/runs";
 export const RUN_MANIFEST = "manifest.json";
-/**
- * The sentinel that stops a running loop from outside it. `avo run` is the one command meant to go
- * for days, so it needs a brake that does not require finding and signalling the process — and one
- * an *agent* can reach, since a turn that concludes the task is finished should be able to say so.
- */
+/** Stops the loop from outside — no process to find, and an agent can reach it. */
 export const STOP_FILE = ".avo/STOP";
 export const DEFAULT_MAX_ITERS = 10;
 /**
- * Consecutive iterations that changed nothing before the loop gives up. An agent that edits nothing
- * records no attempt (`avo commit` returns before it scores an unchanged tree), so the stall
- * detector never sees it and never fires — the loop would spend its whole budget on an agent that
- * is not working. This is the one stop condition the supervisor cannot express.
+ * Idle iterations before giving up. An unchanged tree records no attempt, so the stall detector
+ * cannot see it — the one stop condition the supervisor cannot express.
  */
 export const MAX_CONSECUTIVE_NOOPS = 3;
 /** How much of the agent's own words become the commit rationale. A commit body is not a log. */
@@ -89,10 +77,8 @@ export interface TurnDecision {
 }
 
 /**
- * A version the *agent* committed during its own turn, read back from the trailers in
- * `head_before..head_after`. The `avo-vary` skill has the agent run `avo commit` itself, so this is
- * the normal case and not the exception: without it the tree is clean by the time the harness looks,
- * every iteration records `noop`, and a run that produced a curve reads as a flat one (#42).
+ * A version the *agent* committed itself, read back from the `head_before..head_after` trailers.
+ * The normal case: without it a curve reads as flat, because the tree is clean by step 2 (#42).
  */
 export interface AgentVersion {
   version: number;
@@ -140,9 +126,8 @@ export interface Iteration {
 export type StopReason = "max-iters" | "stop-file" | "no-progress" | "agent-unavailable" | "dry-run";
 
 /**
- * The whole run — also the on-disk manifest, rewritten after every iteration. One shape rather than
- * two: a manifest that can drift from what `--json` reports is a manifest nobody trusts after a
- * crash, and after a crash is the only time anybody reads it.
+ * The whole run, and the on-disk manifest. One shape, not two: a manifest that can drift from
+ * `--json` is one nobody trusts after a crash, which is the only time anybody reads it.
  */
 export interface RunReport {
   version: 1;
@@ -170,9 +155,8 @@ export interface RunReport {
   /** Summed over every iteration. Disjoint by construction — see `AgentTokens`. */
   tokens: AgentTokens;
   /**
-   * USD over the whole run, summed from what each agent reported, or `null` when no iteration
-   * reported one (codex, or a stub). `null` and `0` mean different things: nothing measured versus
-   * nothing spent, and a cost budget (#28) must refuse to run against the first.
+   * USD summed from what each agent reported; `null` when none did (codex, a stub). `null` and `0`
+   * differ — nothing measured versus nothing spent — and a cost budget must refuse the first (#28).
    */
   cost_usd: number | null;
   stopped: StopReason;
@@ -206,8 +190,7 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     cwd: process.cwd(),
     prompt: null,
     promptFile: null,
-    // Deliberately not AVO_PROBE_MODEL: probes explore on a small model, `avo run` is the
-    // exploitation path and takes the agent's own default unless told otherwise (PLAN §3).
+    // Not AVO_PROBE_MODEL: probes explore small, `avo run` exploits on the agent's default.
     agent: env[AGENT_ENV] ?? null,
     model: null,
     maxIters: DEFAULT_MAX_ITERS,
@@ -291,10 +274,7 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
 // ---------------------------------------------------------------------------
 
 const fmtScore = (primary: number | null, unit: string): string => (primary === null ? "—" : `${primary} ${unit}`.trim());
-/**
- * A refusal usually has no number: `f` forces `primary` to null when correctness fails, so printing
- * the placeholder as if it were a measurement gives "refused — — the candidate failed correctness".
- */
+/** A refusal usually has no number, so the placeholder must not read as one. */
 const atScore = (primary: number | null, unit: string): string => (primary === null ? "" : ` at ${fmtScore(primary, unit)}`);
 
 /** `v3 at 0.408 ms, v4 at 0.345 ms` — the agent's own versions, named rather than counted. */
@@ -306,8 +286,7 @@ export function describeOutcome(prev: Iteration): string {
   if (prev.agent.error !== null) return `the agent itself failed — ${prev.agent.error}`;
   const d = prev.decision;
   if (d === null) return "no commit decision was reached";
-  // Named first, because a turn that committed for itself already moved the lineage, and telling
-  // the next turn only that the harness saw a clean tree is the false negative #42 is about.
+  // Named first: a self-committing turn already moved the lineage (#42).
   const byAgent = prev.agent_versions ?? [];
   const own = byAgent.length === 0 ? "" : `the agent committed ${listVersions(byAgent)} itself`;
   switch (d.action) {
@@ -328,9 +307,8 @@ export function describeOutcome(prev: Iteration): string {
 }
 
 /**
- * What the agent is actually given. Iteration 1 gets the operator's prompt verbatim; every later
- * one gets it plus the state of the loop, because the process running this turn has no memory of
- * the last one and would otherwise re-derive the same candidate forever.
+ * What the agent is given. Iteration 1 gets the prompt verbatim; later ones get it plus loop
+ * state, because this process has no memory of the last turn.
  */
 export function turnPrompt(
   base: string,
@@ -364,17 +342,15 @@ export function runDir(cwd: string, runId: string): string {
 }
 
 /**
- * Rewritten after every iteration, never at the end. A loop meant to run for days will be killed at
- * some point, and the difference between a manifest written per-iteration and one written at exit
- * is the difference between a recoverable record and nothing at all — the same rule `avo fan`
- * follows for its probes.
+ * Rewritten after every iteration, never at the end. A days-long loop gets killed eventually, and
+ * per-iteration versus at-exit is a recoverable record versus nothing. Same rule as `avo fan`.
  */
 export function writeRunManifest(cwd: string, report: RunReport): void {
   try {
     mkdirSync(runDir(cwd, report.run_id), { recursive: true });
     writeFileSync(join(runDir(cwd, report.run_id), RUN_MANIFEST), `${JSON.stringify(report, null, 2)}\n`);
   } catch {
-    // A manifest we cannot write must not stop the loop; the run still reports in full at the end.
+    // An unwritable manifest must not stop the loop; --json still reports in full.
   }
 }
 
@@ -445,8 +421,7 @@ async function recordIntervention(
   const detail = [`run ${runId}, iteration ${iter}`, ...signals.map((s) => `${s.kind}: ${s.detail}`), "", directive].join("\n");
   const input = {
     kind: "intervention" as const,
-    // Keyed by run and iteration: re-recording the same intervention updates one record, and two
-    // runs that stall the same way stay distinguishable.
+    // Keyed by run and iteration: idempotent, and two runs stay distinguishable.
     key: `avo-intervention-${shortHash(`${runId}:${iter}`)}`,
     text: `avo run ${runId} it${iter}: steered on ${kinds.join("+")}`,
     detail,
@@ -505,10 +480,8 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
   }
   if (prompt.trim() === "") return { error: "the prompt is empty; a loop with no task is not a loop" };
 
-  // The same four guards `avo fan` carries, and deliberately the same budget: an agent inside a run
-  // can call `avo run`, and nesting a loop inside a loop is the same exponential hazard as nesting
-  // a fan-out inside one. The state travels in the environment because that is the only channel
-  // that survives `spawn` into an arbitrary agent binary.
+  // `avo fan`'s four guards on the same budget: a turn can call `avo run`, and a loop inside a
+  // loop is the same exponential hazard. The environment is the only channel that survives `spawn`.
   const sha = promptSha(prompt);
   const guards = checkGuards(env, sha);
   if (!guards.ok) return { error: guards.error };
@@ -544,8 +517,7 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
   if (baseline === "") {
     return { error: "the repository has no commits yet; make an initial commit before evolving it" };
   }
-  // A loop with no `f` refuses every iteration in exactly the same way — worth one warning up
-  // front rather than `--max-iters` identical harness errors.
+  // No `f` means every iteration refuses identically. Warn once, not --max-iters times.
   if (!existsSync(join(opts.cwd, SCORER_PATH))) {
     warnings.push(`${SCORER_PATH} does not exist, so every iteration will refuse; 'avo score --init <template>' scaffolds one`);
   }
@@ -587,11 +559,9 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     return report;
   }
 
-  // Everything above this line is read-only, which is what makes `--dry-run` above honest: it
-  // returns before the first write, including the gitignore.
-  //
-  // We are about to write under `.avo/runs/`, so the exclusion that keeps it out of the lineage has
-  // to exist first — and, since S7b, that means *appending* it to a gitignore avo wrote earlier.
+  // Everything above is read-only, which is what makes `--dry-run` honest.
+  // `.avo/runs/` is about to be written, so its lineage exclusion must exist first — appended to a
+  // gitignore avo wrote earlier, never overwriting the operator's.
   ensureTrajectoryIgnored(opts.cwd);
   writeRunManifest(opts.cwd, report);
   return await iterate(opts, deps, report, template, prompt);
@@ -650,8 +620,7 @@ async function iterate(
       warnings: [],
     };
     report.iterations.push(it);
-    // Summed across iterations even though each turn's own usage is cumulative *within* the turn:
-    // `avo run` starts a fresh agent process per iteration, so the totals never overlap.
+    // Safe to sum: a fresh process per iteration, so per-turn totals never overlap.
     report.tokens = {
       input: report.tokens.input + (turn.tokens?.input ?? 0),
       output: report.tokens.output + (turn.tokens?.output ?? 0),
@@ -660,8 +629,7 @@ async function iterate(
     };
     if (turn.cost_usd !== null) report.cost_usd = (report.cost_usd ?? 0) + turn.cost_usd;
 
-    // A command that cannot be started will not start on the next iteration either. Burning the
-    // whole budget on it is precisely the spinning this loop must not do.
+    // It will not start next iteration either; retrying is spinning.
     if (turn.spawn_failed) {
       report.stopped = "agent-unavailable";
       report.stop_reason = turn.error ?? `could not execute '${template.command}'`;
@@ -670,15 +638,11 @@ async function iterate(
       break;
     }
 
-    // `avo commit` — the only writer of a version (invariant 1), reached through the same
-    // `decideCommit` the command itself calls, so the rule cannot differ between them. The agent's
-    // own final message is the rationale, which is what `--why` is for.
+    // The only writer of a version (invariant 1), through the same `decideCommit` the command
+    // calls, so the rule cannot differ. The agent's final message is the `--why`.
     const why = capOutput(turn.summary ?? "", WHY_CAP_CHARS, 40).text.trim();
-    // A turn that said nothing commits without a rationale rather than with protocol noise (#49).
-    // That silence is worth seeing: it almost always means the turn was killed or timed out, and a
-    // version whose `--why` is empty is otherwise indistinguishable from one nobody explained.
-    // Recorded for any silent turn, not just a committing one — a turn that said nothing and did
-    // nothing is the same fact, and the manifest is where an operator goes looking for it.
+    // A silent turn commits with no rationale, never protocol noise (#49). Worth seeing: it almost
+    // always means the turn was killed or timed out. Recorded for any silent turn, committing or not.
     if (why === "") it.warnings.push(NO_SUMMARY);
     const commitOpts: CommitOptions = {
       json: true,
@@ -699,12 +663,11 @@ async function iterate(
     const own = await agentVersions(runner, opts.cwd, it.head_before, it.head_after, decision.version);
     it.agent_versions = own.versions;
     it.warnings.push(...own.warnings);
-    // The agent's own commits come first: they are already in history by the time step 2 runs.
+    // The agent's own commits come first: already in history by step 2.
     for (const v of own.versions) report.committed.push(v.version);
     if (decision.action === "committed" && decision.version !== null) report.committed.push(decision.version);
 
-    // A no-op only counts as one when HEAD did not move: an agent that ran `avo commit` itself
-    // leaves a clean tree, and calling that "nothing happened" would stop a loop that is working.
+    // A no-op needs HEAD unmoved: a self-committing turn leaves a clean tree too.
     const idle = decision.action === "noop" && it.head_after === it.head_before;
     noops = idle ? noops + 1 : 0;
 
@@ -712,8 +675,7 @@ async function iterate(
     it.warnings.push(...s.warnings);
     it.supervision = { triggered: s.triggered, signals: s.signals, since_best: s.state.since_best, repeat: s.state.repeat };
 
-    // The directive is injected into the NEXT turn — this one is already over. Recorded here, not
-    // there, because the intervention belongs to the state that produced it.
+    // Injected into the NEXT turn, but recorded here: it belongs to the state that produced it.
     directive = s.directive;
     it.directive = s.directive;
     if (s.triggered && s.directive !== null) {
@@ -819,8 +781,7 @@ export function renderRun(r: RunReport): string {
   lines.push("");
 
   const t = r.tokens;
-  // Cached input is shown next to the uncached rather than added to it, because it is the ratio
-  // between the two that says whether a long loop over one repo is affordable.
+  // Shown beside uncached, not added: the ratio is what prices a long loop.
   const cached = (t.cache_read ?? 0) + (t.cache_write ?? 0);
   const tok = t.input + t.output + cached;
   const tokenLine = `  tokens       ${t.input} in / ${t.output} out${cached === 0 ? "" : ` / ${t.cache_read ?? 0} cache read + ${t.cache_write ?? 0} cache write`}`;

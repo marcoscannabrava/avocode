@@ -1,13 +1,13 @@
 # Architecture
 
-How avocode is put together, and why each piece is where it is. If you are looking for *what a
-command does*, that is [commands.md](commands.md); this is the map underneath it.
+How avocode is put together, and why each piece is where it is. For *what a command does*, see
+[commands.md](commands.md); this is the map underneath it.
 
 ## The idea in one table
 
-The [AVO paper](avo-paper.md) replaces classical evolutionary variation operators with an
-autonomous coding agent: `Vary(P_t) = Agent(P_t, K, f)`. Its result is domain-specific (attention
-kernels on B200); its **harness** is not. avocode extracts that harness.
+The [AVO paper](avo-paper.md) replaces classical evolutionary variation operators with an autonomous
+coding agent: `Vary(P_t) = Agent(P_t, K, f)`. Its result is domain-specific (attention kernels on
+B200); its **harness** is not. avocode extracts that harness.
 
 | Symbol | Meaning | How avocode implements it |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ kernels on B200); its **harness** is not. avocode extracts that harness.
           └───────────────────────────────────────────────────────────────────┘
 ```
 
-`avo run` is this whole cycle, automated — one fresh agent process per turn.
+`avo run` is this cycle automated — one fresh agent process per turn.
 
 ## Three layers
 
@@ -57,9 +57,9 @@ kernels on B200); its **harness** is not. avocode extracts that harness.
 
 ## `src/` — one file, one contract
 
-`bin/avo` is a bash shim that runs `src/main.ts` through `tsx`. **There is no build step.** The pi
-extension and the CLI import the same `src/` files verbatim, so the scoring and lineage logic is
-written once.
+`bin/avo` is a bash shim running `src/main.ts` through `tsx`. **There is no build step.** The pi
+extension and the CLI import the same `src/` files verbatim, so scoring and lineage logic is written
+once.
 
 | File | Owns |
 | --- | --- |
@@ -92,7 +92,7 @@ install.sh         deps + the PATH link; see install.md
 AGENTS.md          always-on rules + the skills index (managed block; hand edits preserved)
 pi/extensions/     avo/ registers the six native tools; avo-supervisor/ steers from inside
 templates/score/   reference scorers (hyperfine, pytest, vitest) + the authoring guide
-bench/             a real optimization target and the scripts that audit a run — see bench.md
+bench/             the optimization targets and the scripts that audit a run — see bench.md
 test/              node:test unit tests + the e2e shell suites — see testing.md
 evidence/          artifacts proving user-facing behavior works end to end
 knowledge/         K corpus (markdown; a qmd collection)
@@ -108,29 +108,29 @@ tool schemas. One package, no bundler.
 
 Full authoring guide: [../templates/score/README.md](../templates/score/README.md).
 
-`.avo/score` is any executable, run from the repo root. It **always exits 0** — failures are
-reported *in* the JSON, so the agent receives a diagnosable payload instead of a crash. One line on
-stdout:
+`.avo/score` is any executable, run from the repo root. It **always exits 0** — failures are reported
+*in* the JSON, so the agent receives a diagnosable payload instead of a crash. One line on stdout:
 
 ```json
 {"ok":true,"correct":true,"primary":1668.2,"unit":"TFLOPS","higher_is_better":true,
  "scores":{"b1_s4096":1668.2,"b8_s1024":1421.7},"log":"...","duration_s":42.1}
 ```
 
-Required: `ok` (the scorer itself worked), `correct` (**the gate**), `primary` (`number|null`),
-`unit` (non-empty), `higher_is_better`. Optional: `scores`, `log`, `duration_s`. Unknown fields are
-allowed but warned about, so a misspelled `higherIsBetter` reads as both "required field missing"
-and "unknown field".
+- **Required:** `ok` (the scorer itself worked), `correct` (**the gate**), `primary` (`number|null`),
+  `unit` (non-empty), `higher_is_better`.
+- **Optional:** `scores`, `log`, `duration_s`.
+- Unknown fields are allowed but warned about, so a misspelled `higherIsBetter` reads as both
+  "required field missing" and "unknown field".
 
-Two optional invocations enable `avo score --parallel`: `--configs` lists config names one per
-line, `--config <name>` scores one of them. Anything else printed by `--configs` means
-"unsupported" and degrades to a single serial run with one warning.
+Two optional invocations enable `avo score --parallel`: `--configs` lists config names one per line,
+`--config <name>` scores one. Anything else printed by `--configs` means "unsupported" and degrades
+to a single serial run with one warning.
 
-`ok:false` or `correct:false` ⇒ `primary` is forced to the failing sentinel, which is **`null`**,
-regardless of the measured value (paper §3.1: a candidate that fails correctness scores zero).
-`null` rather than literal zero because zero is the *best* possible value for a lower-is-better
-metric, so it cannot also mean failure. `avo score` additionally emits `normalized` — `primary`
-flipped so higher is always better — so no consumer ever branches on direction.
+`ok:false` or `correct:false` ⇒ `primary` is forced to the failing sentinel **`null`**, whatever was
+measured (paper §3.1: a candidate that fails correctness scores zero). `null` rather than literal
+zero, because zero is the *best* possible value for a lower-is-better metric and so cannot also mean
+failure. `avo score` additionally emits `normalized` — `primary` flipped so higher is always better —
+so no consumer branches on direction.
 
 ## The commit rule
 
@@ -138,11 +138,11 @@ Persist a new version **only** when it passes correctness **and** beats the best
 `avo commit` enforces it, and is the only writer (invariant 1).
 
 The comparison is over the score **vector**, never the scalar `primary`. The default reduction is
-*dominate-or-tie*: a candidate commits iff it is `>=` the best version on every config they share
-and `>` on at least one. Not a weighted mean, because a mean lets a large win on one config pay for
-a regression on another — precisely the silent regression the rule exists to stop. Two anti-gaming
-rules come with it: a config present in the best version but **missing** from the candidate blocks
-the commit (you cannot improve by measuring less), while a *new* config does not.
+*dominate-or-tie*: a candidate commits iff it is `>=` the best version on every shared config and `>`
+on at least one. Not a weighted mean, because a mean lets a large win on one config pay for a
+regression on another — the silent regression the rule exists to stop. Two anti-gaming rules come
+with it: a config present in the best version but **missing** from the candidate blocks the commit
+(you cannot improve by measuring less), while a *new* config does not.
 
 `floor` is a **symmetric** relative noise band, so noise can neither commit nor block. A candidate
 whose `higher_is_better` differs from the best version's is refused as incomparable rather than
@@ -151,7 +151,7 @@ ranked.
 Because the rule only admits non-regressions, **the lineage is monotone by construction** and
 `avo best` is simply the highest-numbered version. There is no separate ranking pass.
 
-## Lineage vs. trajectory — the distinction everything else rests on
+## Lineage vs. trajectory — the distinction everything rests on
 
 | | What it is | Where it lives |
 | --- | --- | --- |
@@ -160,7 +160,7 @@ Because the rule only admits non-regressions, **the lineage is monotone by const
 
 `avo commit` stages everything *except* the trajectory paths. Committing the attempt log would put
 the record of how a version was reached inside the version itself, and would leave the tree
-permanently dirty — which would in turn defeat the no-op check that makes `avo commit` idempotent.
+permanently dirty — defeating the no-op check that makes `avo commit` idempotent.
 
 A wider set (`HARNESS_PATHS` = the trajectory plus `.avo/.gitignore` and `lineage/memory.jsonl`) is
 excluded from the *dirtiness* check but still staged. Those files belong in the repository; they are
@@ -169,7 +169,7 @@ candidate the agent never produced.
 
 ## Invariants
 
-These are the rules every change is checked against. They are the short version of the whole design.
+Every change is checked against these. They are the short version of the whole design.
 
 1. **`avo commit` is the only writer of committed lineage.** Nothing else creates an `Avo-Version`.
 2. **A failing `f` never yields a commit.** Correctness gates everything.
@@ -187,20 +187,19 @@ These are the rules every change is checked against. They are the short version 
 
 1. `avo fan` probes — N directions explored in parallel worktrees on a small model
    (`AVO_PROBE_MODEL`: Groq, Cerebras, Haiku). Only the winning direction gets the expensive model.
-   **Exploration is a small-model job.**
-2. qmd's reranker is a local GGUF small model — free semantic search over `K` and over the lineage.
+2. qmd's reranker is a local GGUF small model — free semantic search over `K` and the lineage.
 3. `avo score --parallel` fans configs out concurrently.
 4. Triage of a failed attempt, before the big model re-plans.
 
 ## The synergy worth protecting
 
 `lineage/` is a qmd collection. So *"what did I already try about register pressure?"* is the same
-query as *"what do the docs say about it?"* — the paper's §3.2 behavior (the agent examining
-multiple prior implementations within one variation step), and it costs nothing extra because
-`avo commit` is already writing `lineage/vNNN.md`.
+query as *"what do the docs say about it?"* — the paper's §3.2 behavior (the agent examining multiple
+prior implementations within one variation step), at no extra cost, because `avo commit` already
+writes `lineage/vNNN.md`.
 
 ## Further reading
 
-- [../PLAN.md](../PLAN.md) — the slice order, the composition decisions and the open questions
+- [../PLAN.md](../PLAN.md) — the slice order, the composition decisions, the open questions
 - [avo-paper.md](avo-paper.md) — the paper this harness is extracted from
 - [avo-pi.md](avo-pi.md) — the original pi-flavored sketch

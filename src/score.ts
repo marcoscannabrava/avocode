@@ -17,14 +17,13 @@ export const ATTEMPTS_PATH = ".avo/attempts.jsonl";
 /** A child's output beyond this is elided; a runaway scorer must not exhaust memory. */
 const OUTPUT_CAP = 200_000;
 /**
- * How much of that budget is spent on the *end* of the output rather than the beginning.
+ * How much of that budget goes to the *end* of the output rather than the beginning.
  *
- * A head-only cap is the wrong shape for every consumer here, because in all of them the payload
- * is the LAST thing printed: `.avo/score` prints its one JSON line after whatever the benchmark
- * logged, and a headless agent's `result` / `turn.completed` / `message_end` event — which carries
- * the final message, the usage and the cost — closes the stream. In the S9b-1 run, four of six
- * iterations printed more than 200KB, so all four lost their result event and recorded `tokens:
- * null`; the manifest reported 44 input tokens for a loop that sent 985,039 (#43, #22).
+ * A head-only cap is the wrong shape here, because in every consumer the payload is printed LAST:
+ * `.avo/score`'s JSON line follows the benchmark's logs, and an agent's `result` /
+ * `turn.completed` / `message_end` event — the final message, usage and cost — closes the stream.
+ * In the S9b-1 run four of six iterations passed 200KB, lost their result event, and recorded
+ * `tokens: null`; the manifest reported 44 input tokens for a loop that sent 985,039 (#43, #22).
  */
 const OUTPUT_TAIL_CAP = 50_000;
 
@@ -35,12 +34,11 @@ const OUTPUT_TAIL_CAP = 50_000;
  *     .avo/score --configs         print config names, one per line (optional; enables --parallel)
  *     .avo/score --config <name>   score one config; print one JSON line
  *
- * It should always exit 0 — correctness and build failures belong *in* the JSON, so the agent
- * receives a diagnosable payload instead of a crash. A non-zero exit is tolerated anyway: avo
- * turns it into a failing attempt rather than crashing (invariant 4).
+ * It should always exit 0 — failures belong *in* the JSON, so the agent gets a diagnosable payload
+ * instead of a crash. A non-zero exit is tolerated anyway, as a failing attempt (invariant 4).
  *
- * Unknown fields are allowed (scorers may carry their own metadata) but reported as warnings, so a
- * misspelled required key shows up as both "required field missing" and "unknown field".
+ * Unknown fields are allowed (scorers carry their own metadata) but warned about, so a misspelled
+ * required key reads as both "required field missing" and "unknown field".
  */
 export const ScoreOutputSchema = Type.Object(
   {
@@ -60,10 +58,7 @@ export type ScoreOutput = Static<typeof ScoreOutputSchema>;
 
 const KNOWN_FIELDS: readonly string[] = Object.keys(ScoreOutputSchema.properties);
 
-/**
- * One normalized `avo score` run. This — not the scorer's raw JSON — is what gets logged and what
- * `avo commit` will read.
- */
+/** One normalized `avo score` run — what gets logged, and what `avo commit` reads. */
 export interface Attempt {
   ts: string;
   /** Scorer ran *and* produced valid output *and* reported ok. */
@@ -72,9 +67,8 @@ export interface Attempt {
   /** The single gate: `ok && correct`. A failing `f` never yields a commit (invariant 2). */
   pass: boolean;
   /**
-   * The measured metric, or `null` — the failing sentinel. `null` is the direction-safe
-   * generalization of the paper's "zero score": zero is the *best* possible value for a
-   * lower-is-better metric, so it cannot mean failure.
+   * The metric, or `null` — the failing sentinel. The direction-safe generalization of the paper's
+   * "zero score": zero is the *best* value for a lower-is-better metric, so it cannot mean failure.
    */
   primary: number | null;
   /** Direction-normalized so higher is always better; `null` compares worse than any number. */
@@ -115,14 +109,13 @@ export type Runner = (cmd: string, args: readonly string[], opts: RunOpts) => Pr
 
 export const spawnRunner: Runner = (cmd, args, opts) =>
   new Promise((resolve) => {
-    // detached puts the scorer in its own process group, so a timeout can kill the benchmark
-    // processes it spawned too. Killing only the scorer leaves them holding our stdio pipes open,
-    // and we would wait out the full benchmark despite having "timed out".
+    // detached: the scorer gets its own process group, so a timeout kills the benchmarks it
+    // spawned. Killing only the scorer leaves them holding our stdio pipes and we wait out the
+    // full run anyway.
     //
-    // PWD is set alongside cwd because `spawn` sets only the real working directory, while a shell
-    // always sets both — and tools that resolve their project root from `$PWD` (qmd is one) would
-    // otherwise act on *avo's* directory instead of the target repo. That is how `avo know init
-    // --cwd <other-repo>` came to write a qmd index into this repo (S4).
+    // PWD is set alongside cwd because `spawn` sets only the real working directory while a shell
+    // sets both, and tools resolving their project root from `$PWD` (qmd) would act on *avo's*
+    // directory. That is how `avo know init --cwd <other>` wrote a qmd index into this repo (S4).
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: { ...process.env, ...opts.env, PWD: resolvePath(opts.cwd) },
@@ -160,9 +153,9 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
 /**
  * Accumulates a child's output into a bounded head **and a rolling tail**, with a marked gap.
  *
- * The marker is a plain line rather than valid JSON on purpose: a consumer that parses lines
- * already skips what it cannot parse, and one that parses the whole buffer was going to fail on a
- * severed payload either way. What it must not do is fail *silently*, which a head-only cap does.
+ * The marker is plain text, not JSON, on purpose: a line-parsing consumer already skips what it
+ * cannot parse, and a whole-buffer parser would fail on a severed payload either way. What it must
+ * not do is fail *silently*, which a head-only cap does.
  */
 function capped(): { push(chunk: string): void; value(): string } {
   const headCap = OUTPUT_CAP - OUTPUT_TAIL_CAP;
@@ -206,9 +199,9 @@ export function isParseFailure(r: ParseSuccess | ParseFailure): r is ParseFailur
 }
 
 /**
- * Validates one line of scorer output. The contract says stdout is a single JSON line, but a
- * scorer that also echoes build noise is far too common to reject: we take the last line that
- * parses as JSON and warn about the rest.
+ * Validates one line of scorer output. The contract says stdout is one JSON line, but a scorer that
+ * also echoes build noise is too common to reject: take the last line that parses, warn about the
+ * rest.
  */
 export function parseScoreOutput(stdout: string): ParseSuccess | ParseFailure {
   const lines = stdout.split("\n").filter((l) => l.trim() !== "");
@@ -316,10 +309,8 @@ function interpret(run: RunResult, label: string): ParseSuccess | ParseFailure {
 }
 
 /**
- * Reduces one-or-more scorer outputs into an Attempt.
- *
- * With several configs, `primary` becomes their arithmetic mean — informative for a human, but not
- * the commit criterion: `avo commit` compares the `scores` vector (PLAN §6 Q1).
+ * Reduces one or more scorer outputs into an Attempt. With several configs `primary` is their
+ * arithmetic mean — informative, but not the commit criterion: that is the `scores` vector (Q1).
  */
 export function normalize(
   parts: readonly { config: string; result: ParseSuccess | ParseFailure }[],
@@ -358,8 +349,8 @@ export function normalize(
     unit: first?.unit ?? "",
     higher_is_better: higherIsBetter,
     scores,
-    // A single scorer's self-reported duration is more meaningful than our wall clock (it excludes
-    // process startup); across configs only the wall clock describes the fan-out.
+    // One scorer's self-reported duration beats our wall clock (no process startup); across
+    // configs only the wall clock describes the fan-out.
     duration_s:
       outputs.length === 1 && typeof first?.duration_s === "number" ? first.duration_s : meta.durationS,
     configs: parts.map((p) => p.config),
@@ -418,8 +409,8 @@ export interface InitResult {
 }
 
 /**
- * Scaffolds `.avo/score` from a template. Idempotent: an identical existing scorer is left alone;
- * a *different* one is never clobbered without `--force` (invariant 5).
+ * Scaffolds `.avo/score` from a template. Idempotent: an identical scorer is left alone, a
+ * *different* one is never clobbered without `--force` (invariant 5).
  */
 export function initScorer(cwd: string, template: string, force: boolean): InitResult {
   const available = listTemplates();
@@ -533,8 +524,8 @@ export interface ScoreRun {
 }
 
 /**
- * Runs `f` once and returns the normalized attempt. This is the single scoring path: `avo score`
- * renders it, `avo commit` gates on it. Nothing else may invoke `.avo/score` directly.
+ * Runs `f` once, returns the normalized attempt. The single scoring path: `avo score` renders it,
+ * `avo commit` gates on it. Nothing else may invoke `.avo/score` directly.
  */
 export async function runScore(
   opts: ScoreOptions,
@@ -560,8 +551,8 @@ export async function runScore(
 
   let configs: string[] | null = null;
   if (opts.parallel) {
-    // A declared config list skips the probe entirely: probing costs a full extra scoring run on
-    // every scorer that does not implement --configs, which is most of them (issue #4).
+    // A declared config list skips the probe, which costs a full extra scoring run on every
+    // scorer that does not implement --configs — most of them (#4).
     const declared = loadConfig(opts.cwd);
     warmupWarnings.push(...declared.warnings);
     if (declared.config.configs !== null) {

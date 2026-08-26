@@ -36,9 +36,9 @@ avo know search "..." --ingest                          # also write the pages i
 avo know search "..." --backend ddgs                    # keyless
 ```
 
-Backends: `firecrawl` (needs `FIRECRAWL_API_KEY`; the only one that returns page *content*, so the
-only one `--ingest` works with), `searxng` (needs `SEARXNG_URL`), `ddgs` (keyless, links only).
-Nothing configured names all three and how to enable each rather than failing.
+Backends: `firecrawl` (needs `FIRECRAWL_API_KEY`; the only one returning page *content*, so the only
+one `--ingest` works with), `searxng` (needs `SEARXNG_URL`), `ddgs` (keyless, links only). With
+nothing configured it names all three and how to enable each rather than failing.
 
 ## Ingest one specific thing
 
@@ -49,29 +49,29 @@ avo know add <url> --name flash-attn-3                  # name the doc
 avo know add <url> --force                              # replace a differing existing doc
 ```
 
-Every ingested doc carries provenance frontmatter — `source`, `title`, `fetched-at`, `via`. **A doc
-in `K` with no source is one you cannot re-check**, so do not hand-write files into `knowledge/`
-without it; use `avo know add` on the local file instead.
+Every ingested doc carries provenance frontmatter — `source`, `title`, `fetched-at`, `via`. **A doc in
+`K` with no source is one you cannot re-check**, so do not hand-write files into `knowledge/`; run
+`avo know add` on the local file instead.
 
 Ingest is idempotent on the doc **body**: identical content is `unchanged`, differing content is
 refused until `--force`. The comparison ignores `fetched-at`, which would otherwise make every
 re-fetch look like a conflict.
 
-## Keeping the index current
+## Keep the index current
 
 ```bash
 avo know reindex          # re-scan the collections; needed after files land in lineage/
 avo know init             # create the collections (folded into `avo init`)
 ```
 
-`avo commit` writes `lineage/vNNN.md` directly, so run `avo know reindex` before searching the
-lineage for something committed in this session.
+`avo commit` writes `lineage/vNNN.md` directly, so run `avo know reindex` before searching the lineage
+for something committed in this session.
 
 ## Judgement
 
-- **Query `K` before you propose an approach**, and query it again when an approach keeps failing.
-  It costs one command and it holds everything past sessions learned.
-- **Prefer `query` to `search`.** The web costs credits and latency; `K` is local. Go online when
-  `K` has nothing, then ingest what you find so the next session does not have to.
-- `avo know query` can be slow cold (tens of seconds while the reranker loads). Use `--lexical` when
-  you want a fast keyword pass.
+- **Query `K` before you propose an approach**, and again when an approach keeps failing. It costs one
+  command and holds everything past sessions learned.
+- **Prefer `query` to `search`.** The web costs credits and latency; `K` is local. Go online when `K`
+  has nothing, then ingest what you find so the next session does not have to.
+- `avo know query` can be slow cold (tens of seconds while the reranker loads). Use `--lexical` for a
+  fast keyword pass.

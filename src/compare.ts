@@ -1,9 +1,8 @@
 import type { AvoConfig } from "./config.ts";
 
 /**
- * A direction-normalized score vector: higher is always better, whatever the metric's own
- * direction. This is what the commit rule compares — never the scalar `primary`, which is only
- * their mean and lets one config's win hide another's regression (PLAN §6 Q1).
+ * A direction-normalized score vector: higher is always better. What the commit rule compares —
+ * never the scalar `primary`, whose mean lets one config's win hide another's regression (Q1).
  */
 export type Vector = Record<string, number>;
 
@@ -15,9 +14,8 @@ export interface Scored {
 }
 
 /**
- * The vector form of `f`. A scorer that reports no `scores` object is still a one-config scorer:
- * its whole-repo measurement becomes the `*` config, so single- and multi-config repos compare
- * through exactly the same code path.
+ * The vector form of `f`. A scorer with no `scores` object is a one-config scorer: its whole-repo
+ * measurement becomes the `*` config, so both kinds compare through one code path.
  */
 export function scoreVector(s: Scored): Vector {
   const sign = s.higher_is_better ? 1 : -1;
@@ -31,9 +29,8 @@ export function scoreVector(s: Scored): Vector {
 }
 
 /**
- * Signed relative change from `best` to `candidate`, both direction-normalized. `Infinity` when
- * the baseline is exactly zero and the candidate moved off it — any change from zero is infinitely
- * relative, and the floor should not silently swallow it.
+ * Signed relative change from `best` to `candidate`, both direction-normalized. `Infinity` when the
+ * baseline is exactly zero and the candidate moved off it: the floor must not swallow that.
  */
 export function relDelta(candidate: number, best: number): number {
   const d = candidate - best;
@@ -84,12 +81,12 @@ const pct = (rel: number): string =>
 const list = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(", ");
 
 /**
- * The commit rule (paper §3.2, reduction per PLAN §6 Q1). Correctness is *not* checked here —
- * `avo commit` gates on it first; this only ranks two passing candidates.
+ * The commit rule (paper §3.2, reduction per Q1). Correctness is *not* checked here — `avo commit`
+ * gates on it first; this ranks two passing candidates.
  *
  * Two anti-gaming rules ride along: a config the best version measured but the candidate did not
- * blocks the commit (you cannot improve by measuring less), while a *new* config does not; and a
- * metric that changed direction is refused outright rather than compared as if it hadn't.
+ * blocks the commit (you cannot improve by measuring less) while a *new* config does not, and a
+ * metric that changed direction is refused rather than compared as if it hadn't.
  */
 export function compareVectors(
   candidate: Vector,

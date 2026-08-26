@@ -20,9 +20,8 @@ import {
  * collections: `knowledge/` (what we were told) and `lineage/` (what we learned), so the agent can
  * semantically search its own history with the same tool it uses for docs (PLAN §3).
  *
- * qmd is an *optional* dependency and, as with `bd` in S3, its absence is the common path: the
- * fallback below answers the same query with the same JSON shape, so an agent never has to know
- * whether qmd was installed (invariant 3, invariant 4).
+ * qmd is optional and, as with `bd` in S3, its absence is the common path: the fallback answers the
+ * same query with the same JSON shape, so an agent never branches on it (invariants 3 and 4).
  */
 export const QMD = "qmd";
 export const KNOWLEDGE_DIR = "knowledge";
@@ -37,7 +36,7 @@ const QUERY_TIMEOUT_MS = 180_000;
 const EMBED_TIMEOUT_MS = 1_800_000;
 const PROBE_TIMEOUT_MS = 30_000;
 const SCRAPE_TIMEOUT_MS = 120_000;
-/** A knowledge doc beyond this is truncated: `K` is for reading, not for archiving. */
+/** Docs are truncated here: `K` is for reading, not archiving. */
 const DOC_CAP = 400_000;
 
 /** The two collections avo owns, with the descriptions that become `qmd context add` entries. */
@@ -55,10 +54,10 @@ export const COLLECTIONS: readonly { name: string; dir: string; context: string 
 ];
 
 export interface QmdStatus {
-  /** Installed *and* this repo has a project-local index — the only state qmd is usable in. */
+  /** Installed *and* this repo has a local index — the only usable state. */
   available: boolean;
   installed: boolean;
-  /** Why qmd is unusable, phrased so it names the fix. Shown verbatim. */
+  /** Why qmd is unusable, phrased to name the fix. Shown verbatim. */
   reason: string | null;
   version: string | null;
   /** Collection names read from `.qmd/index.yml`. */
@@ -96,12 +95,9 @@ function why(r: RunResult): string {
 }
 
 /**
- * Collection names out of `.qmd/index.yml`.
- *
- * Deliberately not a YAML parser: the file is machine-written by qmd with a fixed two-space shape,
- * and the only thing we need from it is which collections exist, which is exactly what makes
- * `avo know init` idempotent. A hand-edited file that does not match simply reports no collections,
- * and `qmd collection add` then reports 'already exists' harmlessly.
+ * Collection names out of `.qmd/index.yml`. Not a YAML parser: qmd writes the file with a fixed
+ * two-space shape, and all we need is which collections exist — which is what makes `avo know init`
+ * idempotent. A hand-edited file reports none, and `qmd collection add` then says 'already exists'.
  */
 export function readQmdCollections(cwd: string): string[] {
   let raw: string;
@@ -126,9 +122,9 @@ export function readQmdCollections(cwd: string): string[] {
 }
 
 /**
- * Two questions, one spawn plus one file read: is qmd installed, and does *this repo* have an
- * index. The second matters because without `qmd init` qmd silently uses the user's global index
- * at `~/.cache/qmd`, which would mix one repo's knowledge into every other repo's searches.
+ * Two questions, one spawn and one read: is qmd installed, and does *this repo* have an index. The
+ * second matters because without `qmd init` qmd silently uses the global index at `~/.cache/qmd`,
+ * mixing one repo's knowledge into every other repo's searches.
  */
 export async function probeQmd(runner: Runner, cwd: string): Promise<QmdStatus> {
   const r = await qmd(runner, cwd, ["--version"], PROBE_TIMEOUT_MS);
@@ -169,7 +165,7 @@ export async function resolveKnowledge(runner: Runner, cwd: string): Promise<Kno
 // the local fallback
 // ---------------------------------------------------------------------------
 
-/** Words too common to discriminate. Short on purpose: over-filtering loses real query terms. */
+/** Too common to discriminate. Short on purpose: over-filtering loses real terms. */
 const STOPWORDS = new Set(["the", "a", "an", "and", "or", "of", "to", "in", "is", "it", "for", "on", "how", "do", "does", "i", "we", "with", "that", "this", "be", "are", "was", "can"]);
 
 export function queryTerms(query: string): string[] {
@@ -177,7 +173,7 @@ export function queryTerms(query: string): string[] {
     .toLowerCase()
     .split(/[^a-z0-9_]+/)
     .filter((t) => t.length > 1 && !STOPWORDS.has(t));
-  // Everything filtered out means the query was all stopwords; keep them rather than match nothing.
+  // All-stopword query: keep them rather than match nothing.
   return terms.length > 0 ? [...new Set(terms)] : [...new Set(query.toLowerCase().split(/[^a-z0-9_]+/).filter((t) => t !== ""))];
 }
 
@@ -211,8 +207,8 @@ export interface DocRef {
 
 /**
  * Every doc in a collection, unranked. `localSearch` answers "what matches this query"; this answers
- * "what is in `K` at all", which is the question the supervisor asks when it wants a direction the
- * lineage has never mentioned — a search cannot find what nobody thought to query for.
+ * "what is in `K` at all" — the supervisor's question, since a search cannot find what nobody
+ * thought to query for.
  */
 export function listDocs(cwd: string, collection: string | null = null): DocRef[] {
   const docs: DocRef[] = [];
@@ -235,11 +231,11 @@ export function listDocs(cwd: string, collection: string | null = null): DocRef[
 }
 
 /**
- * The keyless fallback: term-coverage search over the same files qmd would index.
+ * The keyless fallback: term-coverage search over the files qmd would index.
  *
- * It is not BM25 and does not pretend to be — `score` is the fraction of distinct query terms the
- * document contains, so it is comparable against a `--min-score` threshold and means the same thing
- * in both backends: 1 is "every term is here". Ranking within a score ties on total term hits.
+ * Not BM25, and not pretending to be — `score` is the fraction of distinct query terms present, so
+ * it is comparable against `--min-score` and means the same in both backends: 1 is "every term is
+ * here". Ties break on total term hits.
  */
 export function localSearch(cwd: string, query: string, limit: number): Hit[] {
   const terms = queryTerms(query);
@@ -324,10 +320,9 @@ export interface KnowInitResult {
 }
 
 /**
- * `.qmd/` is machine-local: `index.yml` records collection paths as *absolute* paths, so a
- * committed index is wrong on every other machine, and `index.sqlite` is a multi-megabyte binary.
- * A `*` gitignore inside the directory hides all of it, including itself, which also keeps it out
- * of the tree-dirtiness check `avo commit` reasons about.
+ * `.qmd/` is machine-local: `index.yml` records *absolute* collection paths, so a committed index is
+ * wrong everywhere else, and `index.sqlite` is a multi-megabyte binary. A `*` gitignore inside hides
+ * all of it including itself, keeping it out of the dirtiness check too.
  */
 export function ensureQmdIgnored(cwd: string): "created" | "unchanged" {
   const path = join(cwd, QMD_IGNORE);
@@ -338,8 +333,8 @@ export function ensureQmdIgnored(cwd: string): "created" | "unchanged" {
 }
 
 /**
- * Scaffolds `K`. Safe to re-run: existing collections are detected from `.qmd/index.yml` and
- * skipped rather than re-added, and qmd's absence is a skipped step, not a failure (invariant 4).
+ * Scaffolds `K`. Safe to re-run: existing collections are read from `.qmd/index.yml` and skipped,
+ * and qmd's absence is a skipped step rather than a failure (invariant 4).
  */
 export async function runKnowInit(cwd: string, runner: Runner = spawnRunner): Promise<KnowInitResult> {
   const steps: InitStep[] = [];
@@ -365,8 +360,7 @@ export async function runKnowInit(cwd: string, runner: Runner = spawnRunner): Pr
     return { ok: true, backend: "files", steps, warnings, errors };
   }
 
-  // `qmd init` is idempotent (verified against qmd 2.8.3: a second run keeps the indexed docs), but
-  // report it honestly by checking for the config first.
+  // `qmd init` is idempotent (qmd 2.8.3 keeps indexed docs), but report honestly: check first.
   const hadIndex = existsSync(join(cwd, QMD_CONFIG));
   if (hadIndex) {
     steps.push({ name: `${QMD} init`, action: "unchanged", detail: `${QMD_CONFIG} already exists` });
@@ -399,9 +393,8 @@ export async function runKnowInit(cwd: string, runner: Runner = spawnRunner): Pr
       continue;
     }
     steps.push({ name: `collection ${c.name}`, action: "created", detail: `indexes ${c.dir}/**/*${INDEXED_EXT}` });
-    // Contexts are qmd's headline feature: a human summary attached to a collection, which the
-    // reranker reads. Only worth writing when the collection is new — re-adding overwrites a
-    // description the user may have edited.
+    // Contexts are qmd's headline feature: a human summary the reranker reads. New collections
+    // only — re-adding overwrites a description the user may have edited.
     const ctx = await qmd(runner, cwd, ["context", "add", `qmd://${c.name}/`, c.context], QUERY_TIMEOUT_MS);
     if (ctx.code !== 0 || ctx.spawnError !== null) warnings.push(`qmd context add for '${c.name}' failed (${why(ctx)})`);
   }
@@ -484,14 +477,13 @@ export async function knowQuery(
     if (r.spawnError === null && r.code === 0) {
       const hits = parseQmdHits(r.stdout, cwd);
       if (hits !== null) {
-        // qmd search reports BM25 hits with score 0 (verified against 2.8.3), so a threshold would
-        // silently discard every one of them. Say so rather than returning a confusing empty list.
+        // qmd search reports BM25 hits with score 0 (2.8.3), so a threshold discards them all.
+        // Say so rather than returning a confusing empty list.
         if (opts.lexical && opts.minScore !== null && opts.minScore > 0 && hits.every((h) => h.score === 0)) {
           warnings.push(`qmd search does not report a relevance score, so --min-score ${opts.minScore} would drop every hit; it is applied only to 'avo know query' without --lexical`);
           return { backend: "qmd", query, hits, warnings, errors: [] };
         }
-        // qmd writes "N documents need embeddings" to stderr; it is exactly the actionable hint an
-        // agent should see, because it explains an empty vector result.
+        // qmd's "N documents need embeddings" on stderr explains an empty vector result.
         const note = r.stderr.trim().split("\n").find((l) => l.toLowerCase().includes("embedding"));
         if (note !== undefined) warnings.push(`${note.trim()} — run 'avo know add' or 'qmd embed'`);
         return { backend: "qmd", query, hits: filterScore(hits, opts.minScore), warnings, errors: [] };
@@ -558,10 +550,9 @@ export function docBody(text: string): string {
 }
 
 /**
- * Makes a newly written doc findable. Both calls are needed and in this order: `qmd embed` only
- * generates vectors for documents the index already knows about, so a doc added after
- * `qmd collection add` stays invisible — `qmd ls knowledge` reports "No files found" and every
- * search returns nothing — until `qmd update` re-scans the collection. Verified against qmd 2.8.3.
+ * Makes a new doc findable. Both calls, in this order: `qmd embed` only vectorizes documents the
+ * index already knows, so a doc added after `qmd collection add` stays invisible — `qmd ls` reports
+ * "No files found" and every search returns nothing — until `qmd update` re-scans (qmd 2.8.3).
  */
 export async function reindex(runner: Runner, cwd: string, collection: string): Promise<{ embedded: boolean; warnings: string[] }> {
   const warnings: string[] = [];
@@ -664,8 +655,7 @@ export async function knowAdd(
   const existedBefore = existsSync(path);
   if (existedBefore) {
     const existing = readFileSync(path, "utf8");
-    // Compare bodies, not whole files: `fetched-at` differs on every fetch, so comparing the
-    // rendered doc would report every re-fetch of an unchanged page as a conflict (invariant 5).
+    // Bodies, not whole files: `fetched-at` would make every re-fetch a conflict (invariant 5).
     if (docBody(existing).trim() === docBody(doc).trim()) {
       return { ok: true, action: "unchanged", path: rel, source: target, bytes: body.length, embedded: false, warnings, error: null };
     }
@@ -728,9 +718,9 @@ export interface KnowOptions {
 }
 
 /**
- * Built fresh per call, never spread from a shared constant: `args` is a mutable array, and a
- * module-level default would be the *same* array in every invocation, so two `avo know` calls in
- * one process (the Pi extension runs many) would accumulate each other's arguments.
+ * Built fresh per call, never spread from a shared constant: `args` is mutable, so a module-level
+ * default would be the *same* array every time and two calls in one process (the Pi extension runs
+ * many) would accumulate each other's arguments.
  */
 function defaultKnowOptions(): KnowOptions {
   return {
@@ -890,7 +880,7 @@ export async function knowCommand(
           : `nothing to reindex — the local scan reads ${COLLECTIONS.map((c) => `${c.dir}/`).join(" and ")} directly\n`,
       );
     }
-    // Not an error without qmd: the fallback reads the files live, so it is never stale.
+    // Not an error without qmd: the fallback reads live files, never stale.
     return 0;
   }
 

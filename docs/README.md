@@ -1,6 +1,6 @@
 # avocode docs
 
-One document per question. Start with whichever one you actually have.
+One document per question.
 
 | I want to… | Read |
 | --- | --- |

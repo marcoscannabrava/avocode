@@ -5,17 +5,15 @@ import { fileURLToPath } from "node:url";
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /**
- * Where skills live, relative to a repo root. This is the Agent Skills standard's shared location —
- * the whole point of the directory is that it is not any one agent's: Pi discovers it natively, and
- * `avo install` wires the others to it rather than copying (PLAN §3).
+ * Where skills live, relative to a repo root: the Agent Skills standard's shared location, which is
+ * no one agent's. Pi discovers it natively; `avo install` wires the others to it (PLAN §3).
  */
 export const SKILLS_DIR = ".agents/skills";
 export const SKILL_FILE = "SKILL.md";
 
 /**
- * avocode's own checkout, wherever it was installed. Exported because `avo install` links a target
- * repo at two things that ship with avo — the skills and the Pi extension — and computing the root
- * twice is how the two ends come to disagree about which checkout is "ours".
+ * avocode's own checkout, wherever installed. Exported because `avo install` links a target repo at
+ * two things avo ships — the skills and the Pi extension — and two roots is how they disagree.
  */
 export function avocodeRoot(): string {
   return repoRoot;
@@ -43,12 +41,11 @@ export interface Skill {
 }
 
 /**
- * Minimal YAML front-matter reader: the flat `key: value` subset the Agent Skills spec uses, plus
- * `key:` followed by an indented block (which we keep as a single joined string, enough to tell
- * present-and-non-empty from missing).
+ * Minimal YAML front-matter reader: the flat `key: value` subset the spec uses, plus `key:` followed
+ * by an indented block (joined into one string, enough to tell non-empty from missing).
  *
- * Deliberately not a YAML dependency. Frontmatter we cannot parse with these rules is frontmatter
- * some agent out there will also refuse, so failing here is the useful outcome.
+ * Deliberately not a YAML dependency. Frontmatter these rules cannot parse is frontmatter some
+ * agent will also refuse, so failing here is the useful outcome.
  */
 export function parseFrontmatter(text: string): { fields: Record<string, string>; body: string } | { error: string } {
   const normalized = text.replace(/^﻿/, "");
@@ -63,8 +60,7 @@ export function parseFrontmatter(text: string): { fields: Record<string, string>
   for (const raw of head.split("\n")) {
     if (raw.trim() === "" || raw.trimStart().startsWith("#")) continue;
     if (/^\s/.test(raw)) {
-      // A continuation line. Folding it onto the key keeps multi-line descriptions readable in the
-      // file while still letting us check that the description is non-empty and within the cap.
+      // Folded onto the key: multi-line descriptions stay readable and still checkable.
       if (current === null) return { error: `unexpected indented line in frontmatter: '${raw.trim()}'` };
       fields[current] = `${fields[current] ?? ""} ${raw.trim()}`.trim();
       continue;
@@ -89,8 +85,7 @@ function unquote(v: string): string {
 
 /**
  * Validates one skill directory against the Agent Skills spec. `name` must equal the directory name:
- * Pi relaxes that rule, but Claude Code and the spec do not, and a skill we ship has to load
- * everywhere — so we hold ourselves to the strictest reading rather than the most lenient.
+ * Pi relaxes that, Claude Code and the spec do not, and a shipped skill must load everywhere.
  */
 export function readSkill(skillsDir: string, dir: string): Skill {
   const path = join(skillsDir, dir, SKILL_FILE);

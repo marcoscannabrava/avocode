@@ -2,24 +2,23 @@
 
 ## avocode
 
-This repo is an [avocode](https://github.com/marcoscannabrava/avocode) optimization loop: a scorer
-`.avo/score` defines what better means, and a committed lineage of versions records every
-improvement. Some rules always apply here.
+This repo is an [avocode](https://github.com/marcoscannabrava/avocode) optimization loop:
+`.avo/score` defines what better means, and a committed lineage records every improvement.
+These rules always apply here.
 
 - **`avo commit` is the only thing that persists a version.** Never hand-write a version commit,
   never edit `lineage/`, and never edit `.avo/score` to make a candidate pass.
 - **Measure before you claim.** `avo score --json` is the only evidence that a change helped.
-- **Read the past before you vary.** `avo mem prime`, `avo best`, and
+- **Read the past before you vary.** `avo mem prime`, `avo best` and
   `avo know query "<idea>"` cost one command each and hold what earlier sessions learned.
-- **Record what you learn.** `avo mem add "<insight>"` — especially dead ends. A refusal you do
-  not write down is a refusal the next session earns again.
+- **Record what you learn.** `avo mem add "<insight>"` — especially dead ends. An unrecorded
+  refusal is one the next session earns again.
 - **Use `bd` for task state, never markdown TODO lists.** `bd create`, `bd ready`, `bd close`.
-  Markdown checklists are exactly what beads exists to replace, and they do not survive a
-  session boundary.
+  Markdown checklists are what beads exists to replace, and they do not survive a session.
 
 ### Skills
 
-Full instructions live in `.agents/skills/<name>/SKILL.md`. Read the one that matches the task.
+Full instructions live in `.agents/skills/<name>/SKILL.md`. Read the one matching the task.
 
 | Skill | Read this when |
 | --- | --- |

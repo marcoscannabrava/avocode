@@ -26,10 +26,9 @@ export const ConfigSchema = Type.Object(
     /** Declares the scorer's configs so `avo score --parallel` skips the `--configs` probe. */
     configs: Type.Optional(Type.Array(Type.String())),
     /**
-     * When the supervisor intervenes (S7). `stall` is how many attempts may go by with no committed
-     * improvement before it steers; `thrash` is how many consecutive failures with the *same*
-     * signature count as re-trying the same broken thing. Repo policy, not a per-call choice: a
-     * scorer that takes an hour wants a smaller `stall` than one that takes a second.
+     * When the supervisor intervenes (S7). `stall`: attempts allowed with no committed improvement.
+     * `thrash`: consecutive same-signature failures that count as re-trying one broken thing. Repo
+     * policy — an hour-long scorer wants a smaller `stall` than a one-second one.
      */
     supervise: Type.Optional(
       Type.Object({
@@ -38,10 +37,10 @@ export const ConfigSchema = Type.Object(
       }),
     ),
     /**
-     * A custom headless agent for `avo fan`, so the harness drives something other than the three
-     * built-ins without a code change (PLAN §2: agent-agnostic is the point). `{prompt}` and
-     * `{model}` are substituted per argument; an argument mentioning `{model}` is dropped when no
-     * model is set. `format` picks the output parser; omit it for an agent that just prints prose.
+     * A custom headless agent for `avo fan`, so the harness drives something beyond the three
+     * built-ins with no code change (PLAN §2). `{prompt}` and `{model}` are substituted per
+     * argument, and one mentioning `{model}` is dropped when no model is set. `format` picks the
+     * output parser; omit it for an agent that prints prose.
      */
     agent: Type.Optional(
       Type.Object({
@@ -86,9 +85,9 @@ export const DEFAULT_CONFIG: AvoConfig = {
 };
 
 /**
- * A fresh copy every time. Spreading `DEFAULT_CONFIG` is shallow, so every caller would share one
- * `weights` and one `supervise` object — the same class of bug as S4's shared `args` array, which
- * let two `avo know` calls in one process accumulate each other's arguments.
+ * A fresh copy every time. Spreading `DEFAULT_CONFIG` is shallow, so callers would share one
+ * `weights` and one `supervise` object — S4's shared-`args` bug, which let two `avo know` calls in
+ * one process accumulate each other's arguments.
  */
 function defaults(): AvoConfig {
   return { ...DEFAULT_CONFIG, weights: {}, supervise: { ...DEFAULT_CONFIG.supervise } };

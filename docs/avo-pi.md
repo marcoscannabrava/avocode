@@ -1,34 +1,36 @@
 # AVO: Agentic Variation Operators
 
-## Deconstructing the AVO Architecture
+## The AVO architecture
 
-### The Limitations of Classical EVO
-In classical Large Language Model-augmented evolutionary approaches (e.g., FunSearch, AlphaEvolve), the LLM is restricted to a `Generate` step. The framework handles `Sample` (selecting parents) and `Update` (evaluating and managing population). This single-turn generation prevents the LLM from:
-* Proactively consulting reference documentation.
-* Debugging compilation or correctness failures iteratively.
-* Adapting its strategy based on profiling feedback before committing a candidate.
+### The limits of classical EVO
+In LLM-augmented evolutionary approaches (FunSearch, AlphaEvolve), the LLM is restricted to a
+`Generate` step; the framework handles `Sample` and `Update`. Single-turn generation prevents the LLM
+from:
+* consulting reference documentation;
+* debugging compilation or correctness failures iteratively;
+* adapting its strategy on profiling feedback before committing a candidate.
 
-### The AVO Paradigm
-AVO fuses sampling, generation, and evaluation into a continuous agent loop. The operator is defined as `Vary(P_t) = Agent(P_t, K, f)`, where:
-* **`P_t` (Lineage):** The historical sequence of committed solutions and their performance scores.
-* **`K` (Knowledge Base):** Domain-specific resources (CUDA/PTX docs, hardware specs, reference implementations).
-* **`f` (Scoring Function):** Dual-metric evaluation covering numerical correctness and hardware throughput (TFLOPS).
+### The AVO paradigm
+AVO fuses sampling, generation and evaluation into one agent loop: `Vary(P_t) = Agent(P_t, K, f)`.
+* **`P_t` (lineage):** committed solutions and their scores, in order.
+* **`K` (knowledge base):** CUDA/PTX docs, hardware specs, reference implementations.
+* **`f` (scoring function):** numerical correctness and throughput (TFLOPS).
 
-### Continuous Evolution & Self-Supervision
-To sustain multi-day optimization without human intervention, AVO relies on two components:
-1. **Main Agent Loop:** Iteratively cycles through Planning, Implementation, Evaluation, and Bug-Fixing.
-2. **Supervisor Agent:** A monitoring mechanism that detects evolutionary stagnation or unproductive edit cycles. Upon detection, it performs conditional intervention to redirect the main agent toward fresh optimization vectors.
+### Continuous evolution and self-supervision
+Two components sustain multi-day optimization without human intervention:
+1. **Main agent loop:** plan, implement, evaluate, fix, repeat.
+2. **Supervisor agent:** detects stagnation or unproductive edit cycles, then intervenes to redirect
+   the main agent.
 
 ---
 
-## Implementing AVO via Pi (pi.dev) Extensions
+## Implementing AVO via Pi extensions
 
-Pi (pi.dev) is a minimal, highly extensible coding agent harness. By writing TypeScript extensions for Pi, we can map the AVO architecture directly into Pi's lifecycle and tool execution models. 
+Pi (pi.dev) is a minimal, extensible coding agent harness. TypeScript extensions map the AVO
+architecture onto Pi's lifecycle and tool execution models. Three approaches, using `ExtensionAPI`:
 
-Below are the recommended approaches for building an AVO extension using the `ExtensionAPI`.
-
-### Approach 1: Defining the AVO Tools
-The AVO agent requires tools to fetch knowledge (`K`), read lineage (`P_t`), and evaluate kernels (`f`). 
+### Approach 1: define the AVO tools
+The agent needs tools to fetch knowledge (`K`), read lineage (`P_t`) and evaluate kernels (`f`).
 
 ```typescript
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -72,8 +74,9 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-### Approach 2: Building the Supervisor Agent via Event Interception
-AVO requires a "Supervisor" to prevent stagnation. In Pi, extensions can intercept the `tool_call` event to silently track the agent's progress. If the TFLOPS score hasn't improved in `N` turns, the extension can inject a steering message.
+### Approach 2: build the supervisor via event interception
+Extensions intercept the `tool_call` event to track progress silently. If the TFLOPS score has not
+improved in `N` turns, inject a steering message.
 
 ```typescript
 export default function (pi: ExtensionAPI) {
@@ -105,8 +108,7 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-### Approach 3: Delegated Sub-Agents (Using `pi-subagents` or `pi-crew`)
+### Approach 3: delegated sub-agents (`pi-subagents`, `pi-crew`)
 
-Do not attempt this approach. It's been tried and these extensions do not work well enough.
-
-`pi-subagents` can be explored as inspiration.
+**Do not attempt this.** It has been tried; these extensions do not work well enough. Read
+`pi-subagents` for inspiration only.

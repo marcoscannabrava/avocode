@@ -9,37 +9,33 @@ import { runScore, spawnRunner, type Attempt, type RunResult, type Runner, type 
 /** Rendered, human- and qmd-readable record of each committed version. */
 export const LINEAGE_DIR = "lineage";
 /**
- * Trajectory, not population. These are written *by* the harness during a variation step, so they
- * must never enter the lineage: committing them would make every version's diff include the log of
- * how it was reached, and would leave the working tree permanently dirty — which would in turn
- * defeat the no-op check below.
+ * Trajectory, not population. Written *by* the harness during a variation step, so they must never
+ * enter the lineage: committing them puts the log of how a version was reached inside it, and leaves
+ * the tree permanently dirty — which defeats the no-op check below.
  */
 export const TRAJECTORY_PATHS: readonly string[] = [".avo/attempts.jsonl", ".avo/worktrees", ".avo/runs"];
 const TRAJECTORY_IGNORE = ".avo/.gitignore";
 /**
- * What `.avo/.gitignore` says, one entry per trajectory path — patterns relative to `.avo/`, with a
- * trailing slash on the directories. A test asserts every TRAJECTORY_PATH has an entry, because the
- * two lists drifting apart is silent: the path stays unstaged by `avo commit` and still shows up in
- * `git status` for every other tool the operator runs.
+ * `.avo/.gitignore`'s contents: one entry per trajectory path, relative to `.avo/`, directories with
+ * a trailing slash. A test asserts every TRAJECTORY_PATH has one, because drift is silent — the path
+ * stays unstaged but still shows in `git status` for every other tool.
  */
 const IGNORE_ENTRIES: readonly string[] = ["attempts.jsonl", "worktrees/", "runs/"];
 /**
- * Any `.avo/.gitignore` opening with this is ours to extend. Matched by prefix, not equality: files
- * written before `avo run` existed say "written by avo commit", and they must still receive the
- * entry for a path added later — which is the bug this replaced. A file *without* the marker is the
- * operator's and is never touched.
+ * A `.avo/.gitignore` opening with this is ours to extend. Prefix-matched, not equality: files
+ * written before `avo run` existed say "written by avo commit" and must still gain later entries —
+ * the bug this replaced. A file without the marker is the operator's, never touched.
  */
 const IGNORE_MARKER = "# written by avo";
 const IGNORE_HEADER = `${IGNORE_MARKER}: trajectory, not lineage`;
 /**
- * Everything avo writes *by itself*. None of it may make the working tree read as a candidate
- * change: the trajectory log and the harness gitignore are ours, and so is the memory log, which
- * `avo commit` appends to *after* committing. Without this, the memory written for v1 would make
- * the next run see a change the agent never made — scoring an unchanged tree, refusing it as no
- * improvement, and remembering that refusal, which dirties the tree again.
+ * Everything avo writes *by itself*, none of which may read as a candidate change: the trajectory
+ * log, the harness gitignore, and the memory log `avo commit` appends *after* committing. Without
+ * this, v1's memory makes the next run see a change the agent never made — scoring an unchanged
+ * tree, refusing it, and remembering that refusal, which dirties the tree again.
  *
- * Unlike TRAJECTORY_PATHS these are not unstaged: `.avo/.gitignore` and `lineage/memory.jsonl`
- * belong in the repository, they are just not evidence of a variation.
+ * Unlike TRAJECTORY_PATHS these stay staged: they belong in the repo, they are just not evidence of
+ * a variation.
  */
 export const HARNESS_PATHS: readonly string[] = [...TRAJECTORY_PATHS, TRAJECTORY_IGNORE, MEMORY_PATH];
 /** `git notes --ref=avo` carries the full attempt; trailers carry only what the comparator needs. */
@@ -47,7 +43,7 @@ export const NOTES_REF = "avo";
 export const VERSION_TRAILER = "Avo-Version";
 export const SCORE_TRAILER = "Avo-Score";
 
-/** ASCII unit/record separators — safe in a commit message, unlike anything a human might type. */
+/** ASCII unit/record separators: safe in a commit message, unlike typable text. */
 const US = "\x1f";
 const RS = "\x1e";
 
@@ -86,8 +82,8 @@ export function toVersionScore(a: Attempt): VersionScore {
     primary: a.primary,
     unit: a.unit,
     higher_is_better: a.higher_is_better,
-    // Persist the vector the comparator will actually use, so a later version compares against the
-    // same keys whether or not the scorer reported a `scores` object (PLAN §6 Q1).
+    // Persist the comparator's own vector, so keys match whether or not the scorer sent
+    // `scores` (PLAN §6 Q1).
     scores: Object.keys(a.scores).length > 0 ? a.scores : a.primary === null ? {} : { "*": a.primary },
   };
 }
@@ -136,12 +132,10 @@ export function withoutTrajectory(porcelain: string): string[] {
 }
 
 /**
- * Idempotent, and *additive*: a file we wrote gains any entry it is missing, so a repo that has been
- * running avo since before `.avo/runs/` existed still stops tracking it. Returning early on an
- * existing file — the original behaviour — meant a new trajectory path was ignored only in repos
- * created after it, which is the worst kind of divergence: it works on the machine that added it.
- *
- * A `.avo/.gitignore` without our marker belongs to the operator and is left exactly as it is.
+ * Idempotent and *additive*: a file we wrote gains any missing entry, so a repo predating
+ * `.avo/runs/` still stops tracking it. Returning early on an existing file — the original bug —
+ * ignored a new trajectory path only in repos created after it: divergence that works on the machine
+ * that added it. A file without our marker is the operator's and is left alone.
  */
 export function ensureTrajectoryIgnored(cwd: string): void {
   const path = join(cwd, TRAJECTORY_IGNORE);
@@ -164,7 +158,7 @@ export function ensureTrajectoryIgnored(cwd: string): void {
     const body = existing === "" || existing.endsWith("\n") ? existing : `${existing}\n`;
     writeFileSync(path, `${body}${missing.join("\n")}\n`);
   } catch {
-    // A read-only .avo just means the paths get unstaged explicitly instead; not worth failing on.
+    // A read-only .avo just means explicit unstaging instead.
   }
 }
 
@@ -174,13 +168,12 @@ export async function isGitRepo(runner: Runner, cwd: string): Promise<boolean> {
 }
 
 /**
- * `P_t` — the committed lineage, read from git and nothing else. Attempts live in
- * `.avo/attempts.jsonl` and are trajectory, not population: a version exists iff a commit carries
- * the trailers, which is what makes `avo commit` the only writer (invariant 1).
+ * `P_t` — the committed lineage, read from git and nothing else. A version exists iff a commit
+ * carries the trailers, which is what makes `avo commit` the only writer (invariant 1); attempts in
+ * `.avo/attempts.jsonl` are trajectory.
  *
- * `rev` is anything `git log` accepts, so a *range* (`before..after`) reads back the versions that
- * appeared across some span of the loop rather than the whole lineage — which is how `avo run`
- * finds out that the agent committed for itself (#42).
+ * `rev` is anything `git log` accepts, so a *range* (`before..after`) reads back the versions from
+ * one span of the loop — how `avo run` learns the agent committed for itself (#42).
  */
 export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Promise<Lineage> {
   const log = await git(runner, cwd, ["log", `--format=%H${US}%aI${US}%B${RS}`, rev]);
@@ -210,8 +203,7 @@ export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Pr
       warnings.push(`commit ${sha.slice(0, 7)} (v${version}) has no readable ${SCORE_TRAILER} trailer; skipped`);
       continue;
     }
-    // git log is newest-first, so the first sighting of a number is the surviving one after a
-    // cherry-pick or a rebase that duplicated it.
+    // git log is newest-first, so first sighting wins after a duplicating rebase.
     if (seen.has(version)) {
       warnings.push(`v${version} appears on more than one commit; using the most recent (${sha.slice(0, 7)})`);
       continue;
@@ -231,9 +223,8 @@ export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Pr
 }
 
 /**
- * The best committed version is the highest-numbered one: the commit rule only admits a version
- * that did not regress against its predecessor, so the lineage is monotone by construction under
- * whatever reduction was in force.
+ * The best version is the highest-numbered: the rule only admits non-regressions, so the lineage is
+ * monotone by construction under whatever reduction was in force.
  */
 export function bestVersion(versions: readonly Version[]): Version | null {
   return versions.length === 0 ? null : (versions.reduce((a, b) => (b.version > a.version ? b : a)) as Version);
@@ -419,9 +410,9 @@ function refusal(reason: string, extra: Partial<CommitDecision> = {}): CommitDec
 }
 
 /**
- * The commit rule (paper §3.2): persist a new version only when it passes correctness *and* beats
- * the best committed version. `avo commit` is the only writer of committed lineage (invariant 1),
- * and it always scores first — you cannot commit a version whose score you did not measure.
+ * The commit rule (paper §3.2): persist a version only when it passes correctness *and* beats the
+ * best committed one. The only writer of committed lineage (invariant 1), and it always scores
+ * first — you cannot commit a score you did not measure.
  */
 export async function decideCommit(opts: CommitOptions, runner: Runner, now: () => Date): Promise<CommitDecision> {
   if (!(await isGitRepo(runner, opts.cwd))) {
@@ -436,8 +427,8 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
     });
   }
 
-  // Idempotency (invariant 5): nothing changed means nothing to persist. Re-running must never
-  // append a duplicate version — the lineage records variations, not invocations.
+  // Invariant 5: nothing changed, nothing to persist. The lineage records variations, not
+  // invocations.
   ensureTrajectoryIgnored(opts.cwd);
   const status = await git(runner, opts.cwd, ["status", "--porcelain"]);
   if (withoutTrajectory(status.stdout).length === 0) {
@@ -514,8 +505,7 @@ async function writeCommit(
   // .gitignore covers a fresh repo; this covers one where the attempt log was already tracked.
   await git(runner, opts.cwd, ["reset", "-q", "HEAD", "--", ...TRAJECTORY_PATHS]);
 
-  // The diffstat comes from the index *before* the lineage file is written, so it describes the
-  // change that was scored rather than the record of it.
+  // From the index *before* the lineage file is written: the change, not the record of it.
   const stat = await git(runner, opts.cwd, ["diff", "--cached", "--stat", "HEAD"]);
   const diffstat = stat.code === 0 ? stat.stdout : "";
 
@@ -538,7 +528,7 @@ async function writeCommit(
   const trailers = `${VERSION_TRAILER}: ${version}\n${SCORE_TRAILER}: ${JSON.stringify(score)}`;
   const commit = await git(runner, opts.cwd, ["commit", "-m", subject, ...why.flatMap((w) => ["-m", w]), "-m", trailers]);
   if (commit.code !== 0) {
-    // The index keeps what we staged, but the record of a version that does not exist must go.
+    // The index keeps what we staged; a nonexistent version's record must not.
     rmSync(absPath, { force: true });
     return fail(`git commit failed: ${(commit.stderr + commit.stdout).trim()}`);
   }
@@ -573,10 +563,9 @@ async function writeCommit(
 }
 
 /**
- * Mirrors the decision into memory (S3): a committed version becomes a bead linked to its parent,
- * a refused candidate becomes an insight so the agent stops re-trying that dead end across
- * sessions. Memory is a cache of *why*, never the source of truth — a failure here is a warning on
- * an otherwise good commit, never a failed commit.
+ * Mirrors the decision into memory (S3): a version becomes a bead linked to its parent, a refusal
+ * becomes an insight so the dead end survives the session. Memory is a cache of *why*, never the
+ * source of truth — a failure here warns on an otherwise good commit.
  */
 export async function recordDecisionMemory(
   opts: CommitOptions,
@@ -584,8 +573,8 @@ export async function recordDecisionMemory(
   runner: Runner,
   now: () => Date,
 ): Promise<string[]> {
-  // --no-record and --dry-run both mean "write nothing about this run"; a no-op ran no variation,
-  // and a harness error (no attempt) taught us nothing about the candidate.
+  // --no-record and --dry-run write nothing; a no-op ran no variation, and a harness error
+  // taught us nothing about the candidate.
   if (!opts.record || opts.dryRun || d.attempt === null) return [];
   if (d.action !== "committed" && d.action !== "refused") return [];
   if (d.action === "refused" && d.errors.length > 0) return [];
@@ -617,8 +606,7 @@ export async function recordDecisionMemory(
       .join("\n");
     input = {
       kind: "failure",
-      // Keyed by content, so re-attempting the same dead end updates one record instead of piling
-      // up — which is the whole point of remembering it.
+      // Keyed by content: re-attempting one dead end updates one record.
       key: `avo-dead-end-${shortHash(`${d.reason}${vector}`)}`,
       text: `dead end from ${from}: ${d.reason}`,
       version: d.best?.version ?? null,

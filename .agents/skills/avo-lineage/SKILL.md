@@ -5,12 +5,12 @@ description: Read and extend `P_t`, the committed lineage of an avocode repo —
 
 # avo lineage — reading and extending `P_t`
 
-`P_t` is the population: the sequence of committed versions, each one strictly better than the last.
-It lives in git, not in a database — a version *is* a commit carrying `Avo-Version: N` and
+`P_t` is the population: the sequence of committed versions, each strictly better than the last. It
+lives in git, not a database — a version *is* a commit carrying `Avo-Version: N` and
 `Avo-Score: <compact json>` trailers, with the full attempt in `git notes --ref=avo` and a rendered
 `lineage/vNNN.md`.
 
-## Reading it
+## Read it
 
 ```bash
 avo lineage                  # every version, newest last: number, score, unit, subject
@@ -20,9 +20,8 @@ avo lineage show 7           # v7 in full: score table, parent, decision, ration
 avo lineage diff 5 7         # score delta + the patch between two versions
 ```
 
-Because the commit rule only ever persists an improvement, the lineage is **monotone by
-construction** — so `avo best` is simply the highest-numbered version. There is no ranking pass and
-no need to search for the best.
+Because the commit rule only persists an improvement, the lineage is **monotone by construction** —
+so `avo best` is simply the highest-numbered version. There is no ranking pass.
 
 The rendered `lineage/*.md` files are also a knowledge collection, so the lineage is semantically
 searchable with the same tool as the docs:
@@ -33,11 +32,10 @@ avo know query "what did I already try about register pressure?"
 
 That is usually a better first move than `avo lineage show` on ten versions in turn.
 
-## Extending it
+## Extend it
 
-Only `avo commit` writes a version. Nothing else may — not a manual `git commit`, not an edit to
-`lineage/`. It is the single writer, which is what makes the trailers, the notes, and the rendered
-files consistent with each other.
+Only `avo commit` writes a version. Not a manual `git commit`, not an edit to `lineage/`. It is the
+single writer, which is what keeps the trailers, the notes and the rendered files consistent.
 
 ```bash
 avo commit --why "<what changed and why it should help>"
@@ -47,11 +45,11 @@ avo commit --dry-run --why "..."     # the decision, without writing anything
 ## The commit rule
 
 A candidate is persisted **only** if it passes correctness **and** beats the best committed version:
-by default, `>=` on every config the two share and `>` on at least one (*dominate-or-tie*).
+by default, `>=` on every shared config and `>` on at least one (*dominate-or-tie*).
 
-- A weighted **mean** is available in `.avo/config.json` for configs that genuinely trade off. It is
-  not the default, because a mean lets a large win on one config pay for a regression on another —
-  precisely the silent regression the rule exists to stop.
+- A weighted **mean** is available in `.avo/config.json` for configs that genuinely trade off. Not the
+  default, because a mean lets a large win on one config pay for a regression on another — precisely
+  the silent regression the rule exists to stop.
 - `floor` is a **symmetric** relative band: a change inside it is neither better nor worse, so noise
   can neither commit nor block.
 - A config in the best version but **missing** from the candidate blocks the commit — you cannot
@@ -63,7 +61,7 @@ Failed attempts never enter the lineage. They stay in the trajectory (`.avo/atte
 memory as insight beads, which is what stops a later session re-trying them — see
 [avo-vary](../avo-vary/SKILL.md).
 
-## Reading a refusal
+## Read a refusal
 
 The refusal names the config and the delta. Treat it as a measurement:
 

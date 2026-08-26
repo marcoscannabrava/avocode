@@ -23,42 +23,42 @@ avo score --parallel       # one process per game
 ```
 
 There is no per-step reward to climb. The engine's `FrameDataRaw` carries `levels_completed` and
-`win_levels` and nothing finer — no `score` field, whatever the toolkit docs say — so a config's
-score is `max levels_completed reached / win_levels`, averaged over `ROLLOUTS` rollouts.
+`win_levels` and nothing finer — no `score` field, whatever the toolkit docs say — so a config's score
+is `max levels_completed reached / win_levels`, averaged over `ROLLOUTS` rollouts.
 
-**Ten configs, because `avo commit` compares the score *vector*.** A policy that learns one game at
-the expense of another cannot commit, and dropping a game to look good is refused outright. The
-baseline, per config:
+**Ten configs, because `avo commit` compares the score *vector*.** A policy that learns one game at the
+expense of another cannot commit, and dropping a game to look good is refused outright. The baseline,
+per config:
 
 | ez02 | tt01 | va01 | ul01 | fs01 | tp01 | nw01 | mm01 | ff01 | ff03 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | .450 | .264 | .258 | .183 | .108 | .333 | .300 | .274 | .300 | .300 |
 
-Nothing here is saturated, nothing sits at zero, and nothing is timed — all three on purpose, and
-each one cost a game. A config at zero swings ±100% when it moves by one level on one rollout, and
-since `avo commit` compares *relative* deltas, one such config would veto every commit whatever
-`floor` said (that was `sq01`). And a real-time game is not reproducible: Whack-a-Mole scored 0.483,
-0.533, 0.483 on three consecutive runs of identical code, which would let the loop commit pure noise
-(that was `wm01`). Every game left is frame-counted and exact.
+Nothing is saturated, nothing sits at zero, and nothing is timed — all three on purpose, and each cost
+a game. A config at zero swings ±100% when it moves by one level on one rollout, and since `avo commit`
+compares *relative* deltas, one such config would veto every commit whatever `floor` said (that was
+`sq01`). A real-time game is not reproducible: Whack-a-Mole scored 0.483, 0.533, 0.483 on three
+consecutive runs of identical code, which would let the loop commit pure noise (that was `wm01`). Every
+game left is frame-counted and exact.
 
 ## The one thing worth knowing before you start
 
 `.avo/config.json` sets `reduce: "dominate"` and `floor: 0.1`: a commit needs at least one config to
 improve by more than 10% and **none** to regress by more than 10%.
 
-That floor is measured, not guessed. Two policies with *identical behaviour* that merely consume
-`rng` in a different order disagree by a median of 6% per config (18% at 8 rollouts, which is why
-`ROLLOUTS` is 24). Any change to how you draw from `rng` reshuffles every trajectory, so a change
-that touches the shared path is scored partly on luck.
+That floor is measured, not guessed. Two policies with *identical behaviour* that merely consume `rng`
+in a different order disagree by a median of 6% per config (18% at 8 rollouts, which is why `ROLLOUTS`
+is 24). Any change to how you draw from `rng` reshuffles every trajectory, so a change touching the
+shared path is scored partly on luck.
 
 The practical consequence, and the most useful thing on this page:
 
 > **A change that leaves other configs' `rng` consumption untouched is scored exactly, not
 > approximately.**
 
-The shipped ladder is built that way. Aiming *only* the click coordinates — same number of draws,
-same order, different values — makes the seven movement games come back **bit-identical** (`rel: 0`)
-while the click games move on their own merits:
+The shipped ladder is built that way. Aiming *only* the click coordinates — same number of draws, same
+order, different values — makes the seven movement games come back **bit-identical** (`rel: 0`) while
+the click games move on their own merits:
 
 ```
 ff01  0.300 -> 0.492   +64%
@@ -80,16 +80,16 @@ Prefer additive changes until you run out of them.
 
 ## Rules
 
-**You may change `src/`.** Add modules, keep state on the `Policy` instance, build a world model —
-as long as `Policy` keeps its constructor (`action_space`, `rng`, both by keyword) and its `act`.
+**You may change `src/`.** Add modules, keep state on the `Policy` instance, build a world model — as
+long as `Policy` keeps its constructor (`action_space`, `rng`, both by keyword) and its `act`.
 
 **What the policy is given:** the action space, a seeded `random.Random`, and per step a frame with
 `frame` (a list of numpy `(64, 64)` `int8` grids), `state`, `levels_completed`, `win_levels`,
 `available_actions`.
 
-**What it is not given: the game's identity.** ARC-AGI-3 is a benchmark about games you have not
-seen. A policy keyed on the game id is a lookup table, so `bench/run.py` does not pass one. You may
-of course *recognise* a game from its frames — that is perception, and it is the job.
+**What it is not given: the game's identity.** ARC-AGI-3 is a benchmark about games you have not seen.
+A policy keyed on the game id is a lookup table, so `bench/run.py` does not pass one. You may of course
+*recognise* a game from its frames — that is perception, and it is the job.
 
 **Three things will fail you outright**, all enforced while `act` runs:
 
@@ -100,8 +100,8 @@ of course *recognise* a game from its frames — that is perception, and it is t
 | an illegal action, or a click with no `x`/`y` | the contract |
 
 The sandbox raises a `BaseException`, not an `Exception`, and also records a flag the harness checks
-after `act` returns — an earlier version raised a plain `Exception` and a policy wrapping its body
-in `except Exception: pass` swallowed the violation and scored a clean 0.26.
+after `act` returns — an earlier version raised a plain `Exception` and a policy wrapping its body in
+`except Exception: pass` swallowed the violation and scored a clean 0.26.
 
 **Everything else is `f` and is off limits:**
 
@@ -116,9 +116,9 @@ in `except Exception: pass` swallowed the violation and scored a clean 0.26.
 | `.avo/score` | `f` itself |
 | `.avo/protected.txt` | the list above, which is why it is on it |
 
-Their hashes are in `.avo/gate.sha256`; touch one and every score comes back `correct: false` with
-the path named, which can never commit. `bench/init.sh --verify` re-checks it from outside the repo,
-where an agent that also edited the gate cannot reach.
+Their hashes are in `.avo/gate.sha256`; touch one and every score comes back `correct: false` with the
+path named, which can never commit. `bench/init.sh --verify` re-checks it from outside the repo, where
+an agent that also edited the gate cannot reach.
 
 ## Setup
 
@@ -129,9 +129,8 @@ bench/setup.sh --check  # what is missing?
 ```
 
 Needs Python ≥ 3.12 (`arc-agi` requires it) and `git`. The games are fetched from
-[`theredbluepill/arc-interactive`](https://github.com/theredbluepill/arc-interactive) (MIT) at a
-pinned commit and verified against `bench/games.lock` — both by `setup.sh` and again by `.avo/score`
-on every run.
+[`theredbluepill/arc-interactive`](https://github.com/theredbluepill/arc-interactive) (MIT) at a pinned
+commit and verified against `bench/games.lock` — by `setup.sh`, and again by `.avo/score` on every run.
 
 Neither `.venv/` nor `bench/games/` is committed, so neither is ever part of a candidate's diff.
 
@@ -142,19 +141,19 @@ In order, all in `.avo/score`:
 1. the protected files hash to what `bench/init.sh` recorded;
 2. the toolkit and corpus are installed — a missing venv is `ok: false`, not a bad score;
 3. `bench/games/` hashes to `bench/games.lock`;
-4. `test/test_policy.py` passes — constructible, legal actions, clicks carry coordinates,
-   reproducible for a fixed seed, tolerates numpy frames, survives a one-action game;
+4. `test/test_policy.py` passes — constructible, legal actions, clicks carry coordinates, reproducible
+   for a fixed seed, tolerates numpy frames, survives a one-action game;
 5. every episode ran without the policy breaking the contract or reaching outside its frames.
 
-Point 4 is not ceremony. The suite's fake frame hands over real numpy arrays because an earlier
-version used nested lists, and a policy that compared two frames with `==` passed the suite and then
-died on the real thing with *"truth value of an array is ambiguous"*. A fake easier to satisfy than
-the real interface is worse than no fake.
+Point 4 is not ceremony. The suite's fake frame hands over real numpy arrays because an earlier version
+used nested lists, and a policy comparing two frames with `==` passed the suite and then died on the
+real thing with *"truth value of an array is ambiguous"*. A fake easier to satisfy than the real
+interface is worse than no fake.
 
 ## Beyond `f`
 
-`f` measures ten games that live in this repo, so it cannot tell a policy that learned to play from
-one that memorised ten games. Two checks exist outside it, in the avocode checkout:
+`f` measures ten games that live in this repo, so it cannot tell a policy that learned to play from one
+that memorised ten games. Two checks exist outside it, in the avocode checkout:
 
 ```sh
 test/fixtures/arcagi3/score-holdout.sh <this-repo>   # eight games this repo has never seen

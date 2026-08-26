@@ -1,11 +1,11 @@
 /**
- * The variation operator's *driver*: how avo starts a headless coding agent, and how one turn of it
- * is run and classified.
+ * The variation operator's *driver*: starting a headless coding agent, running one turn, classifying
+ * how it ended.
  *
- * Every surface here was read off the real binaries (pi 0.84.3, claude 2.1.241, codex-cli 0.147.0)
- * rather than from memory, because a wrong flag here fails silently — the agent starts, refuses to
- * edit anything, exits 0, and the probe reads as "the model had no idea". That is exactly the trap
- * S5 recorded for `pi --approve`, and each template below carries the same class of flag.
+ * Every surface was read off the real binaries (pi 0.84.3, claude 2.1.241, codex-cli 0.147.0), not
+ * from memory: a wrong flag fails silently — the agent starts, edits nothing, exits 0, and the probe
+ * reads as "the model had no idea". That is S5's `pi --approve` trap, and every template below
+ * carries the same class of flag.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -19,9 +19,8 @@ export interface AgentInvocation {
 
 /**
  * One turn's usage, normalized so the four counts are **disjoint**: total input sent is
- * `input + cache_read + cache_write`. Cached input is kept apart from uncached rather than summed
- * into it because it is priced at roughly a tenth (read) and a quarter over (write) — folding them
- * together throws away the only thing these numbers are collected for.
+ * `input + cache_read + cache_write`. Cached input stays apart from uncached because it is priced at
+ * roughly a tenth (read) and a quarter over (write) — summing them throws away the whole point.
  */
 export interface AgentTokens {
   /** Input billed at full rate: the portion that did *not* come from the prompt cache. */
@@ -39,9 +38,8 @@ export interface AgentOutput {
   summary: string | null;
   tokens: AgentTokens | null;
   /**
-   * What the agent says the turn cost in USD, when it says so at all (`null` otherwise). Taken
-   * from the agent rather than derived from `tokens`: it knows which model served each request and
-   * at what rate, and we do not. #28's cost budget spends this number.
+   * The turn's USD as the agent reported it, else `null`. Taken from the agent, not derived from
+   * `tokens`: it knows which model served each request and at what rate. #28 spends this number.
    */
   cost_usd: number | null;
 }
@@ -54,8 +52,8 @@ export interface AgentTemplate {
   args(inv: AgentInvocation): string[];
   format: OutputFormat;
   /**
-   * The flag that stops the agent asking a human for permission, and why it is safe here. Reported
-   * by `avo fan --json` so the operator can see what their agent was actually allowed to do.
+   * The flag that stops the agent asking a human for permission, and why it is safe. Reported by
+   * `avo fan --json` so the operator sees what the agent was allowed to do.
    */
   approval: string;
 }
@@ -68,9 +66,8 @@ const model = (inv: AgentInvocation, flag: string): string[] => (inv.model === n
 export const PI: AgentTemplate = {
   name: "pi",
   command: "pi",
-  // --approve is load-bearing: headless pi never shows the project-trust dialog, and without a
-  // saved decision it ignores project-local .agents/skills/ and .pi/settings.json entirely — so the
-  // skills `avo install` wired would not load in the one mode `avo fan` uses (PLAN §4, S5).
+  // --approve is load-bearing: headless pi never shows the project-trust dialog, and untrusted it
+  // ignores project-local .agents/skills/ and .pi/settings.json entirely (PLAN §4, S5).
   args: (inv) => ["--mode", "json", "--print", "--approve", ...model(inv, "--model"), END_OPTS, inv.prompt],
   format: "pi",
   approval: "--approve (trusts project-local files for this run; headless pi cannot ask)",
@@ -79,9 +76,8 @@ export const PI: AgentTemplate = {
 export const CLAUDE: AgentTemplate = {
   name: "claude",
   command: "claude",
-  // --verbose is required alongside --output-format stream-json under --print. bypassPermissions is
-  // what makes the probe able to edit at all: in print mode a permission prompt is an auto-denial,
-  // so the default mode yields an agent that reads and never writes.
+  // --verbose is required alongside stream-json under --print. bypassPermissions is what lets the
+  // probe edit at all: in print mode a permission prompt is an auto-denial.
   args: (inv) => [
     "--print",
     "--output-format",
@@ -100,11 +96,9 @@ export const CLAUDE: AgentTemplate = {
 export const CODEX: AgentTemplate = {
   name: "codex",
   command: "codex",
-  // workspace-write, not --dangerously-bypass-approvals-and-sandbox: the worktree *is* the writable
-  // workspace, which is the whole point of fanning out into one. Reads are unrestricted, so
-  // `avo score` works; writes outside the worktree do not, so a probe cannot reach the real repo.
-  // The cost is that `avo commit` inside a codex probe is blocked — it would write to the parent
-  // repo's .git — and promotion is the intended path anyway (invariant 7).
+  // workspace-write, not the bypass flag: the worktree *is* the writable workspace. Reads stay
+  // unrestricted so `avo score` works; writes outside it do not, so a probe cannot reach the real
+  // repo. Cost: `avo commit` inside a codex probe is blocked, and promotion is the path (invariant 7).
   args: (inv) => [
     "exec",
     "--json",
@@ -131,8 +125,8 @@ export interface CustomAgent {
 }
 
 /**
- * `{prompt}` and `{model}` are replaced inside each argument. An argument mentioning `{model}` is
- * dropped entirely when no model is set, so one template serves both cases without a second list.
+ * `{prompt}` and `{model}` are replaced per argument. An argument mentioning `{model}` is dropped
+ * when no model is set, so one template serves both cases.
  */
 export function customTemplate(spec: CustomAgent): AgentTemplate {
   return {
@@ -172,7 +166,7 @@ function* jsonLines(stdout: string): Generator<Record<string, unknown>> {
       const v: unknown = JSON.parse(t);
       if (typeof v === "object" && v !== null && !Array.isArray(v)) yield v as Record<string, unknown>;
     } catch {
-      // A killed agent leaves a half-written line; that is not a parse failure worth reporting.
+      // A killed agent leaves a half-written line. Not worth reporting.
     }
   }
 }
@@ -194,11 +188,10 @@ function obj(v: unknown): Record<string, unknown> | null {
  * | claude 2.1.241 | `input_tokens` | `output_tokens` | `cache_read_input_tokens` | `cache_creation_input_tokens` |
  * | codex-cli 0.147.0 | `input_tokens` *minus* `cached_input_tokens` | `output_tokens` | `cached_input_tokens` | — |
  *
- * Codex is the odd one and the reason this normalizes instead of copying: it follows OpenAI, where
- * `cached_input_tokens` is a **subset** of `input_tokens`, while pi and claude report the cached
- * portion **disjointly** from it. Copying both raw would double-count codex's cache hits and, far
- * worse, drop claude's entirely — the S9b-1 run recorded 24 input tokens for a turn that sent
- * 573,313, because 523,326 of them were a cache read (#43).
+ * Codex is why this normalizes instead of copying: it follows OpenAI, where `cached_input_tokens`
+ * is a **subset** of `input_tokens`, while pi and claude report it **disjointly**. Copying both raw
+ * double-counts codex's cache hits and drops claude's entirely — the S9b-1 run recorded 24 input
+ * tokens for a turn that sent 573,313, because 523,326 were a cache read (#43).
  */
 function tokensFrom(usage: unknown): AgentTokens | null {
   const u = obj(usage);
@@ -206,7 +199,7 @@ function tokensFrom(usage: unknown): AgentTokens | null {
   const output = num(u["output"]) ?? num(u["output_tokens"]);
   const rawInput = num(u["input"]) ?? num(u["input_tokens"]);
   const cacheWrite = num(u["cacheWrite"]) ?? num(u["cache_creation_input_tokens"]);
-  // `cached_input_tokens` last, and handled apart: it is codex's, and it is inclusive.
+  // `cached_input_tokens` last and apart: codex's, and inclusive.
   const disjointRead = num(u["cacheRead"]) ?? num(u["cache_read_input_tokens"]);
   const inclusiveRead = num(u["cached_input_tokens"]);
   const cacheRead = disjointRead ?? inclusiveRead;
@@ -242,18 +235,15 @@ function lastLine(stdout: string): string | null {
 }
 
 /**
- * The last line, but only if it is something the agent *said* rather than something its protocol
- * emitted (#49).
+ * The last line, but only if the agent *said* it rather than its protocol emitting it (#49).
  *
- * A structured agent that dies still prints prose on the way down — `fatal: out of credits` is a
- * real explanation and worth keeping. A protocol event is not: it becomes `avo commit --why`, and
- * from there the commit body, `lineage/vNNN.md` and `memory.jsonl`, all of them permanent, and the
- * last of them replayed to future turns as a known dead end.
+ * A dying structured agent still prints prose on the way down: `fatal: out of credits` explains a
+ * turn. A protocol event does not, and it becomes `avo commit --why` — permanent in the commit body,
+ * `lineage/vNNN.md` and `memory.jsonl`, and replayed to later turns as a known dead end.
  *
- * Anything opening a JSON object or array is treated as protocol, including a half-written line
- * from a killed process — `{"type":"result","resu` is unparseable but obviously not prose. Only
- * the LAST line is considered: prose that appeared *before* the event stream is startup noise
- * (`npm notice`, a shell warning), not a rationale, and resurrecting it would be its own bug.
+ * Anything opening a JSON object or array counts as protocol, including a half-written line from a
+ * killed process. Only the LAST line is considered: earlier prose is startup noise (`npm notice`),
+ * not a rationale.
  */
 function lastProseLine(stdout: string): string | null {
   const line = lastLine(stdout);
@@ -266,21 +256,19 @@ function lastProseLine(stdout: string): string | null {
  * Pulls the final message, the token counts and the reported cost out of one agent's stdout.
  *
  * **All three agents report usage cumulatively for the turn**, so last-seen wins rather than being
- * summed: claude emits exactly one `result` event closing the turn, codex exactly one
- * `turn.completed`, and pi's `message_update`/`message_end` usage is a running total for the
- * session (docs/json.md). An agent that instead reported *per-message* usage would need summing
- * here, and would silently report only its last message until someone noticed — which is why this
- * assumption is written down rather than left in the shape of the code.
+ * summed: one `result` event from claude, one `turn.completed` from codex, and pi's
+ * `message_update`/`message_end` usage is a session running total (docs/json.md). An agent reporting
+ * *per-message* usage would need summing here, and would silently report only its last message —
+ * hence the assumption is written down rather than left in the shape of the code.
  *
- * Deliberately tolerant: a format that changes under us must degrade to `summary: null` and a
- * scored, diffed probe, never to a crash that loses the whole fan-out (invariant 4).
+ * Deliberately tolerant: a changed format must degrade to `summary: null` and a scored, diffed
+ * probe, never a crash that loses the fan-out (invariant 4).
  */
 export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOutput {
   if (format === "text") return { summary: lastLine(stdout), tokens: null, cost_usd: null };
 
   let summary: string | null = null;
-  // The last thing the agent said *before* the turn closed. Only ever used as a fallback: a turn
-  // killed mid-stream has no `result` event but has usually already described what it did.
+  // Fallback only: a turn killed mid-stream has no `result` event but usually already spoke.
   let streamed: string | null = null;
   let tokens: AgentTokens | null = null;
   let costUsd: number | null = null;
@@ -288,12 +276,11 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
   for (const e of jsonLines(stdout)) {
     switch (format) {
       case "claude": {
-        // The single {"type":"result"} line closes the stream and carries both, verified against
-        // claude 2.1.241 --output-format stream-json.
+        // One {"type":"result"} line closes the stream and carries both (claude 2.1.241).
         if (e["type"] === "result") {
           if (typeof e["result"] === "string") summary = e["result"];
           tokens = tokensFrom(e["usage"]) ?? tokens;
-          // Sibling of `usage`, not a member of it — and already what the ralph loop bills by.
+          // Sibling of `usage`, not a member — and what the ralph loop bills by.
           costUsd = num(e["total_cost_usd"]) ?? costUsd;
         } else if (e["type"] === "assistant") {
           const m = obj(e["message"]);
@@ -302,8 +289,8 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
         break;
       }
       case "pi": {
-        // message_end is the final authoritative message (docs/json.md); message_update carries the
-        // latest cumulative usage, which is all a provider reporting only at completion gives us.
+        // message_end is authoritative for the message; message_update carries the latest
+        // cumulative usage, all a provider reporting only at completion gives us (docs/json.md).
         if (e["type"] === "message_end") {
           const m = obj(e["message"]);
           if (m !== null && m["role"] === "assistant") {
@@ -333,10 +320,8 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
     }
   }
 
-  // A structured agent that died mid-stream still said something useful on the way down — in its
-  // own last message first, and failing that in whatever prose it printed as it fell over. What it
-  // must never produce is a protocol event dressed up as the agent's rationale (#49): silence is
-  // the honest answer, and `avo run` records it as a warning rather than committing noise.
+  // A mid-stream death still said something: its last message first, then any prose it printed.
+  // Never a protocol event dressed as a rationale (#49) — silence is the honest answer.
   return { summary: summary ?? streamed ?? lastProseLine(stdout), tokens, cost_usd: costUsd };
 }
 
@@ -396,11 +381,10 @@ export interface AgentTurn {
 }
 
 /**
- * Starts a headless agent, records what it said, and classifies how it ended.
+ * Starts a headless agent, records what it said, classifies how it ended.
  *
- * Shared by `avo fan` (one turn per worktree) and `avo run` (one turn per iteration) so the two
- * report a timeout, a crash and a missing binary in exactly the same words. What differs between
- * them — the worktree, the diffstat, the commit decision — stays with the caller.
+ * Shared by `avo fan` (per worktree) and `avo run` (per iteration), so both report a timeout, a
+ * crash and a missing binary in the same words. The worktree, diffstat and commit stay with caller.
  */
 export async function driveAgent(
   runner: Runner,
@@ -422,7 +406,7 @@ export async function driveAgent(
     mkdirSync(dirname(opts.logFile), { recursive: true });
     writeFileSync(opts.logFile, raw);
   } catch {
-    // A log we cannot write must not lose the turn; the result below still carries the summary.
+    // An unwritable log must not lose the turn; the result still carries the summary.
   }
 
   const parsed = parseAgentOutput(template.format, run.stdout);

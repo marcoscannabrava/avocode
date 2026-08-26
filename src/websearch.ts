@@ -6,10 +6,9 @@ import { spawnRunner, type Runner } from "./score.ts";
 /**
  * Online search — how `K` grows from the web. Three backends, one shape.
  *
- * Firecrawl is the default because it is the only one of the three that returns *page content*,
- * which is what `avo know search --ingest` needs; PLAN §6 Q2 is answered: its free tier is 1,000
- * credits/month with no card, and search costs 2 credits per 10 results, so the default is usable
- * without paying. The other two are keyless fallbacks that return links and snippets only.
+ * Firecrawl is the default because it alone returns *page content*, which `--ingest` needs. PLAN §6
+ * Q2: its free tier is 1,000 credits/month with no card and search costs 2 credits per 10 results,
+ * so the default is usable unpaid. The other two are keyless, links and snippets only.
  */
 export type SearchBackendKind = "firecrawl" | "searxng" | "ddgs";
 
@@ -78,9 +77,8 @@ export interface BackendChoice {
 }
 
 /**
- * No key configured must name the alternatives, not throw a stack trace (S4 acceptance).
- * `ddgs` is last because it is the only one whose availability we cannot check from the
- * environment alone — it is a binary, so it fails at call time rather than at selection time.
+ * No key configured names the alternatives rather than throwing (S4 acceptance). `ddgs` is last: a
+ * binary, so its availability is unknowable from the environment and it fails at call time.
  */
 export function noBackendMessage(): string {
   return [
@@ -125,7 +123,7 @@ function str(o: Record<string, unknown>, ...keys: string[]): string {
 
 /**
  * Firecrawl `POST /v2/search`. `scrapeOptions.formats:["markdown"]` is what makes `--ingest`
- * possible: the search response carries the page body, so ingesting costs no extra scrape.
+ * possible: the response carries the page body, so ingesting costs no extra scrape.
  */
 export async function firecrawlSearch(
   fetcher: Fetcher,
@@ -153,8 +151,8 @@ export async function firecrawlSearch(
   }
   const root = asRecord(parsed);
   if (root["success"] === false) return { error: `firecrawl search reported failure${firstLine(String(root["error"] ?? ""))}` };
-  // v2 nests results by source: {data: {web: [...], news: [...]}}; older shapes put an array at
-  // data. Accept both rather than pinning one, so a shape change degrades to zero results.
+  // v2 nests by source ({data: {web, news}}); older shapes put an array at data. Accept both, so a
+  // shape change degrades to zero results.
   const data = root["data"];
   const rows: unknown[] = Array.isArray(data)
     ? data
@@ -237,9 +235,8 @@ export async function searxngSearch(
  * `ddgs text -q <q> -m <n> -o json`.
  *
  * Verified against ddgs 9.15.0: `-o json` does **not** print to stdout — it writes
- * `text_<query>_<timestamp>.json` into the *current directory*. Running it in the repo would print
- * nothing and litter the working tree with files `avo commit` would then read as a variation, so it
- * runs in a temp dir that is removed either way.
+ * `text_<query>_<timestamp>.json` into the *current directory*. In the repo that prints nothing and
+ * litters the tree with files `avo commit` reads as a variation, so it runs in a temp dir.
  */
 export async function ddgsSearch(
   runner: Runner,

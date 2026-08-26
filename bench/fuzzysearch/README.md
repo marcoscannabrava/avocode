@@ -11,8 +11,8 @@ search(["cat", "dog"], ["cat", "cot", "dig"], 1);
 //   {query:"dog", match:"dig", distance:1} ]
 ```
 
-The implementation in `src/search.js` is correct and slow. **Make it faster.** Result order is
-yours to choose; the gate compares result *sets*.
+`src/search.js` is correct and slow. **Make it faster.** Result order is yours to choose; the gate
+compares result *sets*.
 
 ## The objective
 
@@ -23,8 +23,8 @@ yours to choose; the gate compares result *sets*.
 avo score --json | jq .    # the same thing, normalized into an attempt
 ```
 
-Two configs (`small`, `large`) rather than one, because `avo commit` compares the score *vector*:
-a change that only helps one size has to prove it does not hurt the other. `.avo/config.json` sets
+Two configs (`small`, `large`) rather than one, because `avo commit` compares the score *vector*: a
+change that only helps one size has to prove it does not hurt the other. `.avo/config.json` sets
 `floor: 0.03`, so a move under 3% counts as neither better nor worse — that is measurement noise on
 this workload, and noise must neither commit nor block.
 
@@ -54,13 +54,13 @@ Three gates, in order, all in `.avo/score`:
 
 1. the protected files hash to what `bench/init.sh` recorded;
 2. `node --test test/` passes — edge cases, unicode, empty inputs, exact distances;
-3. `bench/run.js` confirms the candidate still agrees with `bench/reference.js` **on the exact input
-   it is about to be timed on**, and did not mutate its arguments.
+3. `bench/run.js` confirms the candidate still agrees with `bench/reference.js` **on the exact input it
+   is about to be timed on**, and did not mutate its arguments.
 
-Gate 3 is the one that matters most. The unit suite runs on small fixtures, so without a full-scale
-check, special-casing those fixtures would buy a real score. Being fast and wrong scores nothing.
+Gate 3 matters most. The unit suite runs on small fixtures, so without a full-scale check,
+special-casing those fixtures would buy a real score. Being fast and wrong scores nothing.
 
-## Running it
+## Run it
 
 ```sh
 npm test                            # the correctness suite

@@ -4,12 +4,11 @@
  * between processes.
  *
  * Deliberately almost empty, like `pi/extensions/avo/index.ts`. Everything is in `supervisor.ts`,
- * and the behaviour it steers on is `src/supervise.ts` — this file exists only to be the entry
- * point Pi discovers at `.pi/extensions/avo-supervisor/index.ts`.
+ * the behaviour it steers on in `src/supervise.ts`; this is only Pi's discovery point.
  *
- * It is a SEPARATE extension from `avo`, not a second half of it: the tools are useful without a
- * supervisor, and an operator already running `avo run` should be able to load one and not the
- * other. `avo install --agent pi` links both.
+ * A SEPARATE extension from `avo`, not a second half: the tools are useful without a supervisor, and
+ * an operator already running `avo run` should be able to load one and not the other. `avo install
+ * --agent pi` links both.
  *
  * For a one-off: `pi -e pi/extensions/avo/index.ts -e pi/extensions/avo-supervisor/index.ts`.
  */

@@ -1,10 +1,10 @@
 /**
- * Concurrency — `avo fan`. N variation directions explored at once, each in its own `git worktree`,
- * each by its own headless agent process. OS-level isolation and no shared state, the pattern
- * `mjakl/pi-subagent` validates (PLAN §2); the guards below are the same four it carries.
+ * `avo fan` — N variation directions at once, each in its own `git worktree` and headless agent
+ * process. OS-level isolation, no shared state: `mjakl/pi-subagent`'s pattern (PLAN §2), and its
+ * same four guards.
  *
- * Invariant 7 governs the whole file: **worktrees are disposable, `main` is not.** `avo fan` never
- * writes outside a worktree, and promoting a probe is a separate, explicit step.
+ * Invariant 7 governs the file: **worktrees are disposable, `main` is not.** Nothing writes outside
+ * a worktree, and promoting a probe is a separate, explicit step.
  */
 
 import { createHash } from "node:crypto";
@@ -24,7 +24,7 @@ import {
   type Runner,
 } from "./score.ts";
 
-/** Every run lives under here, which is gitignored *and* in TRAJECTORY_PATHS — trajectory, not lineage. */
+/** Every run lives here: gitignored and in TRAJECTORY_PATHS — trajectory, not lineage. */
 export const WORKTREES_DIR = ".avo/worktrees";
 export const MANIFEST_NAME = "manifest.json";
 
@@ -51,7 +51,7 @@ export interface Diffstat {
   files: number;
   insertions: number;
   deletions: number;
-  /** Paths the probe touched, so a human can see the shape of the change without reading the patch. */
+  /** Paths touched, so the shape of the change is visible without the patch. */
   changed: string[];
 }
 
@@ -74,10 +74,10 @@ export interface ProbeResult {
   score: ProbeScore | null;
   diffstat: Diffstat;
   summary: string | null;
-  /** Repo-relative, so the value is meaningful in a JSON line an agent reads from anywhere. */
+  /** Repo-relative, so the JSON means the same read from anywhere. */
   worktree: string;
   tokens: AgentTokens | null;
-  /** USD this probe cost, as the agent reported it — what #35's small-model question is priced in. */
+  /** USD as the agent reported it — what #35 is priced in. */
   cost_usd: number | null;
   wall_s: number;
   exit_code: number;
@@ -279,10 +279,9 @@ export interface GuardsRefused {
 }
 
 /**
- * Depth and cycle prevention. Both matter because a probe *is* an agent: give it the avo skills and
- * it can call `avo fan` itself, and an unguarded fan-out of fan-outs is exponential in wall-clock
- * and in spend. The state travels in the environment because that is the only channel that survives
- * `spawn` into an arbitrary agent binary.
+ * Depth and cycle prevention. A probe *is* an agent and can call `avo fan` itself; unguarded, that
+ * is exponential in wall-clock and spend. The state travels in the environment because that is the
+ * only channel surviving `spawn` into an arbitrary agent binary.
  */
 export function checkGuards(env: NodeJS.ProcessEnv, sha: string): GuardsOk | GuardsRefused {
   const warnings: string[] = [];
@@ -346,9 +345,8 @@ async function git(runner: Runner, cwd: string, args: readonly string[]): Promis
 }
 
 /**
- * `--numstat` against the baseline *commit* after `add -A -N`, which is the only combination that
- * sees all four states a probe can leave behind: committed, staged, unstaged, and untracked.
- * Ignored files (the attempt log, nested worktrees) stay out of it, which is what we want.
+ * `--numstat` against the baseline *commit* after `add -A -N` — the only combination seeing all four
+ * states a probe can leave: committed, staged, unstaged, untracked. Ignored files stay out.
  */
 export async function diffstatOf(runner: Runner, worktree: string, baseline: string): Promise<Diffstat> {
   await git(runner, worktree, ["add", "-A", "-N"]);
@@ -400,8 +398,8 @@ export function readManifest(cwd: string, runId: string): Manifest | { error: st
 }
 
 /**
- * Rewritten after every probe, so a kill mid-fan-out leaves a manifest that names the worktrees and
- * the results already in hand — that is what `--resume` reattaches to.
+ * Rewritten after every probe, so a kill mid-fan-out leaves a manifest naming the worktrees and the
+ * results in hand. That is what `--resume` reattaches to.
  */
 function writeManifest(cwd: string, m: Manifest): void {
   const dir = runDir(cwd, m.run_id);
@@ -429,9 +427,8 @@ export function listRuns(cwd: string): Manifest[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Re-exported: the cap lives with the agent driver in `agents.ts` because `avo run` truncates a
- * turn's summary by the same rule, and one loose copy of "how much of an agent's output do we
- * keep" is exactly how two commands start disagreeing about it.
+ * Re-exported: the cap lives in `agents.ts` because `avo run` truncates by the same rule, and two
+ * copies of it is how two commands start disagreeing.
  */
 export { capOutput, type Capped };
 
@@ -483,8 +480,7 @@ async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeR
     ctx.now,
   );
 
-  // Scored even when the agent failed: a half-finished edit that still passes `f` is a real result,
-  // and one that no longer builds is exactly what the operator needs to see.
+  // Scored even when the agent failed: a half-finished edit passing `f` is a real result.
   let score: ProbeScore | null = null;
   if (ctx.score && !turn.spawn_failed && existsSync(join(worktree, SCORER_PATH))) {
     const { attempt } = await runScore(
@@ -525,7 +521,7 @@ async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeR
 // the fan-out
 // ---------------------------------------------------------------------------
 
-/** Highest normalized score among probes that passed `f`. `null` when nothing scored or nothing passed. */
+/** Best normalized score among passing probes; `null` when none scored or passed. */
 export function bestProbe(results: readonly ProbeResult[]): number | null {
   let best: ProbeResult | null = null;
   for (const r of results) {
@@ -566,8 +562,7 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   const loaded = loadConfig(opts.cwd);
   warnings.push(...loaded.warnings);
 
-  // Which agent, and why — recorded in the result, because "it picked whatever was on PATH" is a
-  // fact a reader of last week's fan-out needs and cannot recover otherwise.
+  // Which agent and why: unrecoverable later, so it goes in the result.
   let agentName = opts.agent ?? loaded.config.agent?.name ?? null;
   if (agentName === null) {
     const found = firstOnPath(env, ["pi", "claude", "codex"]);
@@ -590,16 +585,14 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   }
   const baseline = head.out;
 
-  // We are about to create `.avo/worktrees/`, so the exclusion that keeps it out of the lineage has
-  // to exist first — the same thing `avo commit` does for the attempt log.
+  // `.avo/worktrees/` is about to exist, so its lineage exclusion must come first.
   ensureTrajectoryIgnored(opts.cwd);
 
-  // A worktree is created from HEAD, so uncommitted work in the root is invisible to every probe.
-  // Silently exploring a different tree than the operator is looking at is the worst failure here.
+  // Worktrees branch from HEAD, so uncommitted root work is invisible to every probe — silently
+  // exploring a different tree than the operator sees is the worst failure here.
   //
-  // Filtered through withoutTrajectory: avo's own worktrees must not read as a variation. Without
-  // it the *second* fan-out in a repo warns about `.avo/worktrees/` — a change the agent never made
-  // — which is the same self-perturbation the memory log caused in S3.
+  // Filtered through withoutTrajectory: avo's own worktrees must not read as a variation, or the
+  // second fan-out warns about `.avo/worktrees/`. Same self-perturbation as S3's memory log.
   const status = await git(runner, opts.cwd, ["status", "--porcelain"]);
   const dirty = status.ok ? withoutTrajectory(status.out) : [];
   if (dirty.length > 0) {
@@ -650,8 +643,7 @@ async function addWorktrees(
   const errors: string[] = [];
   for (const p of probes) {
     if (existsSync(join(cwd, p.worktree))) continue;
-    // --detach: a fan-out of 8 should not leave 8 branches behind, and promotion works off the
-    // diff against the baseline commit rather than off a ref.
+    // --detach: 8 probes should not leave 8 branches, and promotion diffs the baseline commit.
     const r = await git(runner, cwd, ["worktree", "add", "--detach", p.worktree, baseline]);
     if (!r.ok) errors.push(`could not create worktree ${p.worktree} — ${r.err || "git worktree add failed"}`);
   }
@@ -687,7 +679,7 @@ async function executeProbes(
     const result = await runProbe(ctx, probe);
     probe.status = "done";
     probe.result = result;
-    // After every probe, not just at the end: a kill here must leave the finished work recoverable.
+    // After every probe: a kill must leave finished work recoverable.
     writeManifest(opts.cwd, manifest);
   });
 
@@ -719,9 +711,8 @@ async function executeProbes(
 }
 
 /**
- * A worktree the probe never changed holds nothing worth reading, and `git worktree list` filling up
- * with dead entries is how this feature becomes annoying enough to stop using. Changed worktrees
- * stay until `--clean`: they are the only copy of the work.
+ * An unchanged worktree holds nothing worth reading, and `git worktree list` filling with dead
+ * entries is how this feature stops being used. Changed ones stay until `--clean`: only copy.
  */
 async function cleanupUntouched(
   runner: Runner,
@@ -746,7 +737,7 @@ async function removeWorktree(runner: Runner, cwd: string, path: string): Promis
   if (!existsSync(join(cwd, path))) return true;
   const r = await git(runner, cwd, ["worktree", "remove", "--force", path]);
   if (r.ok) return true;
-  // A worktree git has lost track of (a killed run, a moved repo) is still just a directory.
+  // A worktree git lost track of is still just a directory.
   try {
     rmSync(join(cwd, path), { recursive: true, force: true });
     return true;
@@ -755,10 +746,7 @@ async function removeWorktree(runner: Runner, cwd: string, path: string): Promis
   }
 }
 
-/**
- * A `$PATH` scan rather than `<agent> --version`: probing three agent binaries costs three node
- * startups before any work begins, and this answers the same question in microseconds.
- */
+/** A `$PATH` scan, not `<agent> --version`: three node startups before any work begins. */
 export function firstOnPath(env: NodeJS.ProcessEnv, names: readonly string[]): string | null {
   const dirs = (env["PATH"] ?? "").split(":").filter((d) => d !== "");
   for (const n of names) {
@@ -774,7 +762,7 @@ export function firstOnPath(env: NodeJS.ProcessEnv, names: readonly string[]): s
   return null;
 }
 
-/** A second fan-out of the same prompt in the same second must not land in the first one's dir. */
+/** Two runs of one prompt in the same second must not share a directory. */
 function uniqueRunId(cwd: string, now: Date, sha: string): string {
   const base = makeRunId(now, sha);
   if (!existsSync(runDir(cwd, base))) return base;
@@ -792,7 +780,7 @@ export async function resumeFan(opts: FanOptions, deps: FanDeps): Promise<FanRes
   const manifest = readManifest(opts.cwd, opts.target);
   if ("error" in manifest) return manifest;
 
-  // A resume re-runs agent processes, so it is a fan-out and the guards apply exactly as before.
+  // A resume re-runs agent processes, so the guards apply unchanged.
   const guards = checkGuards(deps.env, manifest.prompt_sha);
   if (!guards.ok) return { error: guards.error };
 
@@ -805,7 +793,7 @@ export async function resumeFan(opts: FanOptions, deps: FanDeps): Promise<FanRes
   if (pending.length === 0) warnings.push(`run '${manifest.run_id}' was already complete; nothing to re-run`);
   else warnings.push(`resuming ${pending.length} of ${manifest.probes.length} probe(s) that never finished`);
 
-  // A killed run can leave a worktree half-created or removed entirely; re-adding is idempotent.
+  // A killed run leaves worktrees half-created or gone; re-adding is idempotent.
   const failed = await addWorktrees(deps.runner, opts.cwd, pending, manifest.baseline);
   if (failed.length > 0) return { error: failed.join("; ") };
 
@@ -832,9 +820,8 @@ export interface PromoteResult {
 }
 
 /**
- * Brings one probe's work into the *root* working tree — and stops there. It does not score, does
- * not commit, and does not delete the other probes: `avo commit` is the only writer of a version
- * (invariant 1), and promotion is the explicit, separate step invariant 7 asks for.
+ * Brings one probe's work into the *root* tree and stops. No score, no commit, no deletion of the
+ * others: `avo commit` is the only writer (invariant 1), promotion the separate step (invariant 7).
  */
 export async function promote(opts: FanOptions, deps: FanDeps): Promise<PromoteResult | { fatal: string }> {
   const { runner } = deps;
@@ -863,8 +850,7 @@ export async function promote(opts: FanOptions, deps: FanDeps): Promise<PromoteR
     );
   }
 
-  // Measured now rather than read off the manifest: the worktree may have been touched since the
-  // probe finished, and what promotion moves is whatever is in it at this moment.
+  // Measured now, not read off the manifest: the worktree may have moved since.
   const stat = await diffstatOf(runner, worktree, manifest.baseline);
   const diff = await runner("git", ["diff", "--binary", manifest.baseline, "--"], {
     cwd: worktree,
@@ -886,8 +872,7 @@ export async function promote(opts: FanOptions, deps: FanDeps): Promise<PromoteR
     return { ...base, ok: true, files: [], error: null, warnings: [...warnings, `probe ${i} changed nothing; nothing to promote`] };
   }
 
-  // The patch is written before it is applied, so a rejected promotion still leaves the operator
-  // something to inspect and apply by hand.
+  // Written before it is applied, so a rejected promotion leaves something to inspect.
   const patchRel = join(WORKTREES_DIR, runId, `promote-${i}.patch`);
   try {
     writeFileSync(join(opts.cwd, patchRel), diff.stdout);
@@ -1072,7 +1057,7 @@ export async function fanCommand(
   if ("error" in result) {
     if (opts.json) io.out(`${JSON.stringify({ ok: false, error: result.error })}\n`);
     else io.err(`avo fan: ${result.error}\n`);
-    // A guard is a refusal, not a harness failure: the agent asked for something it may not have.
+    // A guard is a refusal, not a harness failure.
     return /^(depth limit|cycle)/.test(result.error) ? 1 : 2;
   }
   io.out(opts.json ? `${JSON.stringify(result)}\n` : renderFan(result));

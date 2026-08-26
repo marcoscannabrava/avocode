@@ -1,24 +1,20 @@
 /**
- * The supervisor — `avo supervise`. AVO's harness runs for days, and the paper is explicit that the
- * agent needs *steering*, not just scoring: a variation operator with no supervisor plateaus and
- * keeps plateauing, re-deriving the same idea because nothing tells it the idea is old.
+ * `avo supervise`. The harness runs for days, and the paper is explicit that the agent needs
+ * *steering*, not just scoring: an unsupervised variation operator plateaus and keeps plateauing.
  *
- * Two detections, both computed from what the harness already records and nothing else:
+ * Two detections, both from what the harness already records:
  *
- *   stall   — attempts have accumulated since the last committed improvement. `P_t` is monotone by
- *             construction, so the newest version *is* the last improvement; everything logged
- *             after it is a variation that did not win.
- *   thrash  — consecutive failures with the same signature. The agent is re-trying the same broken
- *             thing, which reads exactly like progress from inside a single turn.
+ *   stall   — attempts since the last committed improvement. `P_t` is monotone, so the newest
+ *             version *is* the last improvement; everything after it did not win.
+ *   thrash  — consecutive failures with the same signature. Re-trying one broken thing reads
+ *             exactly like progress from inside a single turn.
  *
- * The output is a directive that **cites**. A steering message that says "try something else" is
- * worthless — the agent already believes it is trying something else. So the directive names prior
- * versions with their scores and rationales, the dead ends memory already holds, and the docs in
- * `K` that no version has ever mentioned. That last one is the reason S3 and S4 exist: without a
- * lineage and a knowledge base there is nothing concrete to cite.
+ * The output is a directive that **cites**. "Try something else" is worthless — the agent already
+ * believes it is. So it names prior versions with their scores and rationales, the dead ends memory
+ * holds, and the docs in `K` no version has mentioned. That last is why S3 and S4 exist.
  *
- * `detect` is pure and takes fixtures. Everything that touches git, `bd` or the filesystem lives in
- * `supervise`, so the thresholds can be tested at their exact firing point without a repo.
+ * `detect` is pure and takes fixtures; git, `bd` and the filesystem live in `supervise`, so both
+ * thresholds are testable at their exact firing point without a repo.
  */
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -30,9 +26,8 @@ import { listMemories, resolveBackend, type Memory } from "./mem.ts";
 import { ATTEMPTS_PATH, spawnRunner, type Attempt, type Runner } from "./score.ts";
 
 /**
- * Only the tail of the attempt log is examined. Both detections are about *recent* history, and a
- * week-long run's log is large enough that parsing all of it every iteration would be felt — `avo
- * run` calls this between every agent turn.
+ * Only the log's tail. Both detections are about *recent* history, and `avo run` calls this between
+ * every turn — a week-long run's log would be felt.
  */
 export const ANALYSIS_WINDOW = 1_000;
 
@@ -56,7 +51,7 @@ export interface AttemptLog {
   warnings: string[];
 }
 
-/** Enough of an `Attempt` to reason about. A record failing this is trajectory we cannot read. */
+/** Enough of an `Attempt` to reason about; a record failing it is unreadable trajectory. */
 function isAttempt(v: unknown): v is Attempt {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
@@ -71,9 +66,8 @@ function isAttempt(v: unknown): v is Attempt {
 }
 
 /**
- * Reads `.avo/attempts.jsonl`. A missing file is the normal state of a repo that has never scored,
- * not a warning. A malformed line is skipped and counted: a truncated write (a killed run) must not
- * cost us the rest of the log (invariant 4).
+ * Reads `.avo/attempts.jsonl`. A missing file is normal for a repo that never scored. A malformed
+ * line is skipped and counted: a killed run's truncated write must not cost the rest (invariant 4).
  */
 export function readAttempts(cwd: string, window = ANALYSIS_WINDOW): AttemptLog {
   let raw: string;
@@ -117,10 +111,9 @@ export function readAttempts(cwd: string, window = ANALYSIS_WINDOW): AttemptLog 
 // ---------------------------------------------------------------------------
 
 /**
- * Two failures are "the same" when their signatures match, so the signature has to survive the
- * things that change between two runs of the same broken code: temp directories, timings, pids,
- * commit shas. Everything volatile is folded to a placeholder; hex before digits, or a sha would be
- * partly digested into `N` first and two runs would stop matching.
+ * Two failures are "the same" when their signatures match, so the signature must survive what
+ * changes between runs of one broken build: temp dirs, timings, pids, shas. All folded to
+ * placeholders — hex before digits, or a sha is partly digested into `N` and stops matching.
  */
 export function normalizeSignature(s: string): string {
   return s
@@ -135,9 +128,9 @@ export function normalizeSignature(s: string): string {
 }
 
 /**
- * What this attempt failed *at*, or `null` for one that passed. Harness errors (missing scorer,
- * malformed output, timeout) are the sharpest signal and come first; after them the scorer's own
- * first line of log, which is where a compiler puts the error the agent needs to read.
+ * What the attempt failed *at*, `null` when it passed. Harness errors (missing scorer, malformed
+ * output, timeout) are sharpest and come first, then the scorer's first log line — where a compiler
+ * puts the error the agent needs.
  */
 export function failureSignature(a: Attempt): string | null {
   if (a.pass) return null;
@@ -190,16 +183,15 @@ export interface SuperviseInput {
 /**
  * Attempts logged after `best` was committed.
  *
- * The discriminator is the sha the attempt recorded, not its clock: an attempt scored *on top of*
- * the best version carries that version's sha in `git.head`, while the attempt that *became* the
- * version was scored before the commit existed and carries its parent's. Timestamps cannot do this
- * job alone — git truncates author dates to the second, so the committing attempt's millisecond
- * `ts` can read as *later* than the commit it produced, which would make every stall fire one
- * attempt early, forever. Flooring to the second fixes that and breaks the opposite case: with a
- * fast scorer, several real attempts land inside the commit's own second and vanish.
+ * The discriminator is the recorded sha, not the clock: an attempt scored *on top of* the best
+ * version carries that version's `git.head`, while the attempt that *became* it was scored before
+ * the commit existed and carries its parent's. Timestamps cannot do this — git truncates author
+ * dates to the second, so the committing attempt's millisecond `ts` can read as *later* than the
+ * commit it produced, firing every stall one attempt early. Flooring to the second breaks the
+ * opposite case: a fast scorer's real attempts vanish inside the commit's own second.
  *
- * The clock is still the fallback for an attempt whose head matches neither — the agent made its own
- * commits since — and there one full second of margin keeps the committing attempt out.
+ * The clock remains the fallback when the head matches neither (the agent committed for itself),
+ * with a full second of margin to keep the committing attempt out.
  */
 function sinceBest(attempts: readonly Attempt[], best: Version | null): number {
   if (best === null) return attempts.length;
@@ -296,10 +288,9 @@ export interface Citation {
 }
 
 /**
- * Whether the lineage has already talked about this doc. Half its title's significant terms
- * appearing in the corpus is deliberately a low bar: a doc wrongly called explored is a citation we
- * merely fail to make, while a doc wrongly called *unexplored* sends the agent back down a road it
- * already travelled — which is precisely the failure the supervisor exists to prevent.
+ * Has the lineage talked about this doc? Half its title's significant terms is a deliberately low
+ * bar: wrongly "explored" only costs a citation, while wrongly *unexplored* sends the agent back
+ * down a road it already travelled — the failure the supervisor exists to prevent.
  */
 export function isExplored(doc: DocRef, corpus: string): boolean {
   const label = doc.title ?? basename(doc.file).replace(/\.md$/i, "").replaceAll(/[-_]/g, " ");
@@ -314,17 +305,16 @@ export function unexplored(docs: readonly DocRef[], corpus: string, limit = MAX_
 }
 
 /**
- * Memories that say something about the *problem*. Interventions are excluded, and that exclusion is
- * load-bearing in two ways — both found by running the loop rather than by reading it (S7b):
+ * Memories about the *problem*. Interventions are excluded, and that exclusion is load-bearing in
+ * two ways, both found by running the loop rather than reading it (S7b):
  *
- * 1. An intervention's text is a whole previous directive, so citing one nests the last directive
- *    inside this one. Three iterations in, the agent reads its own supervisor quoting itself.
- * 2. Worse, that directive *names* the unexplored docs it cited. Fold it into the corpus below and
- *    every doc the supervisor has ever recommended reads as explored — so a doc is cited exactly
- *    once, by the intervention that then buries it. The supervisor would erase its own best advice.
+ * 1. An intervention's text is a whole previous directive, so citing one nests it. Three iterations
+ *    in, the agent reads its own supervisor quoting itself.
+ * 2. Worse, that directive *names* the unexplored docs it cited, so folding it into the corpus makes
+ *    every doc the supervisor ever recommended read as explored. It would erase its own best advice.
  *
- * An intervention is trajectory about the supervisor, not knowledge about the problem. It is
- * recorded so a run can be audited (`avo mem`), never so a directive can cite it.
+ * An intervention is trajectory about the supervisor, not knowledge about the problem: recorded so a
+ * run can be audited, never so a directive can cite it.
  */
 export function aboutTheProblem(memories: readonly Memory[]): Memory[] {
   return memories.filter((m) => m.kind !== "intervention");
@@ -343,7 +333,7 @@ export function citationsFor(
   docs: readonly DocRef[],
 ): Citation[] {
   const citations: Citation[] = [];
-  // Newest first: the most recent versions are the ones an agent is most likely to re-derive.
+  // Newest first: the likeliest to be re-derived.
   for (const v of [...versions].reverse().slice(0, MAX_VERSION_CITATIONS)) {
     const why = v.why === null ? v.subject : v.why.split("\n")[0]?.trim() ?? v.subject;
     const file = join(LINEAGE_DIR, `v${String(v.version).padStart(3, "0")}.md`);
@@ -353,7 +343,7 @@ export function citationsFor(
       text: `${fmtScore(v.score.primary, v.score.unit)} — ${why} (${file})`,
     });
   }
-  // Dead ends first: "do not re-try this" is worth more to a stalled agent than a general insight.
+  // Dead ends first: "do not re-try this" beats a general insight.
   const about = aboutTheProblem(memories);
   const ranked = [...about.filter((m) => m.kind === "failure"), ...about.filter((m) => m.kind === "insight")];
   for (const m of ranked.slice(0, MAX_MEMORY_CITATIONS)) {
@@ -455,8 +445,7 @@ export async function supervise(opts: SuperviseOptions, deps: SuperviseDeps): Pr
 
   const { state, signals } = detect({ versions, attempts: log.attempts, total: log.total, stall, thrash });
 
-  // Memory and K are read only to *cite*. A supervisor that cannot reach them still detects and
-  // still steers, with a thinner directive — never with a crash (invariant 4).
+  // Memory and K are read only to *cite*: unreachable, it still detects and steers (invariant 4).
   let memories: Memory[] = [];
   if (signals.length > 0) {
     const backend = await resolveBackend(runner, opts.cwd);

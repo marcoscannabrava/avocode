@@ -1,11 +1,9 @@
 # avocode
 
-**Point a coding agent at a number you want to improve. It improves it, and only the improvements
-are kept.**
+**Point a coding agent at a number you want to improve. Only improvements are kept.**
 
-You write one script that measures your code. avocode runs an agent in a loop — change something,
-measure it, keep it only if it is genuinely better, and notice when the agent starts going in
-circles.
+You write one script that measures your code. avocode runs an agent in a loop: change something,
+measure it, keep it only if it is better, and notice when the agent goes in circles.
 
 | | Jump to |
 | --- | --- |
@@ -23,8 +21,8 @@ circles.
 
 An [AVO](docs/avo-paper.md)-inspired agent harness. AVO replaces the classical evolutionary
 variation operator with an autonomous coding agent — `Vary(P_t) = Agent(P_t, K, f)`. avocode
-extracts that harness and makes it general and **agent-agnostic** (pi, Claude Code, Codex — all
-three, from the same skills).
+extracts that harness and makes it **agent-agnostic** (pi, Claude Code, Codex — all three, from the
+same skills).
 
 **The four pieces:**
 
@@ -32,7 +30,7 @@ three, from the same skills).
 | --- | --- | --- |
 | `f` | what "better" means | `.avo/score`, an executable printing one JSON line |
 | `P_t` | the versions that survived | git commits with score trailers — a monotone lineage |
-| `K` | what the agent may consult first | `knowledge/` + the repo's own history, semantically searchable |
+| `K` | what the agent consults first | `knowledge/` + the repo's own history, semantically searchable |
 | Agent | the thing that changes the code | any coding agent, driven by five portable skills |
 
 **The loop:**
@@ -43,31 +41,30 @@ agent changes the code  →  avo score  →  avo commit  →  avo supervise  →
                                           if it's better   past and steer
 ```
 
-**Why it is not just a for-loop around an agent:**
+**Why it is not a for-loop around an agent:**
 
 - 🔒 **A regression can never land.** `avo commit` compares the whole score *vector*: a big win on
   one config cannot pay for a loss on another, and you cannot improve by measuring less.
 - 📉 **A stalling agent is caught from outside.** From inside one turn, re-deriving an old idea
-  looks exactly like progress. `avo supervise` reads the lineage and says otherwise — citing the
-  actual prior versions and the docs nobody has read.
-- 🧾 **Every dead end is written down.** A refusal you do not record is a refusal the next session
-  earns again.
+  looks like progress. `avo supervise` reads the lineage and cites the actual prior versions and the
+  docs nobody has read.
+- 🧾 **Every dead end is written down.** An unrecorded refusal is one the next session earns again.
 - 🌱 **Exploration is cheap.** `avo fan` runs N directions in N throwaway worktrees on a *small*
   model, scores each, and promotes one.
 
-**Does it actually work?** Pointed at [`bench/fuzzysearch`](docs/bench.md), one 35-minute
-`avo run --agent claude` committed four versions for a **5255x** speedup — including a technique
-the hand-written reference ladder does not contain.
+**Does it work?** Pointed at [`bench/fuzzysearch`](docs/bench.md), one 35-minute
+`avo run --agent claude` committed four versions for a **5255x** speedup — including a technique the
+hand-written reference ladder does not contain.
 
-**Try that yourself:** two ready-made targets live in [`bench/`](bench/README.md) — a speed problem
-and an ARC-AGI-3 agent — with a copy-pasteable runbook in
+**Try it:** two ready-made targets live in [`bench/`](bench/README.md) — a speed problem and an
+ARC-AGI-3 agent — with a copy-pasteable runbook in
 **[docs/bench.md § How to run one](docs/bench.md#how-to-run-one)**.
 
 ---
 
 ## Install (2 minutes)
 
-**Needs:** Node ≥ 22, `git`, `jq`, and at least one coding agent (`pi`, `claude` or `codex`).
+**Needs:** Node ≥ 22, `git`, `jq`, and one coding agent (`pi`, `claude` or `codex`).
 
 ```sh
 git clone https://github.com/marcoscannabrava/avocode
@@ -75,8 +72,8 @@ cd avocode
 ./install.sh
 ```
 
-That is the whole thing. It installs dependencies and links `avo` into `~/.local/bin`, then prints
-a dependency report. **Re-running it is always safe.**
+The installer fetches dependencies, links `avo` into `~/.local/bin`, and prints a dependency
+report. **Re-running it is always safe.**
 
 ```sh
 avo doctor        # did it work? what's missing?
@@ -92,9 +89,8 @@ avo doctor        # did it work? what's missing?
 ./install.sh --uninstall                # removes the link; never touches the checkout
 ```
 
-If `~/.local/bin` is not on your `PATH`, the installer says so and prints the exact line to paste.
-Full details, including every optional dependency and what it degrades to:
-**[docs/install.md](docs/install.md)**.
+If `~/.local/bin` is not on your `PATH`, the installer prints the exact line to paste. Every
+optional dependency and its fallback: **[docs/install.md](docs/install.md)**.
 
 </details>
 
@@ -112,8 +108,8 @@ avo install                  # wire your agent (pi | claude | codex) to avo's sk
 
 ### 2. Define what "better" means
 
-This is the only part that is really yours. `.avo/score` runs your benchmark or eval and prints
-**one JSON line**:
+This is the only part that is yours. `.avo/score` runs your benchmark or eval and prints **one JSON
+line**:
 
 ```sh
 avo score --init hyperfine   # scaffold it (or: pytest, vitest) — then edit it
@@ -125,7 +121,7 @@ avo score                    # run it
  "scores":{"small":155.7,"large":556.4}}
 ```
 
-`correct` is the gate — a candidate that fails it can never commit, no matter how fast it is.
+`correct` is the gate — a candidate that fails it can never commit, however fast it is.
 [Authoring guide →](templates/score/README.md)
 
 ### 3. Change something, and let the rule decide
@@ -143,8 +139,7 @@ avo commit --why "hoisted the bounds check out of the loop"
 committed v2 as 219a215 — '*' improved (best: * +76.47%) and nothing regressed
 ```
 
-Not better? It refuses, and tells you exactly why. Nothing is lost — the refusal becomes a recorded
-dead end.
+Not better? It refuses and tells you why. Nothing is lost — the refusal becomes a recorded dead end.
 
 ### 4. Read where you are
 
@@ -169,7 +164,7 @@ fresh process per turn.
 
 ## The commands
 
-Full reference with every flag and exit code: **[docs/commands.md](docs/commands.md)**.
+Every flag and exit code: **[docs/commands.md](docs/commands.md)**.
 
 | Command | What it does |
 | --- | --- |
@@ -185,8 +180,8 @@ Full reference with every flag and exit code: **[docs/commands.md](docs/commands
 | `avo supervise` | is the loop still making progress? Exit 1 means it printed a directive |
 | `avo run` | the continuous loop: turn → commit → supervise → steer, repeat |
 
-Every command takes `--json`. Exit codes are consistent: **0** = fine, **1** = ran but
-failed/refused, **2** = harness error.
+Every command takes `--json`. Exit codes: **0** = fine, **1** = ran but failed/refused, **2** =
+harness error.
 
 ---
 
@@ -203,14 +198,14 @@ bin/avo        →  src/main.ts  →  src/cli.ts  →  one file per contract
 | `.agents/skills/` | **the agent-agnostic layer — the product.** Five portable markdown skills |
 | `pi/extensions/` | native pi bindings. Convenience only; everything is reachable from `bash` |
 | `templates/score/` | reference scorers + the `f` authoring guide |
-| `bench/` | a real optimization target, so the loop can be judged on a curve |
+| `bench/` | real optimization targets, so the loop can be judged on a curve |
 | `test/` | `node:test` unit suites + `e2e-*.sh` scripts that drive the real `bin/avo` |
-| `evidence/` | transcripts proving user-facing behavior actually works |
+| `evidence/` | transcripts proving user-facing behavior works |
 | `PLAN.md` | the slice order, the invariants, the open questions |
 
 **The one distinction to keep in your head:** *lineage* (the versions that survived — git commits)
 vs. *trajectory* (how they were reached — `.avo/attempts.jsonl`, worktrees, run logs, all
-gitignored). The record of how a version was reached never lands inside the version.
+gitignored). How a version was reached never lands inside the version.
 
 Full map, the `f` contract, the commit rule and the nine invariants:
 **[docs/architecture.md](docs/architecture.md)**.
@@ -235,8 +230,7 @@ node_modules/.bin/oxlint src test pi bench && ./test/lint-sh.sh   # lint
 
 One file while you work on it: `node_modules/.bin/tsx --test test/compare.test.ts`.
 
-What each suite covers, the unskippable shellcheck gate, and CI:
-**[docs/testing.md](docs/testing.md)**.
+Suites, the unskippable shellcheck gate, and CI: **[docs/testing.md](docs/testing.md)**.
 
 ---
 
@@ -249,7 +243,7 @@ What each suite covers, the unskippable shellcheck gate, and CI:
 | [docs/commands.md](docs/commands.md) | every command, every flag, every exit code |
 | [docs/agents.md](docs/agents.md) | the skills, `avo install`, the native pi extensions |
 | [docs/testing.md](docs/testing.md) | test suites, the lint gate, CI |
-| [docs/bench.md](docs/bench.md) | the real target, its three correctness gates, the headroom proof |
+| [docs/bench.md](docs/bench.md) | the real targets, their correctness gates, the headroom proof |
 | [docs/meta-loop.md](docs/meta-loop.md) | how this repo builds itself |
 | [PLAN.md](PLAN.md) | slice order, composition decisions, open questions |
 
@@ -258,9 +252,8 @@ What each suite covers, the unskippable shellcheck gate, and CI:
 ## Status
 
 Slices **S0–S8 are done**: scoring, lineage, memory, knowledge, agent-agnostic skills, concurrency,
-the supervisor and continuous loop, and the native pi implementation. Every command listed above
-works, and a pi session in a wired repo additionally gets six native tools plus an in-session
-supervisor.
+the supervisor and continuous loop, and the native pi implementation. Every command above works, and
+a pi session in a wired repo also gets six native tools plus an in-session supervisor.
 
 **S9 (end-to-end validation) is in progress.** S9a proved the bench target has real headroom (a
 hand-written ladder walks 385x). S9b-1 put `avo run --agent claude` on it: **5255x in 35 minutes**,

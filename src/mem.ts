@@ -4,30 +4,28 @@ import { dirname, join } from "node:path";
 import { spawnRunner, type RunResult, type Runner } from "./score.ts";
 
 /**
- * `bd` — beads (Dolt-backed issue + memory graph) is the memory of the loop: what has been tried,
- * what worked, and which directions are dead ends. It is an *optional* dependency, so the fallback
- * below is the common path, not the exceptional one (invariant 4).
+ * `bd` — beads (Dolt-backed issue + memory graph) is the loop's memory: what was tried, what worked,
+ * which directions are dead ends. Optional, so the fallback below is the common path (invariant 4).
  */
 export const BD = "bd";
-/** Where memory lives when `bd` is unavailable. A qmd collection already, like the rest of lineage/. */
+/** Memory without `bd`. Already a qmd collection, like the rest of lineage/. */
 export const MEMORY_PATH = "lineage/memory.jsonl";
 /** Marks every bead avo writes, so a repo that also uses beads for its own work stays legible. */
 export const BEAD_LABEL = "avo";
 const BD_TIMEOUT_MS = 60_000;
 
 /**
- * `intervention` is S7b's: a directive `avo run` injected into a turn. It is deliberately NOT an
- * insight — insights go through `bd remember` and are injected at prime time, so every future
- * session would open with a stale "you are stalling, read v3" from a run that ended days ago. An
- * intervention is a labelled bead: auditable when you go looking for it (the paper's 7-day run is
- * only interpretable because interventions are recorded), silent when you are not.
+ * `intervention` is S7b's: a directive `avo run` injected into a turn. Deliberately NOT an insight —
+ * insights are injected at prime time, so every future session would open with a stale "you are
+ * stalling, read v3". A labelled bead instead: auditable when sought (the paper's 7-day run is only
+ * interpretable because interventions are recorded), silent otherwise.
  */
 export const MEMORY_KINDS = ["insight", "version", "failure", "intervention"] as const;
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 
 /**
- * One remembered thing. The same shape whichever backend holds it, so `avo mem --json` is stable
- * across environments — an agent must not have to know whether `bd` was installed.
+ * One remembered thing, the same shape whichever backend holds it: an agent must not have to know
+ * whether `bd` was installed.
  */
 export interface Memory {
   ts: string;
@@ -45,7 +43,7 @@ export interface Memory {
 
 export interface BdStatus {
   available: boolean;
-  /** Why beads is unusable — shown to the user verbatim, so it must name the fix. */
+  /** Why beads is unusable. Shown verbatim, so it must name the fix. */
   reason: string | null;
   /** The database's issue prefix, which is also the prefix explicit bead ids must carry. */
   prefix: string | null;
@@ -63,7 +61,7 @@ export async function bd(runner: Runner, cwd: string, args: readonly string[]): 
   return await runner(BD, args, { cwd, timeoutMs: BD_TIMEOUT_MS });
 }
 
-/** stderr first: bd puts its actionable hints there, and an empty message helps nobody. */
+/** stderr first: bd puts its actionable hints there. */
 function why(r: RunResult): string {
   const text = `${r.stderr}${r.stdout}`.trim().split("\n")[0] ?? "";
   return text === "" ? `exited ${r.code}` : text;
@@ -71,8 +69,8 @@ function why(r: RunResult): string {
 
 /**
  * `bd context --json` answers both questions in one call: is `bd` installed, and does this repo have
- * a database. It exits non-zero with a JSON error when there is none, which is exactly the
- * "installed but not initialized" case that must degrade rather than fail.
+ * a database. It exits non-zero with a JSON error when there is none — the
+ * installed-but-uninitialized case that must degrade rather than fail.
  */
 export async function probeBd(runner: Runner, cwd: string): Promise<BdStatus> {
   const r = await bd(runner, cwd, ["context", "--json"]);
@@ -134,9 +132,9 @@ export function shortHash(seed: string): string {
 }
 
 /**
- * Reads the fallback store. Append-only on write, last-write-wins on read: rewriting the file to
- * update a key in place would lose the history of when an insight was first learned, and an
- * append-only log is the one shape that cannot be corrupted by two concurrent probes.
+ * Reads the fallback store. Append-only on write, last-write-wins on read: rewriting in place would
+ * lose when an insight was first learned, and only an append-only log survives two concurrent
+ * probes.
  */
 export function readMemoryFile(cwd: string): { memories: Memory[]; warnings: string[] } {
   let raw: string;
@@ -165,9 +163,8 @@ export function readMemoryFile(cwd: string): { memories: Memory[]; warnings: str
     }
     byKey.set(m.key, {
       ts: typeof m.ts === "string" ? m.ts : "",
-      // Checked against MEMORY_KINDS rather than a hand-written list: the original enumerated the
-      // kinds inline, so adding `intervention` in S7b left every intervention reading back as an
-      // insight — which put a whole previous directive into the next one's citations.
+      // Checked against MEMORY_KINDS, not an inline list: the original left every S7b
+      // intervention reading back as an insight, nesting one directive inside the next.
       kind: MEMORY_KINDS.includes(m.kind as MemoryKind) ? (m.kind as MemoryKind) : "insight",
       key: m.key,
       text: m.text,
@@ -217,9 +214,8 @@ export function beadId(prefix: string, input: MemoryInput): string {
 }
 
 /**
- * Records one memory. Never throws and never fails a caller: a memory write that goes wrong is a
- * warning on an otherwise good commit, because the lineage is the source of truth and beads is a
- * cache of *why* (invariant 4).
+ * Records one memory. Never throws: a bad write warns on an otherwise good commit, because the
+ * lineage is the source of truth and beads a cache of *why* (invariant 4).
  */
 export async function remember(
   runner: Runner,
@@ -238,8 +234,7 @@ export async function remember(
     if (prefix === null) {
       warnings.push(`bd reported no database prefix; wrote this memory to ${MEMORY_PATH} instead`);
     } else if (input.kind === "insight") {
-      // Insights are *memories*, not issues: bd injects them at prime time, which is what makes
-      // them survive a session boundary.
+      // Insights are memories, not issues: bd injects them at prime time, so they survive.
       const r = await bd(runner, cwd, ["remember", input.text, "--key", key]);
       if (r.code !== 0 || r.spawnError !== null) warnings.push(`bd remember failed (${why(r)}); using ${MEMORY_PATH}`);
       else return { ok: true, backend: "beads", key, bead: null, parent: null, warnings, error: null };
@@ -256,8 +251,8 @@ export async function remember(
         bead = r.stdout.trim().split("\n").pop()?.trim() ?? id;
         if (typeof input.parentVersion === "number") {
           parent = `${prefix}-v${input.parentVersion}`;
-          // `bd dep add <child> <parent>` = the child depends on the parent, which is the lineage
-          // edge: v(N) descends from v(N-1). Re-adding an existing edge is a no-op in bd.
+          // `bd dep add <child> <parent>` is the lineage edge: v(N) descends from v(N-1).
+          // Re-adding is a no-op in bd.
           const dep = await bd(runner, cwd, ["dep", "add", bead, parent]);
           if (dep.code !== 0 || dep.spawnError !== null) {
             warnings.push(`bd dep add ${bead} ${parent} failed (${why(dep)}); the bead has no parent edge`);
@@ -301,7 +296,7 @@ export async function listMemories(
         const memories: Memory[] = Object.entries(parsed as Record<string, unknown>)
           .filter(([k, v]) => k !== "schema_version" && typeof v === "string")
           .map(([k, v]) => ({ ts: "", kind: "insight", key: k, text: v as string, version: null, bead: null, parent: null }));
-        // The file store may still hold records written while bd was unavailable; show both.
+        // The file store may hold records written while bd was down; show both.
         const file = readMemoryFile(cwd);
         const seen = new Set(memories.map((m) => m.key));
         return {
@@ -345,7 +340,7 @@ export function renderPrime(memories: readonly Memory[]): string {
   group("insight", "insights");
   group("failure", "dead ends (do not re-try these)");
   group("version", "committed versions");
-  // Interventions are recorded for audit, not for priming: see MemoryKind. `avo mem` lists them.
+  // Recorded for audit, not priming: see MemoryKind. `avo mem` lists them.
   return `${lines.join("\n")}\n`;
 }
 
