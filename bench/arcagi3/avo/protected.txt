@@ -1,0 +1,17 @@
+# PROTECTED -- this file IS part of `f`, and it lists itself: a candidate free to rewrite the list
+# of protected files has no protected files.
+#
+# Paths are where the file lands in the MATERIALIZED target, which is why the scorer is `.avo/score`
+# and not `avo/score`. bench/init.sh hashes exactly these into .avo/gate.sha256, and
+# `bench/init.sh --verify` diffs exactly these against the template afterwards.
+#
+# bench/games/ is NOT here: it is fetched, not templated, so it cannot be hashed at materialize
+# time. It is pinned by bench/games.lock instead -- and games.lock is protected here, which is what
+# closes the chain.
+bench/run.py
+bench/setup.sh
+bench/games.lock
+test/test_policy.py
+requirements.txt
+.avo/score
+.avo/protected.txt

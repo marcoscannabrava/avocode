@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# PROTECTED -- this file IS `f`. Editing it makes `bench/init.sh --verify` fail.
+#
+# avo scorer for the arcagi3 target. Metric: mean fraction of ARC-AGI-3 levels completed, per game,
+# higher is better.
+#
+#   .avo/score                   one JSON line scoring every config
+#   .avo/score --configs         config names, one per line
+#   .avo/score --config <name>   one JSON line scoring just that config
+#
+# Always exits 0 -- see templates/score/README.md in avocode. `ok` describes the harness, `correct`
+# describes the candidate, and four things gate `correct`:
+#   1. the protected files still hash to what bench/init.sh recorded,
+#   2. the pinned game corpus still hashes to bench/games.lock,
+#   3. the policy contract suite passes,
+#   4. every episode ran without the policy breaking the contract or reaching outside its frames.
+# A missing venv or corpus is `ok:false` instead: that is the harness not being set up, not a bad
+# candidate, and it must never be mistaken for a score.
+set -uo pipefail
+
+UNIT="levels"
+HIGHER_IS_BETTER=true
+
+emit() { # $1=ok $2=correct $3=log
+  jq -cn --argjson ok "$1" --argjson correct "$2" --arg log "$3" --arg unit "$UNIT" \
+    --argjson hib "$HIGHER_IS_BETTER" --argjson d "$SECONDS" \
+    '{ok:$ok,correct:$correct,primary:null,unit:$unit,higher_is_better:$hib,log:$log,duration_s:$d}'
+  exit 0
+}
+
+command -v jq >/dev/null 2>&1 || {
+  printf '{"ok":false,"correct":false,"primary":null,"unit":"levels","higher_is_better":true,"log":"jq not found on PATH"}\n'
+  exit 0
+}
+[[ -f bench/run.py ]] || emit false false "run me from the target repo root"
+
+PY=.venv/bin/python
+
+mode=all
+want=""
+case "${1-}" in
+  --configs)
+    # Answered without the venv, and without python at all: `avo score --parallel` asks for the
+    # config list before it can know whether the harness is set up, and a config list is a property
+    # of `f`, not of whether anything is installed.
+    #
+    # Scraping a source line is normally a bad idea, but TRAIN lives in a PROTECTED file: it cannot
+    # be reformatted without failing the gate two checks below, so this cannot silently drift from
+    # what `bench/run.py --list` would say. test/e2e-arcagi3.sh asserts the two agree in shape.
+    sed -n 's/^TRAIN = \[\(.*\)\]$/\1/p' bench/run.py | tr -d '"' | tr ',' '\n' | tr -d ' ' | grep .
+    exit 0
+    ;;
+  --config)
+    mode=one
+    want="${2-}"
+    [[ -n "$want" ]] || emit true false "--config needs a config name"
+    ;;
+  "") ;;
+  *) emit true false "unknown argument '$1'" ;;
+esac
+
+# ---- 1. the gate files are untouched -------------------------------------------------------
+# A candidate is free to rewrite src/ however it likes. It is not free to rewrite the thing
+# measuring it, and "the games got easier" is the cheapest possible way to score well.
+if [[ ! -f .avo/gate.sha256 ]]; then
+  emit false false "no .avo/gate.sha256 -- this target was not materialized by bench/init.sh, so f has no gate"
+fi
+if ! drift="$(sha256sum -c --quiet .avo/gate.sha256 2>&1)"; then
+  emit true false "a protected file changed -- f measures the candidate, not itself:
+$drift
+Revert those files (git checkout -- <path>) and optimize src/policy.py instead."
+fi
+
+# ---- 2. the harness is installed ----------------------------------------------------------
+if [[ ! -x "$PY" ]] || ! "$PY" -c 'import arc_agi' 2>/dev/null; then
+  emit false false "the ARC-AGI-3 toolkit is not installed in .venv -- run bench/setup.sh"
+fi
+if [[ ! -d bench/games ]]; then
+  emit false false "no game corpus at bench/games -- run bench/setup.sh"
+fi
+
+# ---- 3. the pinned corpus is the corpus ---------------------------------------------------
+if ! corpus="$(sha256sum -c --quiet bench/games.lock 2>&1)"; then
+  emit true false "the game corpus does not match bench/games.lock -- f measures a different game than it claims:
+$corpus
+Restore it with bench/setup.sh --games-only."
+fi
+
+# ---- 4. the policy contract ---------------------------------------------------------------
+# Run each suite as a script rather than through `unittest discover`: discovery wants test/ to be an
+# importable package, and an __init__.py whose only job is to satisfy the test runner is one more
+# protected file to keep in step.
+for t in test/test_*.py; do
+  [[ -f "$t" ]] || continue
+  if ! suite="$("$PY" "$t" 2>&1)"; then
+    emit true false "the policy contract suite failed ($t):
+$(printf '%s' "$suite" | tail -n 40)"
+  fi
+done
+
+# ---- 5. per-config: play the game ---------------------------------------------------------
+scores="{}"
+log=""
+while read -r name; do
+  [[ -n "$name" ]] || continue
+  if [[ "$mode" == one && "$name" != "$want" ]]; then continue; fi
+  line="$("$PY" bench/run.py --config "$name" 2>&1)"
+  if ! jq -e 'has("ok")' >/dev/null 2>&1 <<<"$line"; then
+    emit false false "bench/run.py printed no JSON for config '$name':
+$(printf '%s' "$line" | head -c 4000)"
+  fi
+  if [[ "$(jq -r '.ok' <<<"$line")" != true ]]; then
+    emit false false "$(jq -r '.log' <<<"$line")"
+  fi
+  if [[ "$(jq -r '.correct' <<<"$line")" != true ]]; then
+    emit true false "$(jq -r '.log' <<<"$line")"
+  fi
+  v="$(jq -r '.score' <<<"$line")"
+  scores="$(jq -c --arg n "$name" --argjson v "$v" '. + {($n): $v}' <<<"$scores")"
+  log="$log
+[$name] $v of 1.0 — $(jq -r '.actions' <<<"$line") actions in $(jq -r '.duration_s' <<<"$line")s"
+done < <("$0" --configs)
+
+[[ "$scores" != "{}" ]] || emit true false "no config matched '$want'"
+
+primary="$(jq -r '[.[]] | add / length' <<<"$scores")"
+jq -cn --argjson scores "$scores" --argjson primary "$primary" --arg unit "$UNIT" \
+  --argjson hib "$HIGHER_IS_BETTER" --arg log "$log" --argjson d "$SECONDS" \
+  '{ok:true,correct:true,primary:$primary,unit:$unit,higher_is_better:$hib,scores:$scores,log:$log,duration_s:$d}'

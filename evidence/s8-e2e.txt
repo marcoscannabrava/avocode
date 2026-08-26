@@ -1,4 +1,4 @@
-# avo S8 e2e — 2026-08-26T03:42:07Z
+# avo S8 e2e — 2026-08-26T07:32:33Z
 # node v22.14.0, pi 0.84.3
 
 ## 1. avo install --agent pi wires the extension where pi looks for it

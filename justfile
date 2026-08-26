@@ -34,6 +34,7 @@ e2e:
     ./test/e2e-run.sh
     ./test/e2e-pi.sh
     ./test/e2e-bench.sh
+    ./test/e2e-arcagi3.sh
     ./test/e2e-lint.sh
     ./test/e2e-install-sh.sh
 

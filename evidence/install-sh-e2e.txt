@@ -1,5 +1,5 @@
-# install.sh e2e — 2026-08-26T03:36:41Z
-# node v22.14.0, bin-dir /tmp/tmp.ebD1QPYM7C/bin
+# install.sh e2e — 2026-08-26T07:35:15Z
+# node v22.14.0, bin-dir /tmp/tmp.4oyXQPUFBb/bin
 
 $ ./install.sh --bin-dir <sandbox> --skip-doctor -> exit 0
     
@@ -14,14 +14,14 @@ $ ./install.sh --bin-dir <sandbox> --skip-doctor -> exit 0
       found        tsx tsx v4.23.12
     
     avo on PATH
-      created      /tmp/tmp.ebD1QPYM7C/bin/avo -> /home/marcos/code/avocode/bin/avo
+      created      /tmp/tmp.4oyXQPUFBb/bin/avo -> /home/marcos/code/avocode/bin/avo
       works        avo 0.1.0
     
-    Installed, but /tmp/tmp.ebD1QPYM7C/bin is not on your PATH.
+    Installed, but /tmp/tmp.4oyXQPUFBb/bin is not on your PATH.
     
       Add this to ~/.zshrc, then open a new shell:
     
-        export PATH="/tmp/tmp.ebD1QPYM7C/bin:$PATH"
+        export PATH="/tmp/tmp.4oyXQPUFBb/bin:$PATH"
     
     Next:  avo init      in the repo you want to optimize
            avo install   wire your coding agent to avo's skills

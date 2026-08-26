@@ -1,8 +1,8 @@
-# avo S6 e2e — 2026-08-26T03:37:21Z
+# avo S6 e2e — 2026-08-26T07:32:02Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 72dd1abf, git worktree list has 1 entry
+PASS  repo at HEAD 47d3ebcf, git worktree list has 1 entry
 
 ## 1. the avo-fanout skill
 PASS  avo-fanout/SKILL.md exists
@@ -20,7 +20,7 @@ PASS  avo help documents AVO_PROBE_MODEL
 ## 2. four probes in parallel worktrees
 PASS  avo fan exited 0
 PASS  all four probes returned a result
-PASS  run id 20260826T033721Z-727ab9
+PASS  run id 20260826T073203Z-727ab9
 PASS  every probe process finished ok
 PASS  every probe was scored by .avo/score and passed
 PASS  each probe scored its own diff (2,3,4,5 lines)
@@ -30,7 +30,7 @@ PASS  the guard environment reached every agent process
 PASS  git worktree list has 4 new entries
 PASS  the root working tree is untouched
 PASS  HEAD did not move
-PASS  the full probe output is on disk at .avo/worktrees/20260826T033721Z-727ab9/logs/1.log
+PASS  the full probe output is on disk at .avo/worktrees/20260826T073203Z-727ab9/logs/1.log
 PASS  the run manifest survived the run
 
 ## 3. promote
@@ -38,7 +38,7 @@ PASS  probe 3 promoted cleanly
 PASS  probe 3's work is now in the working tree
 PASS  only the chosen probe's work came across
 PASS  promote did not commit — avo commit is the only writer of a version
-PASS  the patch is kept as evidence at .avo/worktrees/20260826T033721Z-727ab9/promote-3.patch
+PASS  the patch is kept as evidence at .avo/worktrees/20260826T073203Z-727ab9/promote-3.patch
 PASS  the promoted candidate scores 4 in the real tree
 
 ## 4. cleanup

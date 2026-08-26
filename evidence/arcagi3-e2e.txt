@@ -1,0 +1,52 @@
+# avo arcagi3 e2e -- 2026-08-26T07:39:20Z
+# git version 2.55.0, jq jq-1.8.2
+# target: bench/arcagi3 -- ARC-AGI-3 levels completed, higher is better, 10 games
+
+## 1. bench/init.sh --target arcagi3
+$ bench/init.sh $scratch/arcagi3 --target arcagi3 -> exit 0
+PASS  materializes into a fresh git repo
+PASS  .avo/score is executable
+PASS  bench/setup.sh is executable
+PASS  the gate covers exactly the 7 path(s) in avo/protected.txt
+PASS  the manifest protects itself (a candidate that may edit the list has no list)
+PASS  the baseline is one commit: c81d15b arcagi3 v0: blind
+PASS  the baseline commit message came from the template
+PASS  the template's own .gitignore was kept (.venv/, not node_modules/)
+PASS  no holdout game leaked into the target
+
+## 2. the other target still materializes
+# bench/init.sh's protected list stopped being hardcoded; fuzzysearch must not have noticed
+PASS  fuzzysearch materializes and verifies through the manifest path
+
+## 3. .avo/score --configs answers before anything is installed
+# avo score --parallel asks for the config list first; a config list is a property of f, not
+# of whether the toolkit happens to be installed
+PASS  10 configs listed: ez02 tt01 va01 ul01 fs01 tp01 nw01 mm01 ff01 ff03 
+PASS  --configs is stable across calls
+PASS  the scraped config list matches bench/run.py --list exactly
+
+## 4. no venv is a harness problem, not a bad candidate
+# ok:false and correct:false are different claims; mistaking the first for the second would
+# record 'this policy is wrong' about a machine that simply has nothing installed
+PASS  ok:false with a null primary
+PASS  the log says how to fix it: the ARC-AGI-3 toolkit is not installed in .venv -- run bench/setup.sh
+PASS  the failing response still carries every required field
+PASS  higher_is_better is true (this is a capability, not a latency)
+
+## 5. f measures the candidate, not itself
+PASS  editing bench/run.py fails f AND bench/init.sh --verify
+PASS  editing test/test_policy.py fails f AND bench/init.sh --verify
+PASS  editing bench/games.lock fails f AND bench/init.sh --verify
+PASS  editing .avo/protected.txt fails f AND bench/init.sh --verify
+PASS  restoring every protected file makes --verify clean again
+
+## 6. the real thing
+SKIP  no set-up arcagi3 target: the ARC-AGI-3 toolkit and the pinned corpus are not installed
+      to run this half:  ./bench/init.sh /tmp/t --target arcagi3 && (cd /tmp/t && ./bench/setup.sh)
+      then:              ARCAGI3_TARGET=/tmp/t ./test/e2e-arcagi3.sh
+
+## the key never leaked
+# evidence/ is committed to git (invariant 6)
+PASS  ARC_API_KEY does not appear in the evidence file
+
+e2e-arcagi3: all checks passed (23 of them, 1 skipped)

@@ -1,9 +1,22 @@
 # `bench/` — a real target to point the loop at
 
-Everything the CLI does is bookkeeping around `f`. `bench/` holds an actual optimization problem
-with an actual `f`, so the loop can be judged on a **curve** rather than on unit tests.
+Everything the CLI does is bookkeeping around `f`. `bench/` holds actual optimization problems with
+actual `f`s, so the loop can be judged on a **curve** rather than on unit tests.
+
+| Target | `f` | Direction | Candidate |
+| --- | --- | --- | --- |
+| [`fuzzysearch`](#fuzzysearch) | median ms per search, 2 configs | lower is better | `src/search.js` |
+| [`arcagi3`](#arcagi3) | ARC-AGI-3 levels completed, 10 configs | higher is better | `src/policy.py` |
+
+They are deliberately unalike. `fuzzysearch` is a speed problem whose answer is known and whose
+ladder is hand-written, which makes it a good test of the *harness*. `arcagi3` is a capability
+problem nobody has solved, where the candidate is a policy rather than a pure function — which makes
+it a test of the *loop*. Each target declares its own `f` and its own protected set in
+`avo/protected.txt`; `bench/init.sh --target <name>` picks one.
 
 ---
+
+## `fuzzysearch`
 
 ```sh
 ./bench/init.sh ~/work/fuzzysearch     # materialize the target into its OWN git repo
@@ -99,3 +112,95 @@ transposed operand, 64x64 tiling and a 2x-unrolled micro-kernel come to **1.7x**
 steps inside the noise, because V8's JIT already does that work. A curve on that target would have
 shown only that the commit rule refuses things.
 
+---
+
+## `arcagi3`
+
+```sh
+./bench/init.sh ~/work/arcagi3 --target arcagi3
+cd ~/work/arcagi3 && ./bench/setup.sh   # a .venv with the ARC-AGI-3 toolkit + the pinned games
+.avo/score | jq .                       # ~20s
+avo init --cwd ~/work/arcagi3
+```
+
+```json
+{"ok":true,"correct":true,"primary":0.277,"unit":"levels","higher_is_better":true,
+ "scores":{"ez02":0.45,"tt01":0.264,"va01":0.258,"ul01":0.183,"fs01":0.108,
+           "tp01":0.333,"nw01":0.3,"mm01":0.274,"ff01":0.3,"ff03":0.3}}
+```
+
+Play ten [ARC-AGI-3](https://arcprize.org/arc-agi/3) games from the pixels up. `src/policy.py` is the
+candidate: a `Policy` class with an `act(frame)` called once per action. The shipped baseline is a
+uniform random walk that never looks at the frame, scoring 0.277.
+
+**Offline, deterministic, free.** The games run locally through `arc_agi.Arcade` in
+`OperationMode.OFFLINE` — no API key, no network, ~40ms an episode — from a corpus pinned by commit
+and hash to [`theredbluepill/arc-interactive`](https://github.com/theredbluepill/arc-interactive)
+(MIT). That is what makes it usable as an `f` at all: `avo run` scores every iteration, so an `f`
+that cost money or wandered would be unaffordable in both senses.
+
+The metric is `max levels_completed / win_levels`, averaged over 24 rollouts. There is nothing finer
+available — `FrameDataRaw` exposes `levels_completed` and `win_levels` and no per-step reward, and the
+`score` field the toolkit docs describe does not exist on it.
+
+### What the corpus selection cost
+
+Three properties were required of every config, and each one disqualified a game worth naming:
+
+| Requirement | Casualty | Why |
+| --- | --- | --- |
+| a non-zero baseline | `sq01` (0.025) | `avo commit` compares *relative* deltas, so a near-zero config swings ±100% on one level and vetoes every commit whatever `floor` says |
+| exact reproducibility | `wm01` | Whack-a-Mole is real-time: 0.483, 0.533, 0.483 on three runs of identical code. A config that moves on its own lets the loop commit noise |
+| not saturated | `ic02` (1.000) | no headroom is no gradient |
+
+### Anti-gaming, in three layers
+
+A policy has cheaper routes to a high score than playing well, so:
+
+1. **the hash gate**, as fuzzysearch has, over `bench/run.py`, the contract suite, `bench/games.lock`
+   and `.avo/protected.txt` itself;
+2. **a sandbox** armed only while `act` runs, which refuses a policy that reads a game's source out of
+   `bench/games/` or touches the network. It raises a `BaseException` *and* sets a flag the harness
+   checks afterwards — an earlier version raised a plain `Exception`, and a policy wrapping its body
+   in `except Exception: pass` swallowed the violation and scored a clean 0.26;
+3. **the game's identity is withheld.** ARC-AGI-3 is about games you have not seen, so `bench/run.py`
+   never tells the policy which game it is playing. Recognising one from its frames is fair; keying
+   on an id is a lookup table.
+
+Memorisation is the one thing `f` cannot catch from inside, because the training games live in the
+target repo. Hence:
+
+```sh
+test/fixtures/arcagi3/score-holdout.sh ~/work/arcagi3   # 8 games the target has never seen
+test/fixtures/arcagi3/score-api.sh ~/work/arcagi3       # the official games; needs ARC_API_KEY
+./bench/verify-run.sh ~/work/arcagi3 --target arcagi3   # the curve, then both of the above
+```
+
+The holdout runs the target's *own* `bench/run.py` against a different corpus, so the numbers are
+comparable. Four of its eight games pair with a training game (`ez04`/`ez02` are the same tutorial in
+different directions, `fs03`/`fs01` the same mechanic with a different rule), and two are click games
+because a holdout made only of movement games scored the baseline and an improved policy
+*identically* — a holdout blind to the change under test measures nothing.
+
+`score-api.sh` is the only thing here that touches the network, and it is never part of `f`: it is
+slow, rate-limited, and its games can change under you. It refuses to run on an anonymous key rather
+than quietly measuring something else, and it never prints the key.
+
+### Headroom, demonstrated
+
+The shipped ladder in `test/fixtures/arcagi3/` is two measured rungs, one of which must be refused:
+
+```
+aimed clicks      ff01 +64%, ff03 +64%, mm01 +17%, movement games rel: 0   -> committed  0.277 -> 0.320
+cell-targeted     mm01 -100% (it hides its tiles in the background colour) -> refused
+```
+
+The first rung is the useful lesson about this target. `avo commit` uses `floor: 0.1`, and two
+policies with *identical behaviour* that merely consume `rng` in a different order disagree by a
+median of 6% per config — so a change touching the shared path is scored partly on luck. Aiming only
+the click coordinates keeps the draw count and order identical, which makes the seven movement games
+come back bit-identical and the click games move on their own merits. **Additive changes are scored
+exactly; changes to the shared path have to beat the noise everywhere.**
+
+Its holdout number says the win is real rather than remembered: 0.217 → 0.227, with `cs01` +38% and
+`mm02` +19% on games the policy never saw.

@@ -1,0 +1,5 @@
+arcagi3 v0: blind
+
+The baseline. src/policy.py is the candidate: a uniform random walk that never looks at the frame
+it is handed. It scores 0.267 on the five training games, because ARC-AGI-3's early levels are
+cheap. Everything hashed in .avo/gate.sha256 is f, and bench/games.lock pins the games themselves.
