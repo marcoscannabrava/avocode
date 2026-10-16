@@ -22,9 +22,10 @@ yes_no() { if [[ $1 == 0 ]]; then ok "$2"; else bad "$3"; fi; }
 # An untracked-but-not-ignored script: it doubles as the probe for "a finding turns the gate red"
 # and for "a script is checked before anyone remembers to `git add` it".
 probe="$root/test/tmp-lint-probe.sh"
+tsprobe="$root/test/tmp-lint-probe.ts"
 work="$(mktemp -d)"
-trap 'rm -f "$probe"; rm -rf "$work"' EXIT
-rm -f "$probe"
+trap 'rm -f "$probe" "$tsprobe"; rm -rf "$work"' EXIT
+rm -f "$probe" "$tsprobe"
 
 say "# avo lint-gate e2e — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 say "# $(timeout -k 5 60 npm exec --yes -- shellcheck --version 2>/dev/null | grep ^version || echo 'version: unknown')"
@@ -152,6 +153,21 @@ if grep -qE 'shellcheck-v[0-9]+\.[0-9]+' .github/workflows/ci.yml; then
   bad "CI hardcodes a shellcheck version alongside SC_PIN"
 else
   ok "CI names no shellcheck version of its own"
+fi
+say ""
+
+say "## 6. an oxlint warning turns the gate RED (#48)"
+oxout="$(node_modules/.bin/oxlint --deny-warnings src test pi bench 2>&1)"; oxcode=$?
+yes_no "$oxcode" "oxlint has no warnings on this repo" "oxlint is not clean: $oxout"
+printf '%s' "$recipe" | grep -qF -- 'oxlint --deny-warnings'
+yes_no $? "the lint recipe denies oxlint warnings" "lint: runs oxlint without --deny-warnings"
+printf 'export function probe(): void {\n  const unused = 1;\n}\n' > "$tsprobe"
+oxout="$(node_modules/.bin/oxlint --deny-warnings src test pi bench 2>&1)"; oxcode=$?
+rm -f "$tsprobe"
+if [[ $oxcode -ne 0 ]] && printf '%s' "$oxout" | grep -qF 'no-unused-vars'; then
+  ok "a single warning fails oxlint (exit $oxcode)"
+else
+  bad "oxlint exited $oxcode with a warning present"
 fi
 say ""
 

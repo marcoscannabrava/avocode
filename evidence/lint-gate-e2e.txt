@@ -1,4 +1,4 @@
-# avo lint-gate e2e — 2026-10-16T22:00:33Z
+# avo lint-gate e2e — 2026-10-16T23:53:03Z
 # version: 0.11.0
 
 ## 1. the gate is green on this repo, and says nothing about skipping
@@ -35,4 +35,9 @@ PASS  and it still runs rather than refusing (exit 0)
 PASS  CI reads the pin from test/lint-sh.sh
 PASS  CI names no shellcheck version of its own
 
-# 22 checks passed, 0 failed
+## 6. an oxlint warning turns the gate RED (#48)
+PASS  oxlint has no warnings on this repo
+PASS  the lint recipe denies oxlint warnings
+PASS  a single warning fails oxlint (exit 1)
+
+# 25 checks passed, 0 failed

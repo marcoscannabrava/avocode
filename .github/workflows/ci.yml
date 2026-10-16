@@ -10,13 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       # apt gives 0.9.0, whose findings differ from 0.11.0's, so the version is read from
       # test/lint-sh.sh's own pin rather than named twice. `just lint` falls back to
       # `npm exec -- shellcheck` without this step; it is a speed-up, not a prerequisite,
@@ -36,13 +36,13 @@ jobs:
     # Suites have caps; so does the job.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       # test/e2e-lint.sh drives the same gate, so it wants the same pinned binary.
       - name: shellcheck (pinned to what test/lint-sh.sh expects)
         run: |
@@ -52,7 +52,7 @@ jobs:
       # The e2e scripts need git and jq (both present on ubuntu-latest) and at least one agent CLI
       # for `doctor` to report ok; that acceptance case deliberately runs without them.
       - run: just e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-evidence
