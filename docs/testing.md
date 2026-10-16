@@ -121,10 +121,14 @@ targets and prints their path. The transcript goes to `evidence/smoke-agents.txt
 | --- | --- | --- |
 | `AVO_SMOKE_TIMEOUT` | `180` | seconds for each turn |
 | `AVO_SMOKE_MODEL_CLAUDE` | `haiku` | the model for claude |
-| `AVO_SMOKE_MODEL_PI`, `AVO_SMOKE_MODEL_CODEX` | the agent's default | the model; set a small one |
+| `AVO_SMOKE_MODEL_PI`, `AVO_SMOKE_MODEL_CODEX` | unset | the model; without it, that agent is a `SKIP` |
 | `AVO_SMOKE_IN_CI` | unset | set it to run when `CI` is set |
 
 One claude turn on `haiku` costs about $0.05.
+
+If claude fails with `ignored bypassPermissions`, a managed setting blocks that mode. Look for
+`permissions.disableBypassPermissionsMode` in `~/.claude/remote-settings.json` and in the managed
+settings file. You cannot change this from avo. Ask the owner of the policy.
 
 ### Run it every night
 

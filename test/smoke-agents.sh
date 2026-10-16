@@ -6,7 +6,8 @@
 #   ./test/smoke-agents.sh claude          # only these agents
 #
 # Env: AVO_SMOKE_TIMEOUT (seconds per turn, default 180) and AVO_SMOKE_MODEL_<AGENT> (the model;
-# claude defaults to haiku, pi and codex to their own default). An agent not on PATH is a SKIP.
+# claude defaults to haiku; pi and codex have no default and SKIP without one). An agent not on
+# PATH is a SKIP.
 # On a failure the temp targets are kept for a post-mortem. Writes evidence/smoke-agents.txt.
 set -uo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,6 +16,11 @@ cd "$root" || exit 1
 if [[ -n ${CI:-} && -z ${AVO_SMOKE_IN_CI:-} ]]; then
   echo "smoke-agents: CI detected, not run (set AVO_SMOKE_IN_CI=1)"
   exit 0
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "smoke-agents: jq is required"
+  exit 1
 fi
 
 evidence="$root/evidence/smoke-agents.txt"
@@ -88,6 +94,9 @@ prompt="Add one line to notes.txt to raise this repo's score. Record the result 
 for agent in "${agents[@]}"; do
   say "## $agent"
   if ! command -v "$agent" >/dev/null 2>&1; then skip "$agent is not on PATH"; say ""; continue; fi
+  model="$(model_for "$agent")"
+  # No cheap default: never spend blind.
+  if [[ -z $model ]]; then skip "set AVO_SMOKE_MODEL_${agent^^} to a cheap model"; say ""; continue; fi
   say "# $agent $("$agent" --version 2>/dev/null | head -1)"
 
   repo="$work/$agent"
@@ -96,10 +105,8 @@ for agent in "${agents[@]}"; do
   # Install output joins the baseline (#32).
   git -C "$repo" add -A && git -C "$repo" commit -qm "avo install"
 
-  model="$(model_for "$agent")"
-  margs=(); [[ -z $model ]] || margs=(--model "$model")
-  say "# model: ${model:-agent default}"
-  json="$(avo run --cwd "$repo" --agent "$agent" "${margs[@]}" --prompt "$prompt" \
+  say "# model: $model"
+  json="$(avo run --cwd "$repo" --agent "$agent" --model "$model" --prompt "$prompt" \
     --max-iters 1 --timeout "$timeout_s" --json 2>"$work/$agent.err")"
   code=$?
   printf '%s' "$json" > "$work/$agent.json"
