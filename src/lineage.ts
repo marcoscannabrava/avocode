@@ -619,12 +619,16 @@ export async function recordDecisionMemory(
   return [...backend.warnings, ...w.warnings, ...(w.error === null ? [] : [w.error])];
 }
 
+/** Cold qmd embed must not block commits. */
+export const COMMIT_REINDEX_TIMEOUT_MS = 60_000;
+
 /** Puts a new lineage file into qmd. */
 export async function indexNewVersion(opts: CommitOptions, d: CommitDecision, runner: Runner): Promise<string[]> {
   if (!opts.record || opts.dryRun || d.action !== "committed") return [];
   // Without qmd, the local scan reads live.
   if ((await resolveKnowledge(runner, opts.cwd)).kind !== "qmd") return [];
-  return (await reindex(runner, opts.cwd, "lineage")).warnings;
+  const { warnings } = await reindex(runner, opts.cwd, "lineage", COMMIT_REINDEX_TIMEOUT_MS);
+  return warnings.length === 0 ? [] : [...warnings, "run 'avo know reindex' to finish the index"];
 }
 
 /** Exit codes mirror `avo score`: 0 committed or no-op, 1 refused, 2 harness error. */
