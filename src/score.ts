@@ -607,7 +607,7 @@ export async function runScore(
   }
 
   const timeoutMs = opts.timeoutS * 1000;
-  // Before the scorer: its outputs are not the candidate.
+  // Read before scoring; outputs are not candidates.
   const git = await readGit(runner, opts.cwd);
   const started = Date.now();
   const warmupWarnings: string[] = [];
