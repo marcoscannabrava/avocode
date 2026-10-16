@@ -457,11 +457,14 @@ test("an agent binary that cannot be started stops the loop instead of burning t
     join(f.dir, ".avo/config.json"),
     JSON.stringify({ agent: { name: "stub", command: join(f.dir, "not-a-binary"), args: ["{prompt}"], format: "text" } }),
   );
-  const { code, json } = await run(f, ["--prompt", "go", "--max-iters", "5"]);
+  const { code, json } = await run(f, ["--prompt", "go", "--max-iters", "5", "--max-cost", "1", "--max-tokens", "10"]);
   assert.equal(code, 1);
   assert.equal(json.iterations.length, 1, "it does not try nine more times");
   assert.equal(json.stopped, "agent-unavailable");
   assert.match(json.stop_reason, /could not execute/);
+  // A turn that never ran says nothing of usage.
+  assert.deepEqual(json.budget.unenforced, []);
+  assert.ok(!json.warnings.some((w) => /unenforced/.test(w)), JSON.stringify(json.warnings));
 });
 
 test("an agent that changes nothing stops the loop, because the supervisor cannot see it", async () => {
