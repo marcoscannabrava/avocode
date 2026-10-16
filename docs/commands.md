@@ -225,7 +225,15 @@ Four guards, from `pi-subagent`'s pattern, because a probe is itself an agent th
 Each built-in agent template carries the flag that stops it asking a human for permission —
 `pi --approve`, `claude --permission-mode bypassPermissions`, `codex --sandbox workspace-write`.
 Without them a headless probe reads, never writes, and exits 0 having done nothing. `avo fan`
-reports which one it used in `approval`. Drive something else from `.avo/config.json`:
+reports which one it used in `approval`.
+
+A managed setting can stop the claude flag. If `permissions.disableBypassPermissionsMode` is
+`"disable"` (for example, in an organization's remote settings), claude ignores
+`bypassPermissions` and uses your `defaultMode`. It does not show an error. avo reads the mode from
+claude's `init` event. If the mode is wrong, the turn fails, and `avo run` stops with
+`approval-refused`. avo also reports each tool call that claude denied.
+
+Drive something else from `.avo/config.json`:
 
 ```json
 {"agent": {"name": "myagent", "command": "my-cli", "args": ["--headless", "--model={model}", "{prompt}"]}}
@@ -302,6 +310,7 @@ v3" from a run that ended days ago.
 | `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is done |
 | 3 iterations in a row change nothing **and leave HEAD where it was** | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. The one stop condition steering cannot express |
 | the agent binary cannot be started | it will not start next iteration either; retrying nine more times is spinning |
+| the agent ignored its permission mode (`approval-refused`) | the next turn gets the same mode, so it cannot edit either |
 
 **The agent usually commits for itself, and the manifest says so.** The `avo-vary` skill — wired in
 by `avo install`, and pointed at by the turn prompt — has the agent run `avo commit --why "..."`

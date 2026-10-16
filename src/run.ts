@@ -123,7 +123,13 @@ export interface Iteration {
   warnings: string[];
 }
 
-export type StopReason = "max-iters" | "stop-file" | "no-progress" | "agent-unavailable" | "dry-run";
+export type StopReason =
+  | "max-iters"
+  | "stop-file"
+  | "no-progress"
+  | "agent-unavailable"
+  | "approval-refused"
+  | "dry-run";
 
 /**
  * The whole run, and the on-disk manifest. One shape, not two: a manifest that can drift from
@@ -686,6 +692,15 @@ async function iterate(
 
     prev = it;
     writeRunManifest(opts.cwd, report);
+
+    // The next turn gets the same mode.
+    if (turn.approval_refused) {
+      report.stopped = "approval-refused";
+      report.stop_reason = turn.error ?? `${template.command} refused its approval mode`;
+      report.errors.push(report.stop_reason);
+      writeRunManifest(opts.cwd, report);
+      break;
+    }
 
     if (noops >= MAX_CONSECUTIVE_NOOPS) {
       report.stopped = "no-progress";
