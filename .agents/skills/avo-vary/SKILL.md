@@ -104,6 +104,8 @@ things follow:
   behind. Committing yourself is fine too; it is not a no-op and the loop keeps going.
 - **`touch .avo/STOP` when the task is genuinely done.** It ends the loop before the next turn. Use it
   when there is nothing left to vary — not when *this* turn was hard.
+- **`avo supervise` can be off.** In an ablation run, `AVO_SUPERVISE` is `off` or `detect`, and
+  `avo supervise` prints one line and exits 0. This is correct. Do not work around it.
 
 Before calling `avo run` or `avo fan` from inside a turn, check the depth: `AVO_FAN_LEVEL` against
 `AVO_FAN_DEPTH`. At the limit you must do the work yourself.

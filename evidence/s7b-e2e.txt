@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-10-16T23:54:46Z
+# avo S7b e2e — 2026-10-16T23:56:06Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 3c26c7af, a stub agent and an f that counts lines
+PASS  repo at HEAD dfa6242f, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-f1488fab)
+PASS  the injected directive is recorded (avo-intervention-2e50b1fe)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive
@@ -86,8 +86,8 @@ PASS  one JSON object, every field typed as documented
 PASS  it is a single JSON object on stdout
 
 ## 9. #8 measured: readLineage runs once per iteration now
-      2000 commits: the git log readLineage runs took 6ms
-PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 6ms
+      2000 commits: the git log readLineage runs took 5ms
+PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 5ms
 
 ## 10. #42: an agent that runs avo commit itself
 PASS  every iteration decides noop — the tree really was clean
@@ -137,5 +137,19 @@ PASS  avo run puts its own bin/avo first on the agent's PATH
 PASS  the agent's 'avo best --json' ran
 PASS  avo started through a symlink puts the checkout's bin/ first
 
+## 15. --supervise on|off|detect
+PASS  the default mode is on, and the manifest says so
+PASS  the off plan says the supervise step is skipped
+PASS  the detect plan says nothing is injected
+PASS  an unknown mode is a usage error (exit 2)
+PASS  off: no supervisor call and no intervention
+PASS  off: the manifest on disk records the mode
+PASS  off: the agent never sees a directive
+PASS  detect: the stall is counted, but nothing intervened
+PASS  detect: the held-back directive is in the manifest
+PASS  detect: the agent never sees the directive
+PASS  detect: the prompt matches the off arm
+PASS  detect: no intervention memory, so the agent cannot read it
+
 ## summary
-all checks passed (105 of them)
+all checks passed (117 of them)

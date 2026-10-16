@@ -302,6 +302,7 @@ avo run --prompt "make the tokenizer faster without changing its output" --max-i
 avo run --prompt-file task.md --dry-run      # the resolved plan and the first turn prompt; spawns nothing
 avo run --prompt-file task.md --stall 3 --thrash 2 --timeout 600 --agent claude --model opus
 avo run --prompt-file task.md --max-iters 50 --max-cost 5 --max-tokens 2000000 --max-wall 3600
+avo run --prompt-file task.md --supervise detect   # ablation control arm: detect, do not steer
 ```
 
 **Every iteration is a fresh process.** Nothing from the previous turn is in the agent's context, so
@@ -314,6 +315,24 @@ interventions are recorded, so each injected directive becomes a labelled bead (
 avo,avo-intervention`) or a `lineage/memory.jsonl` record. Deliberately *not* an insight: insights
 are injected at prime time, and every future session would open with a stale "you are stalling, read
 v3" from a run that ended days ago.
+
+**`--supervise on|off|detect` turns the supervisor off for an ablation.** The default is `on`. The
+manifest records the mode in `supervise`.
+
+| Mode | Calls `avo supervise` | Injects the directive | Writes intervention memory |
+| --- | --- | --- | --- |
+| `on` | yes | yes | yes |
+| `off` | no | no | no |
+| `detect` | yes | no | no |
+
+Use `detect` for the control arm of an ablation. Each iteration keeps its `supervision` signals, and
+the directive that would have fired goes into `withheld`. The run counts these in `detections`, and
+`interventions` stays at 0. So the control arm still shows its stalls. `detect` writes no memory
+record, because the agent reads memory (`avo mem`). A record would steer the agent, and the control
+arm would not be a control. In `off` and `detect`, the turn prompt also omits the "attempts since the
+best version" line. The agent sees the same prompt in both modes. Each turn also gets
+`AVO_SUPERVISE=<mode>`. In `off` and `detect`, an `avo supervise` that the agent runs prints one line
+and exits 0, so the agent cannot steer itself.
 
 | It stops when | Because |
 | --- | --- |

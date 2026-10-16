@@ -96,6 +96,8 @@ avo run:
   --max-cost <usd> --max-tokens <n> --max-wall <s>
                     run budgets, checked before each turn (default: none)
   --stall <n> --thrash <k>   the supervisor's thresholds, as for avo supervise
+  --supervise <m>   on (default) steers, off skips the supervisor, detect
+                    records what would fire and injects nothing
   --dry-run         print the resolved plan and the first turn prompt; spawn nothing
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
@@ -109,6 +111,7 @@ avo supervise:
   --json --cwd <dir>
   exit codes        0 = no intervention needed, 1 = a signal fired and a directive was emitted,
                     2 = harness error
+  AVO_SUPERVISE     off or detect (set by avo run --supervise): print one line, exit 0
 
 avo commit:
   --why <text>      the agent's rationale; lands in the commit body and lineage/vNNN.md

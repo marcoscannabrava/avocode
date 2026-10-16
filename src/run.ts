@@ -42,7 +42,7 @@ import {
 } from "./lineage.ts";
 import { remember, resolveBackend, shortHash, type Backend } from "./mem.ts";
 import { SCORER_PATH, spawnRunner, type Runner } from "./score.ts";
-import { supervise, type Signal, type SignalKind } from "./supervise.ts";
+import { supervise, SUPERVISE_ENV, type Signal, type SignalKind } from "./supervise.ts";
 
 /** Every run lives here. In TRAJECTORY_PATHS and gitignored: trajectory, not lineage. */
 export const RUNS_DIR = ".avo/runs";
@@ -57,6 +57,10 @@ export const DEFAULT_MAX_ITERS = 10;
 export const MAX_CONSECUTIVE_NOOPS = 3;
 /** How much of the agent's own words become the commit rationale. A commit body is not a log. */
 const WHY_CAP_CHARS = 2_000;
+
+/** `on` steers, `off` skips, `detect` only records. */
+export const SUPERVISE_MODES = ["on", "off", "detect"] as const;
+export type SuperviseMode = (typeof SUPERVISE_MODES)[number];
 
 /** Said once per silent turn, in the manifest and in the rendered run (#49). */
 const NO_SUMMARY = "the agent produced no final message, so this turn is recorded with no rationale";
@@ -121,6 +125,8 @@ export interface Iteration {
   /** The directive this iteration produced, injected into the *next* turn. */
   directive: string | null;
   intervention: Intervention | null;
+  /** `detect` only: the directive held back. */
+  withheld?: string | null;
   warnings: string[];
 }
 
@@ -162,10 +168,14 @@ export interface RunReport {
   started_at: string;
   finished_at: string | null;
   thresholds: { stall: number; thrash: number };
+  /** Absent in older manifests, which means `on`. */
+  supervise?: SuperviseMode;
   iterations: Iteration[];
   /** Version numbers this run committed, in order. The run's actual output. */
   committed: number[];
   interventions: number;
+  /** Iterations that would steer; non-zero only in `detect`. */
+  detections?: number;
   /** Summed over every iteration. Disjoint by construction — see `AgentTokens`. */
   tokens: AgentTokens;
   /**
@@ -200,6 +210,7 @@ export interface RunOptions {
   /** `null` = take it from `.avo/config.json`, then the default. As for `avo supervise`. */
   stall: number | null;
   thrash: number | null;
+  supervise: SuperviseMode;
 }
 
 export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): RunOptions | { error: string } {
@@ -219,6 +230,7 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     dryRun: false,
     stall: null,
     thrash: null,
+    supervise: "on",
   };
   const value = (i: number, flag: string): string | { error: string } => {
     const v = argv[i + 1];
@@ -290,6 +302,12 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
           const n = Number(v);
           if (!Number.isInteger(n) || n < 2) return { error: `avo run: --thrash needs an integer >= 2` };
           opts.thrash = n;
+          break;
+        }
+        case "--supervise": {
+          const m = SUPERVISE_MODES.find((k) => k === v);
+          if (m === undefined) return { error: `avo run: --supervise needs on, off or detect` };
+          opts.supervise = m;
           break;
         }
         default:
@@ -581,9 +599,11 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     started_at: now().toISOString(),
     finished_at: null,
     thresholds,
+    supervise: opts.supervise,
     iterations: [],
     committed: [],
     interventions: 0,
+    detections: 0,
     tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
     cost_usd: null,
     stopped: "max-iters",
@@ -605,6 +625,11 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
   ensureTrajectoryIgnored(opts.cwd);
   writeRunManifest(opts.cwd, report);
   return await iterate(opts, deps, report, template, prompt);
+}
+
+/** Hides supervisor state unless steering is on. */
+function shownTo(mode: SuperviseMode, prev: Iteration | null): Iteration | null {
+  return mode === "on" || prev === null ? prev : { ...prev, supervision: null };
 }
 
 /** Every token the run sent or got. */
@@ -649,6 +674,7 @@ async function iterate(
   const guards = checkGuards(deps.env, report.prompt_sha);
   const childEnv = guards.ok ? probeEnv(guards, report.prompt_sha, report.run_id, 0) : {};
 
+  const mode = opts.supervise;
   let directive: string | null = null;
   let prev: Iteration | null = null;
   let noops = 0;
@@ -672,13 +698,13 @@ async function iterate(
     const turn = await driveAgent(
       runner,
       template,
-      { prompt: turnPrompt(base, iter, opts.maxIters, prev, directive), model: opts.model },
+      { prompt: turnPrompt(base, iter, opts.maxIters, shownTo(mode, prev), directive), model: opts.model },
       {
         cwd: opts.cwd,
         logPath,
         logFile: join(opts.cwd, logPath),
         timeoutS: opts.timeoutS,
-        env: { ...childEnv, AVO_FAN_PROBE: String(iter) },
+        env: { ...childEnv, AVO_FAN_PROBE: String(iter), [SUPERVISE_ENV]: mode },
       },
       now,
     );
@@ -695,6 +721,7 @@ async function iterate(
       supervision: null,
       directive: null,
       intervention: null,
+      ...(mode === "detect" ? { withheld: null } : {}),
       warnings: [],
     };
     report.iterations.push(it);
@@ -752,17 +779,26 @@ async function iterate(
     const idle = decision.action === "noop" && it.head_after === it.head_before;
     noops = idle ? noops + 1 : 0;
 
-    const s = await supervise({ json: true, cwd: opts.cwd, stall: opts.stall, thrash: opts.thrash }, { runner });
-    it.warnings.push(...s.warnings);
-    it.supervision = { triggered: s.triggered, signals: s.signals, since_best: s.state.since_best, repeat: s.state.repeat };
+    // `off` is the ablation arm: no detector call.
+    if (mode !== "off") {
+      const s = await supervise({ json: true, cwd: opts.cwd, stall: opts.stall, thrash: opts.thrash }, { runner });
+      it.warnings.push(...s.warnings);
+      it.supervision = { triggered: s.triggered, signals: s.signals, since_best: s.state.since_best, repeat: s.state.repeat };
 
-    // Injected into the NEXT turn, but recorded here: it belongs to the state that produced it.
-    directive = s.directive;
-    it.directive = s.directive;
-    if (s.triggered && s.directive !== null) {
-      it.intervention = await recordIntervention(deps, opts.cwd, report.run_id, iter, s.signals, s.directive);
-      it.warnings.push(...it.intervention.warnings);
-      report.interventions++;
+      if (mode === "detect") {
+        // No memory record: the agent reads memory.
+        it.withheld = s.directive;
+        if (s.triggered) report.detections = (report.detections ?? 0) + 1;
+      } else {
+        // Injected into the NEXT turn, but recorded here: it belongs to the state that produced it.
+        directive = s.directive;
+        it.directive = s.directive;
+        if (s.triggered && s.directive !== null) {
+          it.intervention = await recordIntervention(deps, opts.cwd, report.run_id, iter, s.signals, s.directive);
+          it.warnings.push(...it.intervention.warnings);
+          report.interventions++;
+        }
+      }
     }
 
     prev = it;
@@ -790,6 +826,19 @@ async function iterate(
 // rendering
 // ---------------------------------------------------------------------------
 
+/** Steps 3 and 4 of the plan. */
+function superviseSteps(r: RunReport, mode: SuperviseMode): string[] {
+  if (mode === "off") return ["  3. no avo supervise (--supervise off); nothing is injected"];
+  const detect = [
+    `  3. avo supervise — ${r.thresholds.stall} attempts with no improvement, or ${r.thresholds.thrash} failures`,
+    "     with the same signature, emits a steering directive that cites P_t and K",
+  ];
+  if (mode === "detect") {
+    return [...detect, "  4. record that directive as withheld; inject nothing, write no memory"];
+  }
+  return [...detect, "  4. inject that directive into the next turn's prompt and record it as an intervention"];
+}
+
 /** `$5, 100000 tokens, 600s wall`, or `none`. */
 export function describeBudget(b: RunBudget | undefined): string {
   if (b === undefined) return "none";
@@ -805,6 +854,7 @@ export function describeBudget(b: RunBudget | undefined): string {
 
 /** The plan `--dry-run` prints: everything resolved, and the sequence each iteration will follow. */
 export function renderPlan(r: RunReport): string {
+  const mode = r.supervise ?? "on";
   const lines = ["avo run (--dry-run: nothing is spawned, nothing is committed)", ""];
   for (const w of r.warnings) lines.push(`warning: ${w}`);
   if (r.warnings.length > 0) lines.push("");
@@ -817,6 +867,7 @@ export function renderPlan(r: RunReport): string {
     `  timeout      ${r.timeout_s === 0 ? "none" : `${r.timeout_s}s per turn`}`,
     `  budget       ${describeBudget(r.budget)}`,
     `  thresholds   stall ${r.thresholds.stall}, thrash ${r.thresholds.thrash}`,
+    `  supervise    ${mode}`,
     `  baseline     ${r.baseline.slice(0, 8)}`,
     `  run dir      ${join(RUNS_DIR, r.run_id)} (not created)`,
     `  stop file    ${STOP_FILE} (${existsSync(join(r.cwd, STOP_FILE)) ? "present — a real run would stop at once" : "absent"})`,
@@ -825,9 +876,7 @@ export function renderPlan(r: RunReport): string {
     `  1. spawn the agent in ${r.cwd} with the turn prompt`,
     "  2. avo commit — score the tree, compare against the best version, persist only if it wins",
     "     (a turn that ran avo commit itself leaves nothing here; its version is still recorded)",
-    `  3. avo supervise — ${r.thresholds.stall} attempts with no improvement, or ${r.thresholds.thrash} failures`,
-    "     with the same signature, emits a steering directive that cites P_t and K",
-    "  4. inject that directive into the next turn's prompt and record it as an intervention",
+    ...superviseSteps(r, mode),
     "",
     `stops on: --max-iters ${r.max_iters}, ${STOP_FILE}, ${MAX_CONSECUTIVE_NOOPS} unchanged iterations in a row,`,
     "          a crossed budget, or an agent binary that cannot be started",
@@ -872,6 +921,7 @@ export function renderRun(r: RunReport): string {
     if (it.warnings.includes(NO_SUMMARY)) lines.push(`       ${" ".repeat(7)}  ↳ ${NO_SUMMARY}`);
     for (const s of it.supervision?.signals ?? []) lines.push(`       ${" ".repeat(7)}  ↳ ${s.kind}: ${s.detail}`);
     if (it.intervention !== null) lines.push(`       ${" ".repeat(7)}  ↳ steered; recorded as ${it.intervention.key}`);
+    if (it.withheld) lines.push(`       ${" ".repeat(7)}  ↳ detected only; nothing injected`);
   }
   lines.push("");
 
@@ -885,6 +935,8 @@ export function renderRun(r: RunReport): string {
     `  iterations   ${r.iterations.length} of ${r.max_iters}`,
     `  committed    ${r.committed.length === 0 ? "nothing" : r.committed.map((v) => `v${v}`).join(", ")}${byAgent === 0 ? "" : ` (${byAgent} by the agent itself)`}`,
     `  interventions ${r.interventions}`,
+    ...(r.supervise === undefined || r.supervise === "on" ? [] : [`  supervise    ${r.supervise}`]),
+    ...(r.supervise === "detect" ? [`  detections   ${r.detections ?? 0} (withheld, not injected)`] : []),
     ...(describeBudget(r.budget) === "none" ? [] : [`  budget       ${describeBudget(r.budget)}`]),
     ...(tok > 0 ? [tokenLine] : []),
     ...(r.cost_usd === null || r.cost_usd === undefined ? [] : [`  cost         $${r.cost_usd.toFixed(2)} (as the agent reported it)`]),
