@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   compareVectors,
-  formatRel,
+  formatDelta,
   scoreVector,
   stderrVector,
   type Comparison,
@@ -289,7 +289,7 @@ export function renderLineageFile(
     lines.push(
       `| config | v${best?.version ?? "—"} | v${version} | delta |`,
       "| --- | ---: | ---: | ---: |",
-      ...cmp.deltas.map((d) => `| \`${d.config}\` | ${d.best * sign} | ${d.candidate * sign} | ${formatRel(d.rel)} |`),
+      ...cmp.deltas.map((d) => `| \`${d.config}\` | ${d.best * sign} | ${d.candidate * sign} | ${formatDelta(d, cmp.z)} |`),
     );
   } else {
     lines.push(
@@ -331,7 +331,7 @@ export function renderDecision(d: CommitDecision): string {
   for (const delta of d.comparison?.deltas ?? []) {
     lines.push(
       `  ${delta.config.padEnd(12)} ${delta.best * sign} -> ${delta.candidate * sign}  ` +
-        `${formatRel(delta.rel)}  ${delta.verdict}`,
+        `${formatDelta(delta, d.comparison?.z)}  ${delta.verdict}`,
     );
   }
   lines.push("");
@@ -798,7 +798,7 @@ export async function lineageCommand(argv: readonly string[], io: Io, runner: Ru
   const sign = to.score.higher_is_better ? 1 : -1;
   const lines = [`avo lineage diff v${from.version} -> v${to.version}`, ""];
   for (const d of cmp.deltas) {
-    lines.push(`  ${d.config.padEnd(12)} ${d.best * sign} -> ${d.candidate * sign}  ${formatRel(d.rel)}  ${d.verdict}`);
+    lines.push(`  ${d.config.padEnd(12)} ${d.best * sign} -> ${d.candidate * sign}  ${formatDelta(d, cmp.z)}  ${d.verdict}`);
   }
   lines.push("", cmp.reason, "", patch.stdout);
   io.out(`${lines.join("\n")}\n`);

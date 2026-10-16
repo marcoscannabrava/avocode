@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { compareVectors, relDelta, scoreVector, stderrVector, type Vector } from "../src/compare.ts";
+import { compareVectors, formatDelta, relDelta, scoreVector, stderrVector, type ConfigDelta, type Vector } from "../src/compare.ts";
 import { CONFIG_PATH, DEFAULT_CONFIG, loadConfig, type AvoConfig } from "../src/config.ts";
 
 const cfg = (over: Partial<AvoConfig> = {}): AvoConfig => ({ ...DEFAULT_CONFIG, ...over });
@@ -236,6 +236,22 @@ test("plain dominate ignores stderr entirely", () => {
   assert.equal(c.decision, "improved");
   assert.equal(c.deltas[0]?.sigma, undefined);
   assert.equal(c.z, undefined);
+});
+
+test("reduce mean ignores stderr: the floor and the mean decide", () => {
+  const err = { candidateStderr: { a: 50, b: 50 }, bestStderr: { a: 50, b: 50 } };
+  const c = compareVectors({ a: 110, b: 100 }, { a: 100, b: 100 }, cfg({ reduce: "mean" }), err);
+  assert.equal(c.decision, "improved");
+  assert.equal(c.deltas[0]?.sigma, undefined);
+  assert.equal(c.z, undefined);
+});
+
+test("formatDelta shows the absolute change against z·σ only when σ was used", () => {
+  const err = { candidateStderr: { a: 3 }, bestStderr: { a: 4 } };
+  const z = compareVectors({ a: 89 }, { a: 100 }, zcfg(), err);
+  assert.equal(formatDelta(z.deltas[0] as ConfigDelta, z.z), "-11.00% (Δ -11, z·σ 10)");
+  const plain = compareVectors({ a: 111 }, { a: 100 }, cfg());
+  assert.equal(formatDelta(plain.deltas[0] as ConfigDelta, plain.z), "+11.00%");
 });
 
 test("stderrVector keys σ like scoreVector and never flips its sign", () => {

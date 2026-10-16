@@ -155,7 +155,8 @@ a config where the candidate or the best version has a `stderr`, avo uses the ab
 `Δ > z·σ` and regressed if `Δ < −z·σ`. `z` defaults to `2`. These configs ignore `floor`. A config
 with no `stderr` on either side uses `floor`, so without `stderr` the rule is exactly `dominate`.
 The `Avo-Score` trailer stores the `stderr`, so the best version keeps its σ. Trailers from before
-this field read as "no `stderr`".
+this field read as "no `stderr`". `Δ` is absolute, but `floor` is relative. The output shows both:
+`+11.00% (Δ +11, z·σ 10)`. `reduce: "mean"` ignores `stderr`.
 
 A candidate
 whose `higher_is_better` differs from the best version's is refused as incomparable rather than

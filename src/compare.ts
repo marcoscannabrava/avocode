@@ -269,3 +269,11 @@ export function compareVectors(
 }
 
 export { pct as formatRel };
+
+/** Relative change, plus Δ against z·σ. */
+export function formatDelta(d: ConfigDelta, z: number | undefined): string {
+  if (d.sigma === undefined || z === undefined) return pct(d.rel);
+  const n = (x: number) => Number(x.toPrecision(4));
+  const delta = d.candidate - d.best;
+  return `${pct(d.rel)} (Δ ${delta >= 0 ? "+" : ""}${n(delta)}, z·σ ${n(z * d.sigma)})`;
+}
