@@ -146,6 +146,57 @@ test("--stall 1 fires on the first attempt after the best version", () => {
   assert.equal(signals[0]?.count, 1);
 });
 
+// ------------------------------------------------- variations, not score calls (#25)
+
+/** The git block of an attempt on `tree`. */
+const on = (tree: string, paths: string[], head = "abc1234"): Pick<Attempt, "git"> => ({
+  git: { head, dirty: paths.length > 0, tree, paths },
+});
+const at = (i: number): string => `2026-08-24T10:${String(10 + i).padStart(2, "0")}:00.000Z`;
+
+test("the stall counts distinct trees, so re-scoring one tree is one variation", () => {
+  // 4 trees, each scored twice: 8 score calls, 4 variations.
+  const attempts = [0, 1, 2, 3].flatMap((t) => [attempt(at(2 * t), on(`t${t}`, ["k.c"])), attempt(at(2 * t + 1), on(`t${t}`, ["k.c"]))]);
+  const quiet = detect({ versions: [version(1)], attempts, ...base });
+  assert.equal(quiet.state.since_best, 8);
+  assert.equal(quiet.state.variations_since_best, 4);
+  assert.deepEqual(quiet.signals, [], "8 score calls on 4 trees is below a stall of 5");
+
+  const fired = detect({ versions: [version(1)], attempts: [...attempts, attempt(at(9), on("t4", ["k.c"]))], ...base });
+  const stall = fired.signals.find((s) => s.kind === "stall");
+  assert.equal(stall?.count, DEFAULT_STALL);
+  assert.match(stall?.detail ?? "", /^5 variation\(s\) since v1 \(9 score calls\)/);
+});
+
+test("an attempt line without a tree counts as its own variation", () => {
+  // Pre-AVO-5 lines carry no tree; each one counts alone.
+  const attempts = [attempt(at(0)), attempt(at(1)), attempt(at(2), on("t", ["k.c"])), attempt(at(3), on("t", ["k.c"]))];
+  assert.equal(detect({ versions: [version(1)], attempts, ...base }).state.variations_since_best, 3);
+});
+
+test("re-scoring the best version unedited is not a variation, and the directive says to edit", () => {
+  const v1 = version(1);
+  const varied = Array.from({ length: DEFAULT_STALL }, (_, i) => attempt(at(i), on(`t${i}`, ["k.c"], v1.sha)));
+  const rescore = attempt(at(DEFAULT_STALL), on("head", [], v1.sha));
+  const { state, signals } = detect({ versions: [v1], attempts: [...varied, rescore, rescore], ...base });
+  assert.equal(state.since_best, DEFAULT_STALL + 2);
+  assert.equal(state.variations_since_best, DEFAULT_STALL);
+  assert.equal(state.unedited, true);
+  assert.match(renderDirective(state, signals, []), /1\. Edit something first: the tree matches the best version/);
+
+  // Only re-scores: nothing varied, so nothing stalls.
+  const idle = detect({ versions: [v1], attempts: Array.from({ length: 9 }, (_, i) => attempt(at(i), on("head", [], v1.sha))), ...base });
+  assert.equal(idle.state.variations_since_best, 0);
+  assert.deepEqual(idle.signals, []);
+});
+
+test("an edited last attempt gets the plain stall steps", () => {
+  const attempts = Array.from({ length: DEFAULT_STALL }, (_, i) => attempt(at(i), on(`t${i}`, ["k.c"])));
+  const { state, signals } = detect({ versions: [version(1)], attempts, ...base });
+  assert.equal(state.unedited, false);
+  assert.doesNotMatch(renderDirective(state, signals, []), /Edit something first/);
+});
+
 // --------------------------------------------------------------- the thrash
 
 test("consecutive failures with the same signature fire the thrash at exactly K", () => {
@@ -171,6 +222,47 @@ test("failures that fail differently are a search, not a thrash", () => {
   const { state, signals } = detect({ versions: [version(1)], attempts, stall: 99, thrash: 3 });
   assert.equal(state.failing_streak, 3, "all three failed");
   assert.equal(state.repeat, 1, "but only the last one carries the current signature");
+  assert.deepEqual(signals, []);
+});
+
+test("thrash needs overlapping paths: the same failure on unrelated files is a search", () => {
+  // No log, so every failure shares one signature.
+  const files = ["a.c", "b.c", "c.c", "d.c"];
+  const attempts = files.map((f, i) => failed(at(i), on(`t${i}`, [f])));
+  const { state, signals } = detect({ versions: [version(1)], attempts, stall: 99, thrash: 3 });
+  assert.equal(state.signature, "f reported correct: false");
+  assert.equal(state.failing_streak, 4);
+  assert.equal(state.repeat, 1);
+  assert.deepEqual(signals, []);
+});
+
+test("thrash fires at exactly K variations that fail the same way in the same file, and names it", () => {
+  for (let n = 1; n <= 4; n++) {
+    const attempts = Array.from({ length: n }, (_, i) => failed(at(i), on(`t${i}`, ["kernel.cu", `extra${i}.h`])));
+    const { state, signals } = detect({ versions: [version(1)], attempts, stall: 99, thrash: 3 });
+    assert.equal(state.repeat, n);
+    const thrash = signals.find((s) => s.kind === "thrash");
+    assert.equal(thrash !== undefined, n >= 3, `${n} variations`);
+    if (n >= 3) {
+      assert.deepEqual(state.region, ["kernel.cu"]);
+      assert.match(thrash?.detail ?? "", new RegExp(`^the last ${n} variations failed the same way in kernel\\.cu`));
+    }
+  }
+});
+
+test("with no tree, paths are unknown, so thrash still fires", () => {
+  // As readGit writes it outside git.
+  const attempts = [0, 1, 2].map((i) => failed(at(i), { git: { head: null, dirty: false, tree: null } }));
+  const { state, signals } = detect({ versions: [], attempts, stall: 99, thrash: 3 });
+  assert.equal(state.repeat, 3);
+  assert.ok(signals.some((s) => s.kind === "thrash"));
+});
+
+test("re-scoring one failing tree is not a thrash", () => {
+  const attempts = Array.from({ length: 5 }, (_, i) => failed(at(i), on("same", ["kernel.cu"])));
+  const { state, signals } = detect({ versions: [version(1)], attempts, stall: 99, thrash: 3 });
+  assert.equal(state.failing_streak, 5);
+  assert.equal(state.repeat, 1);
   assert.deepEqual(signals, []);
 });
 
@@ -291,7 +383,7 @@ test("the directive names the signal, the version to beat and a next step that i
   const cites = citationsFor([version(3)], [], [{ file: "knowledge/tma.md", title: "TMA", collection: "knowledge" }]);
   const text = renderDirective(state, signals, cites);
   assert.match(text, /STEERING \(avo supervise\)/);
-  assert.match(text, /5 attempt\(s\) since v3/);
+  assert.match(text, /5 variation\(s\) since v3 \(5 score calls\)/);
   assert.match(text, /avo lineage show 3/);
   assert.match(text, /knowledge\/tma\.md/);
   assert.match(text, /avo fan --n 4/, "a stalled agent is told how to explore, not just to explore");
@@ -324,6 +416,22 @@ test("a repo that never scored has no attempt log and that is not a warning", ()
   const cwd = mkdtempSync(join(tmpdir(), "avo-sup-"));
   try {
     assert.deepEqual(readAttempts(cwd), { attempts: [], total: 0, warnings: [] });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an attempt line written before AVO-5 still parses", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "avo-sup-"));
+  try {
+    mkdirSync(join(cwd, ".avo"), { recursive: true });
+    const old = JSON.stringify(attempt(at(0), { git: { head: "abc1234", dirty: true } }));
+    const now = JSON.stringify(attempt(at(1), on("t1", ["k.c"])));
+    writeFileSync(join(cwd, ATTEMPTS_PATH), `${old}\n${now}\n`);
+    const log = readAttempts(cwd);
+    assert.equal(log.attempts.length, 2);
+    assert.deepEqual(log.warnings, []);
+    assert.equal(detect({ versions: [version(1)], attempts: log.attempts, ...base }).state.variations_since_best, 2);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

@@ -1,11 +1,23 @@
 import { spawn } from "node:child_process";
-import { accessSync, appendFileSync, constants, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
+import {
+  accessSync,
+  appendFileSync,
+  constants,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { CONFIG_NAME, CONFIG_PATH, loadConfig } from "./config.ts";
+import { HARNESS_PATHS, isHarnessPath } from "./harness.ts";
 import type { Io } from "./io.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -86,7 +98,16 @@ export interface Attempt {
   warnings: string[];
   log: string | null;
   exit_code: number;
-  git: { head: string | null; dirty: boolean };
+  git: AttemptGit;
+}
+
+export interface AttemptGit {
+  head: string | null;
+  dirty: boolean;
+  /** Working-tree hash; one tree, one variation. */
+  tree?: string | null;
+  /** Changed paths vs HEAD, harness excluded; absent when unknown. */
+  paths?: string[];
 }
 
 export interface RunResult {
@@ -521,11 +542,51 @@ export function parseScoreArgs(argv: readonly string[]): ScoreOptions | { error:
   return opts;
 }
 
-async function readGit(runner: Runner, cwd: string): Promise<Attempt["git"]> {
+export async function readGit(runner: Runner, cwd: string): Promise<AttemptGit> {
   const head = await runner("git", ["rev-parse", "HEAD"], { cwd, timeoutMs: 10_000 });
-  if (head.code !== 0 || head.spawnError !== null) return { head: null, dirty: false };
+  if (head.code !== 0 || head.spawnError !== null) return { head: null, dirty: false, tree: null };
   const status = await runner("git", ["status", "--porcelain"], { cwd, timeoutMs: 10_000 });
-  return { head: head.stdout.trim(), dirty: status.stdout.trim() !== "" };
+  const sha = head.stdout.trim();
+  const dirty = status.stdout.trim() !== "";
+  const tree = await candidateTree(runner, cwd);
+  // Unknown paths must stay unknown, not empty.
+  const paths = tree === null ? null : await changedPaths(runner, cwd, sha, tree);
+  return paths === null ? { head: sha, dirty, tree } : { head: sha, dirty, tree, paths };
+}
+
+/** Tree hash via a temporary index copy. */
+async function candidateTree(runner: Runner, cwd: string): Promise<string | null> {
+  const gitOpts = (env: Record<string, string>) => ({ cwd, timeoutMs: 60_000, env });
+  const dir = mkdtempSync(join(tmpdir(), "avo-tree-"));
+  try {
+    const index = join(dir, "index");
+    const real = await runner("git", ["rev-parse", "--git-path", "index"], gitOpts({}));
+    try {
+      if (real.code === 0) copyFileSync(resolvePath(cwd, real.stdout.trim()), index);
+    } catch {
+      // No index yet: start from an empty one.
+    }
+    const env = { GIT_INDEX_FILE: index };
+    const add = await runner("git", ["add", "-A", "--", "."], gitOpts(env));
+    if (add.code !== 0 || add.spawnError !== null) return null;
+    const rm = ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...HARNESS_PATHS];
+    const drop = await runner("git", rm, gitOpts(env));
+    if (drop.code !== 0 || drop.spawnError !== null) return null;
+    const tree = await runner("git", ["write-tree"], gitOpts(env));
+    const hash = tree.stdout.trim();
+    return tree.code === 0 && /^[0-9a-f]{40,64}$/.test(hash) ? hash : null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Paths `tree` changes against `head`, harness paths excluded. */
+async function changedPaths(runner: Runner, cwd: string, head: string, tree: string): Promise<string[] | null> {
+  // Relative to cwd, like HARNESS_PATHS.
+  const args = ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--relative", head, tree];
+  const diff = await runner("git", args, { cwd, timeoutMs: 60_000 });
+  if (diff.code !== 0 || diff.spawnError !== null) return null;
+  return diff.stdout.split("\0").filter((p) => p !== "" && !isHarnessPath(p));
 }
 
 export interface ScoreRun {
@@ -557,6 +618,8 @@ export async function runScore(
   }
 
   const timeoutMs = opts.timeoutS * 1000;
+  // Read before scoring; outputs are not candidates.
+  const git = await readGit(runner, opts.cwd);
   const started = Date.now();
   const warmupWarnings: string[] = [];
 
@@ -599,7 +662,7 @@ export async function runScore(
     ts: now().toISOString(),
     parallel: configs !== null,
     exitCode: parts.find((p) => p.run.code !== 0)?.run.code ?? 0,
-    git: await readGit(runner, opts.cwd),
+    git,
     durationS,
   });
   attempt.warnings.unshift(...warmupWarnings);

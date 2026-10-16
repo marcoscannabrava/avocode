@@ -72,10 +72,11 @@ avo supervise      # exit 0 = still making progress; exit 1 = it printed a direc
 It reads the same lineage and attempt log you do, and fires on the two things you cannot see from
 inside one turn:
 
-- **stall** — N attempts since the last committed improvement. Not "N failures": an attempt that
+- **stall** — N variations since the last committed improvement. A variation is a distinct working
+  tree, so a second `avo score` of the same tree does not count. Not "N failures": a variation that
   passed `f` and still did not beat the best version counts too, because it did not move `P_t`.
-- **thrash** — the last K attempts failed *the same way*. The same error three times means your
-  diagnosis is wrong, not your edit.
+- **thrash** — the last K variations failed *the same way* in the same files. The same error three
+  times means your diagnosis is wrong, not your edit.
 
 The directive cites specific versions, the dead ends memory holds, and the docs in `K` no version has
 ever mentioned. Treat that last list as your candidate directions — a doc is listed precisely because

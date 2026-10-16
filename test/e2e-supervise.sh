@@ -23,7 +23,7 @@ trap 'rm -rf "$work"' EXIT
 avo() { "$root/bin/avo" "$@"; }
 repo="$work/repo"
 
-say "# avo S7a e2e — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+say "# avo S7a + AVO-5 e2e — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 say "# node $(node --version), $(git --version), jq $(jq --version)"
 say ""
 
@@ -34,11 +34,11 @@ git -C "$repo" config user.name avo
 mkdir -p "$repo/.avo" "$repo/knowledge"
 printf 'baseline\n' > "$repo/kernel.txt"
 
-# The metric is line count, and `broken` makes f fail the same way every time — which is exactly
-# what a thrashing agent produces.
+# The metric is line count, and any `broken*` file makes f fail the same way every time — which is
+# exactly what a thrashing agent produces.
 cat > "$repo/.avo/score" <<'SCORE'
 #!/usr/bin/env bash
-if [[ -f broken ]]; then
+if compgen -G 'broken*' >/dev/null; then
   printf '{"ok":true,"correct":false,"primary":null,"unit":"lines","higher_is_better":true,"log":"kernel.txt:12: undefined symbol foo"}\n'
   exit 0
 fi
@@ -85,31 +85,46 @@ avo commit --cwd "$repo" --why "the baseline: one more line" >/dev/null 2>&1
 v1="$(avo best --cwd "$repo" --json 2>/dev/null | jq -r '.version')"
 if [[ $v1 == 1 ]]; then ok "avo commit wrote v1"; else bad "avo best reports version '$v1', expected 1"; fi
 
-# Four scoring runs that measure the same tree: the shape of an agent that keeps not improving.
-for _ in 1 2 3 4; do avo score --cwd "$repo" >/dev/null 2>&1; done
+# Two scores of v1 itself: score calls, but no variation (#25).
+for _ in 1 2; do avo score --cwd "$repo" >/dev/null 2>&1; done
+json="$(avo supervise --cwd "$repo" --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.state.since_best == 2 and .state.variations_since_best == 0 and .triggered == false' >/dev/null
+yes_no $? "re-scoring v1 unedited is 2 score calls and 0 variations" "re-scores counted: $(printf '%s' "$json" | jq -c '.state')"
+
+# Four edits, each scored: four variations that do not improve.
+for i in 1 2 3 4; do
+  printf 'note %s\n' "$i" > "$repo/notes.txt"
+  avo score --cwd "$repo" >/dev/null 2>&1
+done
 n="$(wc -l < "$repo/.avo/attempts.jsonl" | tr -d ' ')"
-if [[ $n == 5 ]]; then ok "the attempt log has 5 records (1 from avo commit + 4 from avo score)"; else bad "the attempt log has $n records, expected 5"; fi
+if [[ $n == 7 ]]; then ok "the attempt log has 7 records (1 from avo commit + 6 from avo score)"; else bad "the attempt log has $n records, expected 7"; fi
+jq -e -s '.[-1].git | (.tree | length) == 40 and .paths == ["notes.txt"]' "$repo/.avo/attempts.jsonl" >/dev/null
+yes_no $? "each attempt records its tree hash and the paths it changed" "the attempt lacks git.tree/git.paths: $(tail -1 "$repo/.avo/attempts.jsonl" | jq -c '.git')"
 
 json="$(avo supervise --cwd "$repo" --json 2>/dev/null)"
 since="$(printf '%s' "$json" | jq -r '.state.since_best')"
-if [[ $since == 4 ]]; then
-  ok "since_best is 4: the attempt that became v1 is not counted as one made since v1"
+varied="$(printf '%s' "$json" | jq -r '.state.variations_since_best')"
+if [[ $since == 6 && $varied == 4 ]]; then
+  ok "6 score calls, 4 variations: the attempt that became v1 is not counted"
 else
-  bad "since_best is $since, expected 4 (the committing attempt must not count)"
+  bad "since_best is $since and variations $varied, expected 6 and 4"
 fi
 printf '%s' "$json" | jq -e '.triggered == false' >/dev/null
-yes_no $? "4 < the default stall of 5, so nothing fired" "it fired below the threshold"
+yes_no $? "4 variations < the default stall of 5, so nothing fired" "it fired below the threshold"
 say ""
 
 # ------------------------------------------------- 3. the stall fires at exactly N
 say "## 3. the stall"
+printf 'note 5\n' > "$repo/notes.txt"
 avo score --cwd "$repo" >/dev/null 2>&1
 json="$(avo supervise --cwd "$repo" --json 2>/dev/null)"; code=$?
 if [[ $code == 1 ]]; then ok "exit 1 once a signal fires, so a shell loop can branch on it"; else bad "exit $code, expected 1"; fi
-printf '%s' "$json" | jq -e '.state.since_best == 5 and .triggered == true' >/dev/null
-yes_no $? "it fires at exactly 5, the fifth attempt since v1" "it did not fire at 5"
+printf '%s' "$json" | jq -e '.state.variations_since_best == 5 and .triggered == true' >/dev/null
+yes_no $? "it fires at exactly 5, the fifth variation since v1" "it did not fire at 5"
 printf '%s' "$json" | jq -e '[.signals[].kind] == ["stall"]' >/dev/null
 yes_no $? "one signal, and it is the stall" "the signals are $(printf '%s' "$json" | jq -c '[.signals[].kind]')"
+printf '%s' "$json" | jq -r '.signals[0].detail' | grep -q '^5 variation(s) since v1 (7 score calls)'
+yes_no $? "the detail reports both numbers: 5 variations, 7 score calls" "the detail is: $(printf '%s' "$json" | jq -r '.signals[0].detail')"
 
 directive="$(printf '%s' "$json" | jq -r '.directive')"
 printf '%s' "$directive" | grep -q 'since v1'
@@ -138,14 +153,40 @@ say ""
 
 # ------------------------------------------------- 5. the thrash
 say "## 5. the thrash"
+# One broken tree, scored three times: one variation, not a thrash.
 touch "$repo/broken"
 for _ in 1 2 3; do avo score --cwd "$repo" >/dev/null 2>&1; done
+json="$(avo supervise --cwd "$repo" --json --stall 99 2>/dev/null)"
+printf '%s' "$json" | jq -e '.triggered == false and .state.failing_streak == 3 and .state.repeat == 1' >/dev/null
+yes_no $? "3 scores of one failing tree are 1 variation, so no thrash" "re-scores thrashed: $(printf '%s' "$json" | jq -c '.state')"
+
+# The same failure on three unrelated files: a search, not a thrash (#24).
+for i in 1 2 3; do
+  rm -f "$repo"/broken*
+  touch "$repo/broken$i"
+  avo score --cwd "$repo" >/dev/null 2>&1
+done
+json="$(avo supervise --cwd "$repo" --json --stall 99 2>/dev/null)"
+printf '%s' "$json" | jq -e '.triggered == false and .state.repeat == 1' >/dev/null
+yes_no $? "the same failure on disjoint paths does not thrash" "disjoint paths thrashed: $(printf '%s' "$json" | jq -c '.state')"
+
+# Three different edits to one file, all failing the same way: a thrash.
+rm -f "$repo"/broken*
+touch "$repo/broken"
+for i in 1 2 3; do
+  printf 'try %s\n' "$i" >> "$repo/kernel.txt"
+  avo score --cwd "$repo" >/dev/null 2>&1
+done
 json="$(avo supervise --cwd "$repo" --json --stall 99 2>/dev/null)"; code=$?
 if [[ $code == 1 ]]; then ok "exit 1 on a thrash with the stall well out of reach"; else bad "exit $code, expected 1"; fi
 printf '%s' "$json" | jq -e '[.signals[].kind] == ["thrash"]' >/dev/null
 yes_no $? "the thrash fired on its own, with no stall to help it" "the signals are $(printf '%s' "$json" | jq -c '[.signals[].kind]')"
-printf '%s' "$json" | jq -e '.state.repeat == 3 and .state.failing_streak == 3' >/dev/null
-yes_no $? "3 consecutive failures, all 3 the same failure" "repeat/streak are $(printf '%s' "$json" | jq -c '{repeat:.state.repeat,streak:.state.failing_streak}')"
+printf '%s' "$json" | jq -e '.state.repeat == 3 and .state.failing_streak == 9' >/dev/null
+yes_no $? "3 variations on shared paths, inside a streak of 9 failures" "repeat/streak are $(printf '%s' "$json" | jq -c '{repeat:.state.repeat,streak:.state.failing_streak}')"
+printf '%s' "$json" | jq -e '.state.region == ["broken","kernel.txt"]' >/dev/null
+yes_no $? "the region is the paths all 3 touched" "the region is $(printf '%s' "$json" | jq -c '.state.region')"
+printf '%s' "$json" | jq -r '.signals[0].detail' | grep -q 'in broken, kernel.txt'
+yes_no $? "the detail names the files" "the detail is: $(printf '%s' "$json" | jq -r '.signals[0].detail')"
 sig="$(printf '%s' "$json" | jq -r '.state.signature')"
 printf '%s' "$sig" | grep -q 'undefined symbol foo'
 yes_no $? "the signature is the scorer's own error line ($sig)" "the signature does not carry the error: $sig"
@@ -155,7 +196,7 @@ say ""
 
 # ------------------------------------------------- 6. one pass clears it
 say "## 6. a pass clears the thrash"
-rm -f "$repo/broken"
+rm -f "$repo"/broken*
 avo score --cwd "$repo" >/dev/null 2>&1
 json="$(avo supervise --cwd "$repo" --json --stall 99 2>/dev/null)"
 printf '%s' "$json" | jq -e '.triggered == false and .state.failing_streak == 0 and .state.signature == null' >/dev/null

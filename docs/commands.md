@@ -50,6 +50,19 @@ or failed test is a *result* the agent can act on. Full authoring guide:
 **attempt** (`primary` flipped so higher is always better; `null` when the candidate fails), and
 appends it to `.avo/attempts.jsonl`. Attempts are not commits — that gate is `avo commit`.
 
+Each attempt also records what it scored, in `git`:
+
+| Field | Meaning |
+| --- | --- |
+| `git.head` | the HEAD commit |
+| `git.dirty` | `true` when `git status` shows a change |
+| `git.tree` | the hash of the working tree, without the paths avo writes. Two attempts with the same `tree` scored the same candidate. `avo score` uses a temporary index, so your index does not change |
+| `git.paths` | the paths that the candidate changes against HEAD, without the paths avo writes. Paths are relative to `--cwd`. When `tree` is `null`, this field is absent |
+
+`avo score` reads these fields before the scorer runs, so files that the scorer writes are not
+part of the candidate. Attempt lines from before these two fields still parse. `avo supervise` counts each such line as
+one candidate.
+
 | Flag | |
 | --- | --- |
 | `--json` | the normalized attempt as one line |
@@ -262,8 +275,12 @@ already record — and fires on the two things one turn cannot see:
 
 | Signal | Fires when | Default | Why that is the signal |
 | --- | --- | --- | --- |
-| `stall` | N attempts since the last committed improvement | 5 | `P_t` is monotone, so the newest version *is* the last improvement. An attempt that passed `f` and still did not beat it counts: it did not move `P_t` |
-| `thrash` | K consecutive attempts failed *the same way* | 3 | the same error K times means the diagnosis is wrong, not the edit |
+| `stall` | N variations (distinct `git.tree` values) since the last committed improvement | 5 | `P_t` is monotone, so the newest version *is* the last improvement. A variation that passed `f` and still did not beat it counts: it did not move `P_t`. A second score of the same tree does not count, and a score of the best version with no edit does not count |
+| `thrash` | K consecutive variations failed *the same way* and changed at least one same path | 3 | the same error K times in the same file means the diagnosis is wrong, not the edit. The same error in unrelated files is a search |
+
+The stall detail gives both numbers, for example `5 variation(s) since v3 (9 score calls)`. The
+thrash detail names the paths that the failures share. When the last score ran on the best version
+with no edit, the directive tells the agent to edit something first.
 
 ```bash
 avo supervise                       # 0 = still making progress, 1 = a directive was emitted, 2 = usage
