@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-08-26T07:32:14Z
+# avo S7b e2e — 2026-10-16T21:54:57Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 00c180a1, a stub agent and an f that counts lines
+PASS  repo at HEAD c890d988, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-178141d6)
+PASS  the injected directive is recorded (avo-intervention-61537f37)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive
@@ -58,17 +58,28 @@ PASS  an unchanged tree is never scored, which is why the supervisor cannot see 
 PASS  .avo/STOP halts the loop before the first turn is spawned
 PASS  a loop that never ran a turn exits 1
 PASS  and nothing was committed
-PASS  a STOP file dropped mid-run halts it after 24 of 50 iterations
+PASS  a STOP file dropped mid-run halts it after 14 of 50 iterations
 PASS  an agent binary that cannot be started stops the loop after one try, not five
 PASS  and it exits 1
 PASS  a turn past its --timeout is killed
-PASS  a 30s turn under --timeout 2 returned in 3s
+PASS  a 30s turn under --timeout 2 returned in 2s
 
 ## 6. crash safety: the manifest is rewritten after EVERY iteration
 PASS  a killed run left a manifest behind
 PASS  it holds the 3 iteration(s) that finished before the kill
 PASS  and it is still open, so a reader can tell the run did not end
 PASS  every finished iteration's version survived the kill (3 committed)
+
+## 6b. a killed run resumes from its manifest
+PASS  the kill left 2 of 6 iterations
+PASS  --list names the run as unfinished and says how to resume
+PASS  --resume exits 0
+PASS  the same run finished all 6 iterations, no more
+PASS  iterations continue the count, and the resume is recorded
+PASS  the manifest names every version git holds (6)
+PASS  the resumed turns carry the previous outcome
+PASS  a finished run is not resumed again
+PASS  --clean all removes the run directory
 
 ## 7. the guards, since a turn is an agent that can call avo run
 PASS  a run at the depth limit is refused (exit 1)
@@ -86,8 +97,8 @@ PASS  one JSON object, every field typed as documented
 PASS  it is a single JSON object on stdout
 
 ## 9. #8 measured: readLineage runs once per iteration now
-      2000 commits: the git log readLineage runs took 7ms
-PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 7ms
+      2000 commits: the git log readLineage runs took 6ms
+PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 6ms
 
 ## 10. #42: an agent that runs avo commit itself
 PASS  every iteration decides noop — the tree really was clean
@@ -121,4 +132,4 @@ PASS  so does the rendering an operator reads
 PASS  a dead end with no rationale records none, rather than the last event on the wire
 
 ## summary
-all checks passed (92 of them)
+all checks passed (101 of them)

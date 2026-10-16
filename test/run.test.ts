@@ -648,3 +648,126 @@ test("a manifest that is not ours is reported rather than parsed as one", () => 
   assert.ok("error" in readRunManifest(dir, "nope"));
   assert.deepEqual(listRuns(mkdtempSync(join(tmpdir(), "avo-noruns-"))), []);
 });
+
+// ------------------------------------------------------- resume, list, clean (#27)
+
+test("--resume, --list and --clean are modes, and take no prompt", () => {
+  const r = parseRunArgs(["--resume", "abc"]);
+  assert.ok(!("error" in r));
+  assert.equal(r.mode, "resume");
+  assert.equal(r.target, "abc");
+  const l = parseRunArgs(["--list"]);
+  assert.ok(!("error" in l) && l.mode === "list");
+  const c = parseRunArgs(["--clean", "all"]);
+  assert.ok(!("error" in c) && c.mode === "clean" && c.target === "all");
+  assert.ok("error" in parseRunArgs(["--resume", "abc", "--prompt", "go"]), "the manifest holds the prompt");
+  assert.ok("error" in parseRunArgs(["--resume", "abc", "--list"]), "one mode at a time");
+  assert.ok("error" in parseRunArgs(["--resume", "abc", "--dry-run"]));
+  assert.ok("error" in parseRunArgs(["--clean"]), "--clean needs a target");
+});
+
+/** A run killed after `done` iterations of `max`. */
+async function killedRun(f: Fixture, done: number, max: number): Promise<string> {
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", String(done)]);
+  const m = readRunManifest(f.dir, json.run_id) as RunReport;
+  writeFileSync(
+    join(f.dir, RUNS_DIR, json.run_id, RUN_MANIFEST),
+    JSON.stringify({ ...m, max_iters: max, finished_at: null, stop_reason: "" }),
+  );
+  return json.run_id;
+}
+
+async function resume(f: Fixture, id: string): Promise<{ code: number; out: string; err: string }> {
+  const io = bufferIo();
+  const code = await runCommand(["--resume", id, "--json", "--cwd", f.dir], io, undefined, undefined, process.env);
+  return { code, out: io.stdout, err: io.stderr };
+}
+
+test("a killed run resumes at the next iteration, with the last outcome in the prompt", async () => {
+  const f = fixture("runresume");
+  const id = await killedRun(f, 1, 3);
+  const { code, out } = await resume(f, id);
+  assert.equal(code, 0);
+  const json = JSON.parse(out) as RunReport;
+  assert.equal(json.run_id, id, "the same run, not a new one");
+  assert.deepEqual(
+    json.iterations.map((i) => i.iter),
+    [1, 2, 3],
+  );
+  assert.deepEqual(json.committed, [1, 2, 3]);
+  assert.notEqual(json.finished_at, null);
+  assert.ok(json.warnings.some((w) => /resumed at iteration 2 of 3/.test(w)));
+  const prompts = readFileSync(join(f.dir, "all-prompts.txt"), "utf8");
+  assert.match(prompts, /iteration 2 of 3[\s\S]*committed v1 at 2 lines/, "the first resumed turn knows what v1 was");
+  assert.ok(existsSync(join(f.dir, RUNS_DIR, id, "logs", "3.log")));
+  assert.equal(listRuns(f.dir).length, 1);
+});
+
+test("a finished run is not resumed", async () => {
+  const f = fixture("runresumedone");
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "1"]);
+  const { code, err } = await resume(f, json.run_id);
+  assert.equal(code, 1);
+  assert.match(err, /already finished/);
+  assert.match((await resume(f, "nope")).err, /no run 'nope'/);
+});
+
+test("a resume refuses a HEAD that lost the run's versions, and warns on one that moved on", async () => {
+  const f = fixture("runresumehead");
+  const id = await killedRun(f, 1, 2);
+  const committedHead = f.git("rev-parse", "HEAD").trim();
+  f.git("reset", "-q", "--hard", "HEAD~1");
+  const lost = await resume(f, id);
+  assert.equal(lost.code, 1);
+  assert.match(lost.err, /lost this run's versions/);
+  const untouched = readRunManifest(f.dir, id) as RunReport;
+  assert.equal(untouched.iterations.length, 1, "a refusal leaves the manifest alone");
+
+  f.git("reset", "-q", "--hard", committedHead);
+  writeFileSync(join(f.dir, "notes.txt"), "an operator commit\n");
+  f.git("add", "notes.txt");
+  f.git("commit", "-qm", "operator");
+  const moved = await resume(f, id);
+  assert.equal(moved.code, 0);
+  assert.ok((JSON.parse(moved.out) as RunReport).warnings.some((w) => /HEAD moved from/.test(w)));
+});
+
+test("a resume re-checks the guards, since it spawns agents too", async () => {
+  const f = fixture("runresumeguard");
+  const id = await killedRun(f, 1, 2);
+  const io = bufferIo();
+  const code = await runCommand(["--resume", id, "--cwd", f.dir], io, undefined, undefined, {
+    ...process.env,
+    [LEVEL_ENV]: "3",
+    [DEPTH_ENV]: "3",
+  });
+  assert.equal(code, 1);
+  assert.match(io.stderr, /depth limit/);
+});
+
+test("--list names each run and how to resume an unfinished one; --clean removes it", async () => {
+  const f = fixture("runlist");
+  const id = await killedRun(f, 1, 3);
+  const io = bufferIo();
+  assert.equal(await runCommand(["--list", "--cwd", f.dir], io), 0);
+  assert.match(io.stdout, new RegExp(`${id}.*1/3 iteration\\(s\\), v1, unfinished — 'avo run --resume ${id}'`));
+  const j = bufferIo();
+  await runCommand(["--list", "--json", "--cwd", f.dir], j);
+  const listed = JSON.parse(j.stdout) as { runs: { run_id: string; stopped: string | null }[] };
+  assert.deepEqual(
+    listed.runs.map((r) => [r.run_id, r.stopped]),
+    [[id, null]],
+  );
+
+  const bad = bufferIo();
+  assert.equal(await runCommand(["--clean", "..", "--cwd", f.dir], bad), 2, "an id is never a free path");
+  assert.ok(existsSync(join(f.dir, RUNS_DIR)));
+
+  const c = bufferIo();
+  assert.equal(await runCommand(["--clean", "all", "--cwd", f.dir], c), 0);
+  assert.match(c.stdout, /removed 1 run/);
+  assert.ok(!existsSync(join(f.dir, RUNS_DIR, id)));
+  const e = bufferIo();
+  await runCommand(["--list", "--cwd", f.dir], e);
+  assert.match(e.stdout, /no runs in/);
+});

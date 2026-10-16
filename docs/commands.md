@@ -346,6 +346,30 @@ the end, with each turn's raw agent output beside it under `logs/`. A loop meant
 be killed eventually, and per-iteration versus at-exit is the difference between a recoverable record
 and nothing. `.avo/runs/` is trajectory: in `TRAJECTORY_PATHS`, and gitignored.
 
+```bash
+avo run --list                 # each run, its iterations and versions; unfinished runs show the resume command
+avo run --resume <run-id>      # continue a killed run
+avo run --clean <run-id|all>   # remove run directories and their logs
+```
+
+**`--resume` continues a killed run.** It reads the manifest and uses the same prompt, agent, model,
+timeout, thresholds and `--max-iters`. The count continues at the next iteration. The first new turn
+gets the last outcome and the last directive, as if the loop had not stopped. Rules:
+
+- Only an unfinished run resumes (`finished_at` is `null`). A run that stopped for a reason, such as
+  `.avo/STOP` or the budget, is finished. Start a new run for more work.
+- The guards apply again, because a resume spawns agents.
+- HEAD can move while the run is down, for example from an operator commit. Each turn reads the
+  lineage again, so the resume continues and gives a warning. If the run's last HEAD is not an
+  ancestor of HEAD (a reset, or a different branch), the versions of the run are gone. Then the
+  resume refuses (exit 1).
+- A turn that was killed is not in the manifest. Its changes, if any, stay in the tree, and the next
+  turn's `avo commit` scores them.
+- Do not resume a run that is still alive. Two loops on one tree compete.
+
+**`--clean` removes run directories.** It removes only a directory that holds a valid run manifest,
+so a bad id cannot delete other files. `all` removes every run, unfinished ones too.
+
 `avo run` carries `avo fan`'s four guards on the same budget (`AVO_FAN_DEPTH`, `AVO_FAN_LEVEL`,
 `AVO_FAN_CHAIN`), because a turn is itself an agent that can call `avo run` — a loop inside a loop is
 the same exponential hazard as a fan-out inside one. A guard is a refusal (exit 1), not a harness

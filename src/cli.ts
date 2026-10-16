@@ -95,6 +95,8 @@ avo run:
   --timeout <s>     kill a turn's process group after s seconds (default 900, 0 = no limit)
   --stall <n> --thrash <k>   the supervisor's thresholds, as for avo supervise
   --dry-run         print the resolved plan and the first turn prompt; spawn nothing
+  --resume <id>     continue a killed run from its manifest
+  --list            the runs in .avo/runs; --clean <id|all> removes them
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
   stops on          --max-iters, an .avo/STOP file, 3 unchanged iterations in a row, or an agent

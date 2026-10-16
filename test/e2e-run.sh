@@ -272,6 +272,39 @@ else
 fi
 say ""
 
+# ------------------------------------------------- 6b. resume, list, clean (#27)
+say "## 6b. a killed run resumes from its manifest"
+rs="$work/resume"
+make_repo "$rs"
+avo run --cwd "$rs" --agent stub --prompt "make kernel.txt longer, paced" --max-iters 6 >/dev/null 2>&1 &
+loop_pid=$!
+sleep 3
+kill -9 "$loop_pid" 2>/dev/null
+# tsx runs node as a child; kill that too.
+pkill -9 -f -- "--cwd $rs" 2>/dev/null
+wait "$loop_pid" 2>/dev/null
+id="$(basename "$(dirname "$(find "$rs/.avo/runs" -name manifest.json | head -1)")")"
+before_n="$(jq -r '.iterations | length' "$rs/.avo/runs/$id/manifest.json")"
+if [[ $before_n -ge 1 && $before_n -lt 6 ]]; then ok "the kill left $before_n of 6 iterations"; else bad "the kill left $before_n iterations"; fi
+avo run --cwd "$rs" --list | grep -q "unfinished — 'avo run --resume $id'"
+yes_no $? "--list names the run as unfinished and says how to resume" "--list does not offer a resume"
+json="$(avo run --cwd "$rs" --resume "$id" --json 2>/dev/null)"; code=$?
+if [[ $code == 0 ]]; then ok "--resume exits 0"; else bad "--resume exit $code"; fi
+printf '%s' "$json" | jq -e --arg id "$id" '.run_id == $id and (.iterations | length) == 6 and .finished_at != null' >/dev/null
+yes_no $? "the same run finished all 6 iterations, no more" "the resumed run did not finish at 6 iterations"
+printf '%s' "$json" | jq -e --argjson n "$((before_n + 1))" '[.iterations[].iter] == [range(1; 7)] and any(.warnings[]; test("resumed at iteration \($n) of 6"))' >/dev/null
+yes_no $? "iterations continue the count, and the resume is recorded" "the iteration count restarted"
+committed="$(git -C "$rs" log --format=%s | grep -c '^avo v' || true)"
+printf '%s' "$json" | jq -e --argjson c "$committed" '.committed | length == $c' >/dev/null
+yes_no $? "the manifest names every version git holds ($committed)" "the manifest and git disagree on versions"
+grep -q 'Previous iteration:' "$rs/last-prompt.txt"
+yes_no $? "the resumed turns carry the previous outcome" "the resumed prompt lost the loop state"
+out="$(avo run --cwd "$rs" --resume "$id" 2>&1)"; code=$?
+if [[ $code == 1 ]] && printf '%s' "$out" | grep -q 'already finished'; then ok "a finished run is not resumed again"; else bad "a finished run resumed (exit $code)"; fi
+out="$(avo run --cwd "$rs" --clean all)"
+if [[ ! -e "$rs/.avo/runs/$id" ]] && printf '%s' "$out" | grep -q 'removed 1 run'; then ok "--clean all removes the run directory"; else bad "--clean left the run behind"; fi
+say ""
+
 # ------------------------------------------------- 7. guards
 say "## 7. the guards, since a turn is an agent that can call avo run"
 guard="$work/guard"
