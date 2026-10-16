@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,7 +15,9 @@ import {
   extractWhy,
   isVersionScore,
   lineageCommand,
+  linkUntracked,
   nearConfigs,
+  RESCORE_HINT,
   parseCommitArgs,
   parseLineageArgs,
   readLineage,
@@ -446,7 +448,7 @@ function driftFixture(
   writeFileSync(speed, "1\n");
   writeFileSync(join(dir, "impl.txt"), "100\n");
   // Ignored, so the incumbent's worktree lacks it.
-  writeFileSync(join(dir, ".gitignore"), "local.flag\n");
+  writeFileSync(join(dir, ".gitignore"), "local.flag\nvenv/\n");
   writeFileSync(join(dir, "local.flag"), "");
   for (const f of flags) writeFileSync(join(dir, f), "");
   writeFileSync(
@@ -454,6 +456,7 @@ function driftFixture(
     `#!/usr/bin/env bash
 [[ -f slow.flag && ! -f local.flag ]] && sleep 5
 [[ -f garbage.flag && ! -f local.flag ]] && { echo garbage; exit 0; }
+[[ -f venv.flag && ! -f venv/ok ]] && { echo no venv; exit 0; }
 v=$(awk -v a="$(cat impl.txt)" -v m="$(cat ${speed})" 'BEGIN{print a*m}')
 printf '{"ok":true,"correct":true,"primary":%s,"unit":"ops","higher_is_better":true}\\n' "$v"
 `,
@@ -555,4 +558,62 @@ test("a rescore that throws still removes its worktree", async (t) => {
   await assert.rejects(commitCommand(["--cwd", dir, "--json"], bufferIo(), boom, clock), /boom/);
   assert.deepEqual(leftovers(dir), []);
   assert.equal(worktreeCount(dir), 1);
+});
+
+test("rescore_links lets the incumbent use untracked inputs, and keeps them", async (t) => {
+  const { dir } = driftFixture(t, ["venv.flag"]);
+  mkdirSync(join(dir, "venv"));
+  writeFileSync(join(dir, "venv/ok"), "");
+  writeFileSync(join(dir, ".avo/config.json"), NEAR);
+  assert.equal((await commit(dir)).json["version"], 1);
+
+  // Without the link, the clean checkout has no venv.
+  writeFileSync(join(dir, "impl.txt"), "101\n");
+  const r = await commit(dir);
+  assert.equal(r.code, 2);
+  assert.deepEqual((r.json["errors"] as string[])[1], RESCORE_HINT);
+
+  writeFileSync(join(dir, ".avo/config.json"), JSON.stringify({ floor: 0.05, rescore_best: "near", rescore_links: ["venv"] }));
+  const linked = await commit(dir);
+  assert.equal(linked.code, 1, JSON.stringify(linked.json));
+  assert.deepEqual((linked.json["rescore"] as Record<string, unknown>)["fresh"], { "*": 100 });
+  // Cleanup removed the link, not its target.
+  assert.ok(existsSync(join(dir, "venv/ok")));
+  assert.deepEqual(leftovers(dir), []);
+  assert.equal(worktreeCount(dir), 1);
+});
+
+test("linkUntracked refuses a missing source and a tracked target", () => {
+  const root = mkdtempSync(join(tmpdir(), "avo-root-"));
+  const wt = mkdtempSync(join(tmpdir(), "avo-wt-"));
+  try {
+    assert.match(linkUntracked(root, wt, ["nope"]) as string, /nope does not exist/);
+    mkdirSync(join(root, "data/a"), { recursive: true });
+    mkdirSync(join(wt, "data/a"), { recursive: true });
+    assert.match(linkUntracked(root, wt, ["data/a"]) as string, /data\/a is tracked/);
+    mkdirSync(join(root, "bench/games"), { recursive: true });
+    assert.equal(linkUntracked(root, wt, ["bench/games"]), null);
+    assert.ok(lstatSync(join(wt, "bench/games")).isSymbolicLink());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("a re-measure that loses a config is a harness error", async (t) => {
+  const { dir } = driftFixture(t);
+  writeFileSync(
+    join(dir, ".avo/score"),
+    `#!/usr/bin/env bash
+b=""; [[ -f local.flag ]] && b=',"b":1'
+printf '{"ok":true,"correct":true,"primary":%s,"unit":"ops","higher_is_better":true,"scores":{"a":%s%s}}\\n' "$(cat impl.txt)" "$(cat impl.txt)" "$b"
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(dir, ".avo/config.json"), NEAR);
+  assert.equal((await commit(dir)).json["version"], 1);
+  writeFileSync(join(dir, "impl.txt"), "101\n");
+  const r = await commit(dir);
+  assert.equal(r.code, 2, JSON.stringify(r.json));
+  assert.match((r.json["errors"] as string[])[0] as string, /lost configs: b/);
 });

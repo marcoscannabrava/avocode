@@ -152,7 +152,9 @@ The best version's vector comes from its `Avo-Score` trailer, so it was measured
 `rescore_best: "near"`, `avo commit` measures it again when any shared config is within `2·floor`.
 It scores the best commit in a temporary, detached worktree under `.avo/worktrees/` (trajectory),
 compares the candidate with the fresh vector, and then removes the worktree on every path. The
-decision records both vectors in `rescore`. A failed re-measure is a harness error (exit `2`).
+decision records both vectors in `rescore`. A failed re-measure is a harness error (exit `2`), and
+so is a fresh vector that lacks a stored config. `rescore_links` links untracked inputs (a venv,
+data) from the root into the worktree.
 
 Because the rule only admits non-regressions, **the lineage is monotone by construction** and
 `avo best` is simply the highest-numbered version. There is no separate ranking pass.

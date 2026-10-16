@@ -87,6 +87,7 @@ the commit — you cannot improve by measuring less. Tune it in `.avo/config.jso
 - `reduce: "mean"` — opts into letting configs trade off.
 - `configs` — declares the scorer's config names, so `avo score --parallel` skips the discovery probe.
 - `rescore_best: "near"` — re-measures the best version on close calls. The default is `"off"`.
+- `rescore_links` — untracked paths (for example `.venv`) that the re-measure links in.
 
 ### Re-measure the best version (`rescore_best`)
 
@@ -106,9 +107,19 @@ The output records the two vectors in `rescore` (`near`, `stored`, `fresh`). The
 `git notes --ref=avo` entry and `lineage/vNNN.md` all show them. With `floor: 0`, only an exact tie
 starts a re-measure.
 
-If the re-measure fails (no pass, bad output, timeout), `avo commit` refuses with exit code `2`.
-The stored score cannot decide that call. The worktree holds only tracked files. If the scorer needs
-untracked files (for example a virtual environment), it fails there.
+If the re-measure fails (no pass, bad output, timeout, a lost config), `avo commit` refuses with
+exit code `2`. The stored score cannot decide that call. The error line tells you how to fix it.
+
+The worktree holds only tracked files. If the scorer needs untracked files (for example a virtual
+environment or game data), list them in `rescore_links`:
+
+```json
+{ "rescore_best": "near", "rescore_links": [".venv", "bench/games"] }
+```
+
+Each path must be relative and inside the repo, and must not be in `.git`. `avo commit` links each
+path from the repo root into the worktree. The path must exist in the root. It must not be a
+tracked path of the best version. Cleanup removes the link only, not the files it points to.
 
 | Flag | |
 | --- | --- |

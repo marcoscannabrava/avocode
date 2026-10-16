@@ -1,5 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
 import { loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
@@ -513,17 +513,21 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
   let rescore: Rescore | null = null;
   const near = best !== null && config.rescore_best === "near" ? nearConfigs(cmp, config.floor) : [];
   if (best !== null && near.length > 0) {
-    const fresh = await rescoreBest(opts, best.sha, runner, now);
+    const fresh = await rescoreBest(opts, best.sha, runner, now, config.rescore_links);
     const stored = best.score.scores;
-    rescore = { version: best.version, sha: best.sha, near, stored, fresh: null, error: fresh.error };
-    if (fresh.attempt === null) {
+    // Re-measuring must not drop a config.
+    const freshKeys = fresh.attempt === null ? [] : Object.keys(scoreVector(fresh.attempt));
+    const lost = Object.keys(scoreVector(best.score)).filter((k) => !freshKeys.includes(k));
+    const error = fresh.error ?? (lost.length > 0 ? `the re-measure lost configs: ${lost.join(", ")}` : null);
+    rescore = { version: best.version, sha: best.sha, near, stored, fresh: null, error };
+    if (fresh.attempt === null || error !== null) {
       return refusal("could not re-measure the best version", {
         attempt,
         best: bestRef,
         comparison: cmp,
         rescore,
         warnings,
-        errors: [`rescore of v${best.version} failed: ${fresh.error}`],
+        errors: [`rescore of v${best.version} failed: ${error}`, RESCORE_HINT],
       });
     }
     rescore.fresh = toVersionScore(fresh.attempt).scores;
@@ -544,12 +548,17 @@ export function nearConfigs(cmp: Comparison, floor: number): string[] {
   return cmp.deltas.filter((d) => Math.abs(d.rel) <= 2 * floor).map((d) => d.config);
 }
 
+/** What to do when the re-measure fails. */
+export const RESCORE_HINT =
+  'hint: list untracked inputs in "rescore_links", or set "rescore_best": "off"';
+
 /** Scores `sha` in a throwaway worktree. */
 export async function rescoreBest(
   opts: ScoreOptions,
   sha: string,
   runner: Runner,
   now: () => Date,
+  links: readonly string[] = [],
 ): Promise<{ attempt: Attempt | null; error: string | null }> {
   const parent = join(opts.cwd, RESCORE_PARENT);
   mkdirSync(parent, { recursive: true });
@@ -557,6 +566,8 @@ export async function rescoreBest(
   try {
     const add = await git(runner, opts.cwd, ["worktree", "add", "--detach", dir, sha]);
     if (add.code !== 0) return { attempt: null, error: `git worktree add failed: ${add.stderr.trim()}` };
+    const linkError = linkUntracked(opts.cwd, dir, links);
+    if (linkError !== null) return { attempt: null, error: linkError };
     const run = await runScore({ ...opts, json: true, init: null, force: false, record: false, cwd: dir }, runner, now);
     const a = run.attempt;
     if (a === null) return { attempt: null, error: run.error };
@@ -567,6 +578,29 @@ export async function rescoreBest(
     await git(runner, opts.cwd, ["worktree", "remove", "--force", dir]);
     rmSync(dir, { recursive: true, force: true });
     await git(runner, opts.cwd, ["worktree", "prune"]);
+  }
+}
+
+/** Symlinks root paths into the worktree. */
+export function linkUntracked(root: string, dir: string, links: readonly string[]): string | null {
+  for (const p of links) {
+    const src = join(root, p);
+    const dst = join(dir, p);
+    if (!existsSync(src)) return `rescore_links: ${p} does not exist`;
+    if (exists(dst)) return `rescore_links: ${p} is tracked, so do not link it`;
+    mkdirSync(dirname(dst), { recursive: true });
+    symlinkSync(src, dst);
+  }
+  return null;
+}
+
+/** Like existsSync, but sees dangling links. */
+function exists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
   }
 }
 
