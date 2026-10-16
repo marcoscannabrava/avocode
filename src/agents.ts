@@ -331,12 +331,12 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
 // ---------------------------------------------------------------------------
 
 /** The checkout's `bin/`, which holds `avo`. */
-export const AVO_BIN_DIR = join(dirname(dirname(fileURLToPath(import.meta.url))), "bin");
+export const CHECKOUT_BIN = join(dirname(dirname(fileURLToPath(import.meta.url))), "bin");
 
 /** Skills call `avo`; put it first (#41). */
 export function withAvoBin(path: string | undefined): string {
-  const dirs = (path ?? "").split(delimiter).filter((d) => d !== "" && d !== AVO_BIN_DIR);
-  return [AVO_BIN_DIR, ...dirs].join(delimiter);
+  const dirs = (path ?? "").split(delimiter).filter((d) => d !== "" && d !== CHECKOUT_BIN);
+  return [CHECKOUT_BIN, ...dirs].join(delimiter);
 }
 
 /** 50KB / 2000 lines, whichever comes first. The uncapped text is always on disk (`log_path`). */

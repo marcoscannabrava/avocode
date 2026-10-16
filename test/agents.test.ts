@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import {
-  AVO_BIN_DIR,
+  CHECKOUT_BIN,
   BUILTIN_AGENT_NAMES,
   CLAUDE,
   CODEX,
@@ -292,10 +292,10 @@ test("usage with none of the four field shapes present is null rather than zeros
 // ------------------------------------------------------------- avo on the child PATH (#41)
 
 test("withAvoBin puts avo's bin first, once", () => {
-  assert.equal(withAvoBin("/usr/bin:/bin"), `${AVO_BIN_DIR}:/usr/bin:/bin`);
-  assert.equal(withAvoBin(`/usr/bin:${AVO_BIN_DIR}`), `${AVO_BIN_DIR}:/usr/bin`);
-  assert.equal(withAvoBin(undefined), AVO_BIN_DIR);
-  assert.equal(withAvoBin(""), AVO_BIN_DIR);
+  assert.equal(withAvoBin("/usr/bin:/bin"), `${CHECKOUT_BIN}:/usr/bin:/bin`);
+  assert.equal(withAvoBin(`/usr/bin:${CHECKOUT_BIN}`), `${CHECKOUT_BIN}:/usr/bin`);
+  assert.equal(withAvoBin(undefined), CHECKOUT_BIN);
+  assert.equal(withAvoBin(""), CHECKOUT_BIN);
 });
 
 function turnOpts(dir: string, env: Record<string, string>) {
@@ -311,7 +311,7 @@ test("driveAgent hands the child a PATH with avo on it", async () => {
   };
   const tpl = customTemplate({ name: "stub", command: "stub", args: ["{prompt}"] });
   await driveAgent(runner, tpl, { prompt: "p", model: null }, turnOpts(dir, { AVO_FAN_PROBE: "1" }), () => new Date());
-  assert.equal(seen?.["PATH"]?.split(":")[0], AVO_BIN_DIR);
+  assert.equal(seen?.["PATH"]?.split(":")[0], CHECKOUT_BIN);
   assert.equal(seen?.["AVO_FAN_PROBE"], "1", "the rest of the env survives");
 });
 
@@ -322,5 +322,5 @@ test("a child with a stripped PATH still resolves avo", async () => {
   const tpl = customTemplate({ name: "stub", command: stub, args: ["{prompt}"] });
   const env = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` };
   const turn = await driveAgent(spawnRunner, tpl, { prompt: "p", model: null }, turnOpts(dir, env), () => new Date());
-  assert.equal(turn.summary, join(AVO_BIN_DIR, "avo"));
+  assert.equal(turn.summary, join(CHECKOUT_BIN, "avo"));
 });
