@@ -524,6 +524,15 @@ if [[ "$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)" == "exit 0" ]]; then
 else
   bad "the agent's 'avo best' said '$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)'"
 fi
+# Like install.sh: avo through a link.
+mkdir -p "$work/linkbin"
+ln -s "$root/bin/avo" "$work/linkbin/avo"
+PATH="$work/linkbin:$bare" AVO_OUT="$work/run-link.txt" "$work/linkbin/avo" run --cwd "$onpath" --agent stub --prompt "go" --max-iters 1 >/dev/null 2>&1
+if [[ "$(head -1 "$work/run-link.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo started through a symlink puts the checkout's bin/ first"
+else
+  bad "through a symlink, the agent resolved avo as '$(head -1 "$work/run-link.txt" 2>/dev/null)'"
+fi
 say ""
 
 say "## summary"
