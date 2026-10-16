@@ -494,6 +494,43 @@ else
 fi
 say ""
 
+# ------------------------------------------------- 13. the ablation switch (AVO-4)
+say "## 13. --supervise on|off|detect"
+json="$(avo run --cwd "$repo" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --dry-run --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.supervise == "on"' >/dev/null
+yes_no $? "the default mode is on, and the manifest says so" "the default supervise mode is not on"
+avo run --cwd "$repo" --agent stub --prompt "go" --supervise off --dry-run 2>/dev/null | grep -q 'no avo supervise (--supervise off)'
+yes_no $? "the off plan says the supervise step is skipped" "the off plan still lists avo supervise"
+avo run --cwd "$repo" --agent stub --prompt "go" --supervise detect --dry-run 2>/dev/null | grep -q 'withheld; inject nothing'
+yes_no $? "the detect plan says nothing is injected" "the detect plan does not say it withholds"
+avo run --cwd "$repo" --agent stub --prompt "go" --supervise maybe >/dev/null 2>&1
+if [[ $? == 2 ]]; then ok "an unknown mode is a usage error (exit 2)"; else bad "an unknown mode was accepted"; fi
+
+off="$work/off"
+make_repo "$off" failing
+json="$(avo run --cwd "$off" --agent stub --prompt "fix the kernel" --max-iters 3 --stall 2 --thrash 2 --supervise off --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.supervise == "off" and .interventions == 0 and ([.iterations[].supervision] | all(. == null))' >/dev/null
+yes_no $? "off: no supervisor call and no intervention" "off still ran or steered"
+jq -e '.supervise == "off"' "$off/.avo/runs/"*/manifest.json >/dev/null
+yes_no $? "off: the manifest on disk records the mode" "the manifest does not record the mode"
+! grep -q 'STEERING' "$off/last-prompt.txt"
+yes_no $? "off: the agent never sees a directive" "off injected a directive"
+
+det="$work/detect"
+make_repo "$det" failing
+json="$(avo run --cwd "$det" --agent stub --prompt "fix the kernel" --max-iters 3 --stall 2 --thrash 2 --supervise detect --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.supervise == "detect" and .interventions == 0 and .detections >= 1' >/dev/null
+yes_no $? "detect: the stall is counted, but nothing intervened" "detect did not count the stall, or it steered"
+printf '%s' "$json" | jq -e '[.iterations[] | select(.supervision.triggered) | .withheld | test("STEERING")] | (length >= 1 and all)' >/dev/null
+yes_no $? "detect: the held-back directive is in the manifest" "detect did not keep the directive"
+! grep -q 'STEERING' "$det/last-prompt.txt"
+yes_no $? "detect: the agent never sees the directive" "detect injected a directive"
+! grep -q 'since the best version' "$det/last-prompt.txt"
+yes_no $? "detect: the prompt matches the off arm" "detect leaked supervisor state into the prompt"
+! grep -q '"kind":"intervention"' "$det/lineage/memory.jsonl" 2>/dev/null
+yes_no $? "detect: no intervention memory, so the agent cannot read it" "detect wrote an intervention memory"
+say ""
+
 say "## summary"
 if [[ $fails == 0 ]]; then
   say "all checks passed ($(grep -c '^PASS' "$evidence") of them)"

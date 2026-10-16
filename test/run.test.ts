@@ -83,6 +83,20 @@ test("a flag with no value is named rather than silently swallowing the next one
   assert.match(o.error, /--prompt needs a value/);
 });
 
+test("--supervise defaults to on and takes on, off or detect", () => {
+  const d = parseRunArgs(["--prompt", "x"], {});
+  assert.ok(!("error" in d));
+  assert.equal(d.supervise, "on");
+  for (const m of ["on", "off", "detect"] as const) {
+    const o = parseRunArgs(["--prompt", "x", "--supervise", m], {});
+    assert.ok(!("error" in o));
+    assert.equal(o.supervise, m);
+  }
+  const bad = parseRunArgs(["--prompt", "x", "--supervise", "maybe"], {});
+  assert.ok("error" in bad);
+  assert.match(bad.error, /on, off or detect/);
+});
+
 test("an unknown option is a usage error, not a prompt", () => {
   const o = parseRunArgs(["--prompt", "x", "--probes", "4"], {});
   assert.ok("error" in o);
@@ -436,6 +450,51 @@ test("an intervention is recorded so the trajectory can be read afterwards", asy
   assert.match(rec.text, /steered on/);
 });
 
+const interventionsIn = (dir: string): number => {
+  const p = join(dir, "lineage/memory.jsonl");
+  if (!existsSync(p)) return 0;
+  return readFileSync(p, "utf8").split("\n").filter((l) => l.includes('"kind":"intervention"')).length;
+};
+
+test("--supervise off never calls the supervisor and never steers", async () => {
+  const f = fixture("runoff", { scorer: FAILING_SCORER });
+  const { json } = await run(f, ["--prompt", "fix it", "--max-iters", "3", "--stall", "2", "--thrash", "2", "--supervise", "off"]);
+  assert.equal(json.supervise, "off");
+  assert.equal(json.interventions, 0);
+  for (const it of json.iterations) {
+    assert.equal(it.supervision, null, "off means no detector call");
+    assert.equal(it.directive, null);
+  }
+  const prompts = readFileSync(join(f.dir, "all-prompts.txt"), "utf8");
+  assert.doesNotMatch(prompts, /STEERING/);
+  assert.doesNotMatch(prompts, /since the best version/, "no supervisor state leaks into the prompt");
+  assert.equal(interventionsIn(f.dir), 0);
+  const m = readRunManifest(f.dir, json.run_id);
+  assert.ok(!("error" in m));
+  assert.equal(m.supervise, "off");
+});
+
+test("--supervise detect records what would have fired, and injects nothing", async () => {
+  const f = fixture("rundetect", { scorer: FAILING_SCORER });
+  const { json } = await run(f, ["--prompt", "fix it", "--max-iters", "3", "--stall", "2", "--thrash", "2", "--supervise", "detect"]);
+  assert.equal(json.supervise, "detect");
+  assert.equal(json.interventions, 0, "nothing was injected, so nothing intervened");
+  assert.ok((json.detections ?? 0) >= 1, "the stall is still visible in an unsteered arm");
+  const fired = json.iterations.find((i) => i.supervision?.triggered === true);
+  assert.ok(fired !== undefined);
+  assert.match(fired.withheld ?? "", /STEERING \(avo supervise\)/, "the held-back directive is kept");
+  assert.equal(fired.directive, null);
+  assert.equal(fired.intervention, null);
+
+  // The agent's view must match the off arm.
+  const prompts = readFileSync(join(f.dir, "all-prompts.txt"), "utf8");
+  assert.doesNotMatch(prompts, /STEERING/);
+  assert.doesNotMatch(prompts, /since the best version/);
+  assert.equal(interventionsIn(f.dir), 0, "no memory: the agent reads memory, so a record would leak");
+  assert.match(renderRun(json), /detected only; nothing injected/);
+  assert.match(renderRun(json), /detections\s+\d+/);
+});
+
 test("an agent binary that cannot be started stops the loop instead of burning the budget", async () => {
   const f = fixture("runmissing");
   writeFileSync(
@@ -539,6 +598,19 @@ test("--dry-run resolves everything and writes nothing", async () => {
   assert.match(io.stdout, /avo supervise/);
   assert.match(io.stdout, /turn prompt \(iteration 1\)/);
   assert.match(io.stdout, /make it longer/);
+});
+
+test("--dry-run shows the supervise mode and what it changes", async () => {
+  const f = fixture("rundrymode");
+  const plan = async (mode: string): Promise<string> => {
+    const io = bufferIo();
+    await runCommand(["--prompt", "x", "--dry-run", "--supervise", mode, "--cwd", f.dir, "--agent", "stub"], io);
+    return io.stdout;
+  };
+  assert.match(await plan("on"), /supervise\s+on/);
+  assert.match(await plan("on"), /record it as an intervention/);
+  assert.match(await plan("off"), /no avo supervise \(--supervise off\)/);
+  assert.match(await plan("detect"), /record that directive as withheld; inject nothing/);
 });
 
 test("a repo with no scorer is warned once, not --max-iters times", async () => {

@@ -94,6 +94,8 @@ avo run:
   --model <m>       the model each turn runs on (default: the agent's own)
   --timeout <s>     kill a turn's process group after s seconds (default 900, 0 = no limit)
   --stall <n> --thrash <k>   the supervisor's thresholds, as for avo supervise
+  --supervise <m>   on (default) steers, off skips the supervisor, detect
+                    records what would fire and injects nothing
   --dry-run         print the resolved plan and the first turn prompt; spawn nothing
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
