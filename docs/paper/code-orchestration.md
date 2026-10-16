@@ -501,7 +501,8 @@ Modes (`FanMode`, `fan.ts:138`): `run`, `promote`, `resume`, `list`, `clean`.
    work (`fan.ts:591-603`). avo's own trajectory paths are filtered out first. With `--dirty`
    (#21), `snapshotTree` instead commits the working tree on HEAD through a side index
    (`GIT_INDEX_FILE`), and that commit becomes the baseline. The manifest keeps the real HEAD in
-   `head`, so `--promote` does not warn that HEAD moved.
+   `head`, so `--promote` does not warn that HEAD moved. The side index drops the trajectory
+   paths, and `refs/avo/fan/<run>` holds the commit until `--clean`, so `--resume` survives `gc`.
 5. Write the manifest with every probe `pending` (`fan.ts:605-625`).
 6. **Create worktrees serially** (`addWorktrees`, `fan.ts:636-651`):
    `git worktree add --detach .avo/worktrees/<run>/<i> <baseline>`. Serial because "concurrent

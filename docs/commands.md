@@ -202,6 +202,9 @@ By default, probes do not see uncommitted work in your tree, and `avo fan` warns
 `--dirty`, avo makes a commit of your working tree on top of `HEAD` and starts each probe from it.
 Your index, `HEAD` and files do not change. That commit is the baseline, so a probe's diff holds only
 the probe's own work, and `--promote` applies it on top of your uncommitted work.
+The commit includes untracked files. It does not include ignored files or avo's trajectory paths
+(`.avo/worktrees/`, `.avo/runs/`, `.avo/attempts.jsonl`). The ref `refs/avo/fan/<run-id>` keeps the
+commit safe from `git gc` until `avo fan --clean` removes the run.
 
 Each probe returns `{i, ok, score, diffstat, summary, worktree, tokens, cost_usd, wall_s,
 log_path}` — `tokens` and `cost_usd` as described under [`avo run`](#avo-run--the-continuous-loop),

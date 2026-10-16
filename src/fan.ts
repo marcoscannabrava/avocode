@@ -12,7 +12,7 @@ import { accessSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { loadConfig } from "./config.ts";
-import { ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
+import { TRAJECTORY_PATHS, ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
 import type { Io } from "./io.ts";
 import { capOutput, driveAgent, resolveTemplate, type AgentTemplate, type AgentTokens, type Capped } from "./agents.ts";
 import {
@@ -614,6 +614,11 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   }
 
   const runId = uniqueRunId(opts.cwd, now(), sha);
+  if (baseline !== head.out) {
+    // A ref keeps the snapshot from gc.
+    const ref = await git(runner, opts.cwd, ["update-ref", snapshotRef(runId), baseline]);
+    if (!ref.ok) warnings.push(`could not pin the snapshot: ${ref.err}`);
+  }
   const probes: ManifestProbe[] = Array.from({ length: opts.n }, (_, k) => ({
     i: k + 1,
     worktree: join(WORKTREES_DIR, runId, String(k + 1)),
@@ -645,6 +650,11 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   return await executeProbes(opts, deps, manifest, template, warnings, cap, probeEnv(guards, sha, runId, 0));
 }
 
+/** Holds a `--dirty` snapshot until `--clean`. */
+export function snapshotRef(runId: string): string {
+  return `refs/avo/fan/${runId}`;
+}
+
 /** `--dirty`: the working tree as a commit. */
 async function snapshotTree(runner: Runner, cwd: string, head: string): Promise<{ sha: string } | { error: string }> {
   const scratch = mkdtempSync(join(tmpdir(), "avo-fan-index-"));
@@ -658,9 +668,12 @@ async function snapshotTree(runner: Runner, cwd: string, head: string): Promise<
     // A copied index keeps the stat cache.
     const real = await git(runner, cwd, ["rev-parse", "--git-path", "index"]);
     if (real.ok && existsSync(resolve(cwd, real.out))) copyFileSync(resolve(cwd, real.out), index);
-    const add = await run(["add", "-A"]);
-    const tree = add.ok ? await run(["write-tree"]) : add;
-    const commit = tree.ok ? await run(["commit-tree", tree.out, "-p", head, "-m", "avo fan: uncommitted root work"]) : tree;
+    // Whole tree, minus avo's own trajectory.
+    const add = await run(["add", "-A", "--", ":(top)"]);
+    const skip = TRAJECTORY_PATHS.map((t) => `:(top)${t}`);
+    const drop = add.ok ? await run(["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", ...skip]) : add;
+    const tree = drop.ok ? await run(["write-tree"]) : drop;
+    const commit = tree.ok ? await run(["commit-tree", "--no-gpg-sign", tree.out, "-p", head, "-m", "avo fan: uncommitted root work"]) : tree;
     if (!commit.ok) return { error: `could not snapshot the working tree — ${commit.err || "git failed"}` };
     return { sha: commit.out };
   } finally {
@@ -968,6 +981,9 @@ export async function cleanRuns(opts: FanOptions, deps: FanDeps): Promise<CleanR
         out.kept.push(p.worktree);
         out.ok = false;
       }
+    }
+    if (manifest.head !== undefined && manifest.head !== manifest.baseline) {
+      await git(deps.runner, opts.cwd, ["update-ref", "-d", snapshotRef(runId)]);
     }
     try {
       rmSync(runDir(opts.cwd, runId), { recursive: true, force: true });
