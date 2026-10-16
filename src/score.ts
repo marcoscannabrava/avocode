@@ -16,6 +16,8 @@ export const SCORER_PATH = ".avo/score";
 export const ATTEMPTS_PATH = ".avo/attempts.jsonl";
 /** A child's output beyond this is elided; a runaway scorer must not exhaust memory. */
 const OUTPUT_CAP = 200_000;
+/** A turn log stops here; disks are finite. */
+export const SINK_CAP = 256 * 1024 * 1024;
 /**
  * How much of that budget goes to the *end* of the output rather than the beginning.
  *
@@ -102,8 +104,10 @@ export interface RunOpts {
   timeoutMs: number;
   /** Extra environment for the child, merged over `process.env`. Used by `avo fan`'s guards. */
   env?: Record<string, string>;
-  /** File that gets ALL of stdout, uncapped. */
+  /** File that gets stdout, up to `sinkCap`. */
   sink?: string;
+  /** Bytes the sink keeps; default SINK_CAP. */
+  sinkCap?: number;
 }
 
 /** Runs one child process. Injected so the command is testable without real scorers. */
@@ -144,7 +148,7 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
     const out = capped();
     const err = capped();
     // The cap bounds memory, not the sink.
-    const sink = opts.sink === undefined ? null : openSink(opts.sink);
+    const sink = opts.sink === undefined ? null : openSink(opts.sink, opts.sinkCap ?? SINK_CAP);
     child.stdout.on("data", (d: Buffer) => {
       sink?.write(d);
       out.push(d.toString());
@@ -159,16 +163,32 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
     });
   });
 
-/** A write stream; a failed write is dropped. */
-function openSink(path: string): WriteStream | null {
+interface Sink {
+  write(d: Buffer): void;
+  end(cb: () => void): void;
+}
+
+/** A capped write stream; failed writes drop. */
+function openSink(path: string, cap: number): Sink | null {
+  let s: WriteStream;
   try {
     mkdirSync(dirname(path), { recursive: true });
-    const s = createWriteStream(path);
-    s.on("error", () => undefined);
-    return s;
+    s = createWriteStream(path);
   } catch {
     return null;
   }
+  s.on("error", () => undefined);
+  let written = 0;
+  return {
+    write(d) {
+      if (written >= cap) return;
+      const room = cap - written;
+      written += d.length;
+      if (d.length <= room) s.write(d);
+      else s.write(Buffer.concat([d.subarray(0, room), Buffer.from(`\n--- avo cut the log at ${cap} bytes ---\n`)]));
+    },
+    end: (cb) => void s.end(cb),
+  };
 }
 
 /**

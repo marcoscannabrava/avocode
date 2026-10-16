@@ -334,6 +334,8 @@ gap it elides, because the payload is printed last in every stream `avo` reads (
 
 The cap applies only to the copy in memory. The turn log under `logs/` (the `log_path` of `avo fan`)
 gets all of the agent's stdout as it arrives, then its stderr after a `--- stderr ---` line (#22).
+Two limits apply. The log stops at 256 MiB of stdout and ends with a `--- avo cut the log ---` line,
+so a runaway agent cannot fill the disk. The stderr part is the capped copy in memory.
 
 **A turn's rationale is what the agent *said*, and silence is recorded as silence.** The final
 message becomes `avo commit --why`, which lands permanently in the commit body, `lineage/vNNN.md` and
