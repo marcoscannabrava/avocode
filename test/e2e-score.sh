@@ -181,6 +181,27 @@ else
 fi
 mv "$fixture/.avo/score.bak" "$fixture/.avo/score"
 
+# Configs that disagree on direction are a harness error.
+cat > "$fixture/.avo/mixed" <<'SCORER'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--configs" ]]; then printf 'fast\nsmall\n'; exit 0; fi
+hib=true; [[ "${2:-}" == "small" ]] && hib=false
+printf '{"ok":true,"correct":true,"primary":3,"unit":"x","higher_is_better":%s}\n' "$hib"
+SCORER
+chmod +x "$fixture/.avo/mixed"
+cp "$fixture/.avo/score" "$fixture/.avo/score.bak"
+cp "$fixture/.avo/mixed" "$fixture/.avo/score"
+json="$(avo score --json --parallel --no-record --cwd "$fixture")"
+code=$?
+say "\$ avo score --parallel against configs with mixed directions -> exit $code"
+say "$json" | jq -c '{pass,primary,errors}' | tee -a "$evidence" >/dev/null
+if [[ $code -eq 2 ]] && printf '%s' "$json" | jq -e '.errors[0] | test("disagree on higher_is_better") and test("fast") and test("small")' >/dev/null; then
+  ok "mixed higher_is_better across configs exits 2 and names them"
+else
+  bad "mixed directions not refused: exit $code, $json"
+fi
+mv "$fixture/.avo/score.bak" "$fixture/.avo/score"
+
 # ------------------------------------------------- 5. malformed and hanging
 cat > "$fixture/.avo/broken" <<'SCORER'
 #!/usr/bin/env bash

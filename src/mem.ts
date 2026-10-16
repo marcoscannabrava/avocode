@@ -277,6 +277,23 @@ export async function remember(
   return { ok: error === null, backend: "file", key, bead: null, parent: record.parent, warnings, error };
 }
 
+/** One bd read; null on failure. */
+async function readBdMemories(runner: Runner, cwd: string): Promise<{ r: RunResult; memories: Memory[] | null }> {
+  const r = await bd(runner, cwd, ["--json", "memories"]);
+  if (r.code !== 0 || r.spawnError !== null) return { r, memories: null };
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch {
+    parsed = null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return { r, memories: null };
+  const memories: Memory[] = Object.entries(parsed as Record<string, unknown>)
+    .filter(([k, v]) => k !== "schema_version" && typeof v === "string")
+    .map(([k, v]) => ({ ts: "", kind: "insight", key: k, text: v as string, version: null, bead: null, parent: null }));
+  return { r, memories };
+}
+
 /** Everything remembered, newest last. Beads memories carry no timestamp, so theirs stays empty. */
 export async function listMemories(
   runner: Runner,
@@ -284,26 +301,20 @@ export async function listMemories(
   backend: Backend,
 ): Promise<{ memories: Memory[]; warnings: string[] }> {
   if (backend.kind === "beads") {
-    const r = await bd(runner, cwd, ["--json", "memories"]);
-    if (r.code === 0 && r.spawnError === null) {
-      let parsed: unknown = null;
-      try {
-        parsed = JSON.parse(r.stdout);
-      } catch {
-        parsed = null;
-      }
-      if (typeof parsed === "object" && parsed !== null) {
-        const memories: Memory[] = Object.entries(parsed as Record<string, unknown>)
-          .filter(([k, v]) => k !== "schema_version" && typeof v === "string")
-          .map(([k, v]) => ({ ts: "", kind: "insight", key: k, text: v as string, version: null, bead: null, parent: null }));
-        // The file store may hold records written while bd was down; show both.
-        const file = readMemoryFile(cwd);
-        const seen = new Set(memories.map((m) => m.key));
-        return {
-          memories: [...memories, ...file.memories.filter((m) => !seen.has(m.key))],
-          warnings: file.warnings,
-        };
-      }
+    let read = await readBdMemories(runner, cwd);
+    // Retry empty reads once; failures already warn.
+    const retried = read.memories !== null && read.memories.length === 0;
+    if (retried) read = await readBdMemories(runner, cwd);
+    const { r, memories } = read;
+    if (memories !== null) {
+      // The file store may hold records written while bd was down; show both.
+      const file = readMemoryFile(cwd);
+      const seen = new Set(memories.map((m) => m.key));
+      const warnings = retried && memories.length > 0 ? ["bd memories read empty once; the retry found them"] : [];
+      return {
+        memories: [...memories, ...file.memories.filter((m) => !seen.has(m.key))],
+        warnings: [...warnings, ...file.warnings],
+      };
     }
     const fallback = readMemoryFile(cwd);
     return { memories: fallback.memories, warnings: [`bd memories failed (${why(r)}); read ${MEMORY_PATH}`, ...fallback.warnings] };
