@@ -319,8 +319,8 @@ export function normalize(
   parts: readonly { config: string; result: ParseSuccess | ParseFailure }[],
   meta: { ts: string; parallel: boolean; exitCode: number; git: Attempt["git"]; durationS: number },
 ): Attempt {
-  const errors = parts.flatMap((p) => (isParseFailure(p.result) ? p.result.errors : []));
   const good = parts.flatMap((p) => (isParseFailure(p.result) ? [] : [{ config: p.config, ...p.result }]));
+  const errors = [...parts.flatMap((p) => (isParseFailure(p.result) ? p.result.errors : [])), ...mixedDirection(good)];
   const warnings = good.flatMap((g) => g.warnings);
 
   const outputs = good.map((g) => g.output);
@@ -364,6 +364,14 @@ export function normalize(
     exit_code: meta.exitCode,
     git: meta.git,
   };
+}
+
+/** Configs must agree on one direction. */
+function mixedDirection(good: readonly { config: string; output: ScoreOutput }[]): string[] {
+  const higher = good.filter((g) => g.output.higher_is_better).map((g) => g.config);
+  const lower = good.filter((g) => !g.output.higher_is_better).map((g) => g.config);
+  if (higher.length === 0 || lower.length === 0) return [];
+  return [`configs disagree on higher_is_better: true for ${higher.join(", ")}; false for ${lower.join(", ")}`];
 }
 
 export function renderAttempt(a: Attempt): string {
