@@ -93,6 +93,7 @@ export interface TurnSupervision {
   triggered: boolean;
   signals: Signal[];
   since_best: number;
+  variations_since_best: number;
   repeat: number;
 }
 
@@ -322,7 +323,9 @@ export function turnPrompt(
   if (prev !== null) {
     lines.push(`Previous iteration: ${describeOutcome(prev)}`);
     const s = prev.supervision;
-    if (s !== null) lines.push(`State: ${s.since_best} attempt(s) since the best version.`);
+    if (s !== null) {
+      lines.push(`State: ${s.variations_since_best} variation(s) since the best version (${s.since_best} score calls).`);
+    }
     lines.push(
       "",
       "You are a fresh process: nothing from the previous turn is in your context. Read what is",
@@ -673,7 +676,13 @@ async function iterate(
 
     const s = await supervise({ json: true, cwd: opts.cwd, stall: opts.stall, thrash: opts.thrash }, { runner });
     it.warnings.push(...s.warnings);
-    it.supervision = { triggered: s.triggered, signals: s.signals, since_best: s.state.since_best, repeat: s.state.repeat };
+    it.supervision = {
+      triggered: s.triggered,
+      signals: s.signals,
+      since_best: s.state.since_best,
+      variations_since_best: s.state.variations_since_best,
+      repeat: s.state.repeat,
+    };
 
     // Injected into the NEXT turn, but recorded here: it belongs to the state that produced it.
     directive = s.directive;

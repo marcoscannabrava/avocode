@@ -4,10 +4,11 @@
  *
  * Two detections, both from what the harness already records:
  *
- *   stall   — attempts since the last committed improvement. `P_t` is monotone, so the newest
- *             version *is* the last improvement; everything after it did not win.
- *   thrash  — consecutive failures with the same signature. Re-trying one broken thing reads
- *             exactly like progress from inside a single turn.
+ *   stall   — distinct variations (working trees) since the last committed improvement. `P_t` is
+ *             monotone, so the newest version *is* the last improvement; everything after it did
+ *             not win. Re-scoring one tree is not a variation (#25).
+ *   thrash  — consecutive failing variations with the same signature that touch the same paths.
+ *             Re-trying one broken thing reads exactly like progress from inside a single turn.
  *
  * The output is a directive that **cites**. "Try something else" is worthless — the agent already
  * believes it is. So it names prior versions with their scores and rationales, the dead ends memory
@@ -152,11 +153,17 @@ export interface SuperviseState {
   analyzed: number;
   /** Attempts logged after the newest version was committed — i.e. since the last improvement. */
   since_best: number;
+  /** Distinct candidate trees among those attempts. */
+  variations_since_best: number;
   /** Trailing consecutive failing attempts. */
   failing_streak: number;
-  /** How many of those trailing failures share `signature`. */
+  /** Distinct failing trees sharing signature and paths. */
   repeat: number;
   signature: string | null;
+  /** Paths the repeated failures share. */
+  region: string[];
+  /** The newest attempt scored HEAD unedited. */
+  unedited: boolean;
   last_pass: string | null;
 }
 
@@ -164,7 +171,7 @@ export type SignalKind = "stall" | "thrash";
 
 export interface Signal {
   kind: SignalKind;
-  /** What was measured (attempts since best; repeated failures). */
+  /** What was measured (variations since best; repeated failures). */
   count: number;
   threshold: number;
   /** One sentence, specific enough that an operator needs nothing else to agree with it. */
@@ -193,16 +200,53 @@ export interface SuperviseInput {
  * The clock remains the fallback when the head matches neither (the agent committed for itself),
  * with a full second of margin to keep the committing attempt out.
  */
-function sinceBest(attempts: readonly Attempt[], best: Version | null): number {
-  if (best === null) return attempts.length;
+function sinceBest(attempts: readonly Attempt[], best: Version | null): Attempt[] {
+  if (best === null) return [...attempts];
   const commitMs = Date.parse(best.date);
   return attempts.filter((a) => {
     if (a.git.head === best.sha) return true;
     if (Number.isNaN(commitMs)) return true;
     const t = Date.parse(a.ts);
     return !Number.isNaN(t) && t >= commitMs + 1_000;
-  }).length;
+  });
 }
+
+/** Unchanged HEAD: a re-score, not a variation. */
+const isRescore = (a: Attempt, best: Version | null): boolean =>
+  best !== null && a.git.head === best.sha && a.git.paths !== undefined && a.git.paths.length === 0;
+
+/** Distinct trees; a treeless line counts alone. */
+export function countVariations(attempts: readonly Attempt[]): number {
+  const trees = new Set<string>();
+  let untreed = 0;
+  for (const a of attempts) {
+    if (typeof a.git.tree === "string") trees.add(a.git.tree);
+    else untreed++;
+  }
+  return trees.size + untreed;
+}
+
+/** Unknown paths overlap anything. */
+function overlaps(a: Attempt, b: Attempt): boolean {
+  if (a.git.paths === undefined || b.git.paths === undefined) return true;
+  const other = new Set(b.git.paths);
+  return a.git.paths.some((p) => other.has(p));
+}
+
+/** Paths every known streak member touched. */
+function sharedPaths(streak: readonly Attempt[]): string[] {
+  const known = streak.flatMap((a) => (a.git.paths === undefined ? [] : [a.git.paths]));
+  const [first, ...rest] = known;
+  if (first === undefined) return [];
+  return first.filter((p) => rest.every((r) => r.includes(p)));
+}
+
+const MAX_REGION_PATHS = 3;
+
+const fmtPaths = (paths: readonly string[]): string =>
+  paths.length <= MAX_REGION_PATHS
+    ? paths.join(", ")
+    : `${paths.slice(0, MAX_REGION_PATHS).join(", ")} and ${paths.length - MAX_REGION_PATHS} more`;
 
 const fmtScore = (primary: number | null, unit: string): string => (primary === null ? "—" : `${primary} ${unit}`.trim());
 
@@ -218,13 +262,16 @@ export function detect(input: SuperviseInput): { state: SuperviseState; signals:
   }
   const last = attempts[attempts.length - 1];
   const signature = last === undefined ? null : failureSignature(last);
-  let repeat = 0;
-  if (signature !== null) {
+  const streak: Attempt[] = [];
+  if (last !== undefined && signature !== null) {
     for (let i = attempts.length - 1; i >= 0; i--) {
-      if (failureSignature(attempts[i] as Attempt) !== signature) break;
-      repeat++;
+      const a = attempts[i] as Attempt;
+      if (failureSignature(a) !== signature || !overlaps(a, last)) break;
+      streak.push(a);
     }
   }
+  const repeat = countVariations(streak);
+  const region = sharedPaths(streak);
 
   let lastPass: string | null = null;
   for (let i = attempts.length - 1; i >= 0; i--) {
@@ -235,7 +282,9 @@ export function detect(input: SuperviseInput): { state: SuperviseState; signals:
     }
   }
 
-  const since = sinceBest(attempts, best);
+  const after = sinceBest(attempts, best);
+  const since = after.length;
+  const varied = countVariations(after.filter((a) => !isRescore(a, best)));
   const state: SuperviseState = {
     versions: versions.length,
     best:
@@ -251,26 +300,31 @@ export function detect(input: SuperviseInput): { state: SuperviseState; signals:
     attempts: input.total ?? attempts.length,
     analyzed: attempts.length,
     since_best: since,
+    variations_since_best: varied,
     failing_streak: failing,
     repeat,
     signature,
+    region,
+    unedited: last !== undefined && isRescore(last, best),
     last_pass: lastPass,
   };
 
   const signals: Signal[] = [];
-  if (since >= stall && since > 0) {
+  if (varied >= stall && varied > 0) {
+    const calls = `(${since} score call${since === 1 ? "" : "s"})`;
     const detail =
       best === null
-        ? `${since} attempt(s) recorded and no version has ever been committed; the threshold is ${stall}`
-        : `${since} attempt(s) since v${best.version} (${fmtScore(best.score.primary, best.score.unit)}) with no committed improvement; the threshold is ${stall}`;
-    signals.push({ kind: "stall", count: since, threshold: stall, detail });
+        ? `${varied} variation(s) ${calls} and no version has ever been committed; the threshold is ${stall}`
+        : `${varied} variation(s) since v${best.version} ${calls} (${fmtScore(best.score.primary, best.score.unit)}) with no committed improvement; the threshold is ${stall}`;
+    signals.push({ kind: "stall", count: varied, threshold: stall, detail });
   }
   if (repeat >= thrash) {
+    const where = region.length === 0 ? "" : ` in ${fmtPaths(region)}`;
     signals.push({
       kind: "thrash",
       count: repeat,
       threshold: thrash,
-      detail: `the last ${repeat} attempts failed the same way ("${signature ?? ""}"); the threshold is ${thrash}`,
+      detail: `the last ${repeat} variations failed the same way${where} ("${signature ?? ""}"); the threshold is ${thrash}`,
     });
   }
   return { state, signals };
@@ -366,6 +420,8 @@ const STALL_STEPS: readonly string[] = [
   "If every direction you can name is already above, do not guess: `avo fan --n 4` explores four at once and lets `f` choose, and `avo know search \"<question>\"` puts what you find into `K`.",
 ];
 
+const EDIT_FIRST = "Edit something first: the tree matches the best version.";
+
 const THRASH_STEPS: readonly string[] = [
   "Read the failure before editing again — the same error N times means the *diagnosis* is wrong, not the edit. `avo score --json` carries the scorer's log.",
   "Get back to a measurable state first: `avo best` names the version to return to, and `git diff` shows what you have actually changed since.",
@@ -391,7 +447,8 @@ export function renderDirective(state: SuperviseState, signals: readonly Signal[
   group("insight", "Remembered:");
   group("knowledge", "In K and never mentioned by any version — unexplored:");
 
-  const steps = signals.some((s) => s.kind === "thrash") ? THRASH_STEPS : STALL_STEPS;
+  const thrashing = signals.some((s) => s.kind === "thrash");
+  const steps = thrashing ? THRASH_STEPS : state.unedited ? [EDIT_FIRST, ...STALL_STEPS] : STALL_STEPS;
   lines.push("Do this next:");
   steps.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
   lines.push("");
@@ -521,11 +578,12 @@ export function renderSupervision(s: Supervision): string {
   if (s.warnings.length > 0) lines.push("");
 
   const b = s.state.best;
+  const region = s.state.region.length === 0 ? "" : ` (${fmtPaths(s.state.region)})`;
   lines.push(
     `  best         ${b === null ? "— (nothing committed yet)" : `v${b.version} ${fmtScore(b.primary, b.unit)} (${b.sha.slice(0, 8)})`}`,
     `  attempts     ${s.state.attempts}${s.state.analyzed < s.state.attempts ? ` (last ${s.state.analyzed} examined)` : ""}`,
-    `  since best   ${s.state.since_best} / ${s.thresholds.stall}`,
-    `  failing      ${s.state.failing_streak} in a row, ${s.state.repeat} of them the same way / ${s.thresholds.thrash}`,
+    `  since best   ${s.state.variations_since_best} / ${s.thresholds.stall} variations (${s.state.since_best} score calls)`,
+    `  failing      ${s.state.failing_streak} in a row, ${s.state.repeat} of them the same way / ${s.thresholds.thrash}${region}`,
     "",
   );
 

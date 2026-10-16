@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ import {
   parseConfigList,
   parseScoreArgs,
   parseScoreOutput,
+  readGit,
   renderAttempt,
   scoreCommand,
   SCORER_PATH,
@@ -318,7 +320,8 @@ test("a passing scorer exits 0, emits one JSON line, and records the attempt", a
     const a = JSON.parse(io.stdout) as Attempt;
     assert.equal(a.pass, true);
     assert.equal(a.normalized, 12.5);
-    assert.deepEqual(a.git, { head: "deadbeef", dirty: true });
+    // The stub git yields no tree hash.
+    assert.deepEqual(a.git, { head: "deadbeef", dirty: true, tree: null, paths: [] });
     assert.deepEqual(attemptsOf(dir), [a]);
     // The scorer is invoked with no arguments when not fanning out.
     assert.deepEqual(f.calls[0], { cmd: join(dir, SCORER_PATH), args: [] });
@@ -642,4 +645,71 @@ test("with no declared configs the probe still runs, and its failure degrades to
   assert.deepEqual(attempt.configs, ["*"]);
   assert.match(attempt.warnings.join("\n"), /skip this probe/);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------------- the candidate tree (#25, #24)
+
+/** A real repo with one commit. */
+function gitRepo(): { dir: string; git: (...args: string[]) => string } {
+  const dir = mkdtempSync(join(tmpdir(), "avo-tree-test-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "avo@example.com");
+  git("config", "user.name", "avo");
+  writeFileSync(join(dir, "kernel.c"), "int main(void) { return 0; }\n");
+  mkdirSync(join(dir, "lineage"), { recursive: true });
+  writeFileSync(join(dir, "lineage/memory.jsonl"), "");
+  git("add", "-A");
+  git("commit", "-qm", "base");
+  return { dir, git };
+}
+
+test("the tree ignores avo's own writes and never touches the real index", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    const clean = await readGit(spawnRunner, dir);
+    assert.match(clean.tree ?? "", /^[0-9a-f]{40}$/);
+    assert.deepEqual(clean.paths, []);
+
+    mkdirSync(join(dir, ".avo"), { recursive: true });
+    writeFileSync(join(dir, ATTEMPTS_PATH), "{}\n");
+    writeFileSync(join(dir, ".avo/.gitignore"), "attempts.jsonl\n");
+    writeFileSync(join(dir, "lineage/memory.jsonl"), '{"key":"k","text":"t"}\n');
+    const index = readFileSync(join(dir, ".git/index"));
+    const harness = await readGit(spawnRunner, dir);
+    assert.equal(harness.tree, clean.tree, "harness writes are not a variation");
+    assert.deepEqual(harness.paths, []);
+    assert.equal(harness.dirty, true);
+    assert.deepEqual(readFileSync(join(dir, ".git/index")), index, "the real index is untouched");
+    assert.equal(git("diff", "--cached", "--name-only"), "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an edit changes the tree and names its paths; undoing it restores the tree", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    const clean = await readGit(spawnRunner, dir);
+    writeFileSync(join(dir, "kernel.c"), "int main(void) { return 1; }\n");
+    writeFileSync(join(dir, "new.h"), "#define X 1\n");
+    const edited = await readGit(spawnRunner, dir);
+    assert.notEqual(edited.tree, clean.tree);
+    assert.deepEqual(edited.paths, ["kernel.c", "new.h"]);
+
+    // Staging does not change the candidate.
+    git("add", "kernel.c");
+    assert.equal((await readGit(spawnRunner, dir)).tree, edited.tree);
+
+    git("reset", "-q", "--hard");
+    rmSync(join(dir, "new.h"));
+    assert.equal((await readGit(spawnRunner, dir)).tree, clean.tree);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("harness.ts imports nothing, so no module can cycle through it", () => {
+  const src = readFileSync(join(import.meta.dirname, "../src/harness.ts"), "utf8");
+  assert.doesNotMatch(src, /^\s*import\s/m);
 });

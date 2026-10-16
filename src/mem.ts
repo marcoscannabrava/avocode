@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { MEMORY_PATH } from "./harness.ts";
 import { spawnRunner, type RunResult, type Runner } from "./score.ts";
 
 /**
@@ -8,8 +9,7 @@ import { spawnRunner, type RunResult, type Runner } from "./score.ts";
  * which directions are dead ends. Optional, so the fallback below is the common path (invariant 4).
  */
 export const BD = "bd";
-/** Memory without `bd`. Already a qmd collection, like the rest of lineage/. */
-export const MEMORY_PATH = "lineage/memory.jsonl";
+export { MEMORY_PATH };
 /** Marks every bead avo writes, so a repo that also uses beads for its own work stays legible. */
 export const BEAD_LABEL = "avo";
 const BD_TIMEOUT_MS = 60_000;

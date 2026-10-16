@@ -111,7 +111,7 @@ const iteration = (over: Partial<Iteration> = {}): Iteration => ({
   log_path: ".avo/runs/r/logs/1.log",
   decision: { action: "committed", version: 1, sha: "bbbbbbbb", reason: "improved", primary: 2, unit: "lines", pass: true },
   agent_versions: [],
-  supervision: { triggered: false, signals: [], since_best: 0, repeat: 0 },
+  supervision: { triggered: false, signals: [], since_best: 0, variations_since_best: 0, repeat: 0 },
   directive: null,
   intervention: null,
   warnings: [],
