@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { accessSync, appendFileSync, constants, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, appendFileSync, constants, createWriteStream, mkdirSync, readdirSync, readFileSync, writeFileSync, type WriteStream } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,6 +102,8 @@ export interface RunOpts {
   timeoutMs: number;
   /** Extra environment for the child, merged over `process.env`. Used by `avo fan`'s guards. */
   env?: Record<string, string>;
+  /** File that gets ALL of stdout, uncapped. */
+  sink?: string;
 }
 
 /** Runs one child process. Injected so the command is testable without real scorers. */
@@ -141,14 +143,33 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
         : null;
     const out = capped();
     const err = capped();
-    child.stdout.on("data", (d: Buffer) => void out.push(d.toString()));
+    // The cap bounds memory, not the sink.
+    const sink = opts.sink === undefined ? null : openSink(opts.sink);
+    child.stdout.on("data", (d: Buffer) => {
+      sink?.write(d);
+      out.push(d.toString());
+    });
     child.stderr.on("data", (d: Buffer) => void err.push(d.toString()));
     child.on("error", (e: Error) => void (spawnError = e.message));
     child.on("close", (code) => {
       if (timer !== null) clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout: out.value(), stderr: err.value(), timedOut, spawnError });
+      const done = () => resolve({ code: code ?? -1, stdout: out.value(), stderr: err.value(), timedOut, spawnError });
+      if (sink === null) done();
+      else sink.end(done);
     });
   });
+
+/** A write stream; a failed write is dropped. */
+function openSink(path: string): WriteStream | null {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const s = createWriteStream(path);
+    s.on("error", () => undefined);
+    return s;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Accumulates a child's output into a bounded head **and a rolling tail**, with a marked gap.

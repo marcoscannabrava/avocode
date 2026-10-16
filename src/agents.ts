@@ -7,7 +7,7 @@
  * reads as "the model had no idea". That is S5's `pi --approve` trap, and every template below
  * carries the same class of flag.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Runner } from "./score.ts";
 
@@ -394,17 +394,27 @@ export async function driveAgent(
   now: () => Date,
 ): Promise<AgentTurn> {
   const started = now().getTime();
+  // A resumed probe must not see old output.
+  try {
+    rmSync(opts.logFile, { force: true });
+  } catch {
+    // The write below reports nothing either.
+  }
   const run = await runner(template.command, template.args(inv), {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutS * 1000,
     env: opts.env,
+    sink: opts.logFile,
   });
   const wallS = Math.round((now().getTime() - started) / 100) / 10;
 
-  const raw = run.stderr === "" ? run.stdout : `${run.stdout}\n--- stderr ---\n${run.stderr}`;
   try {
-    mkdirSync(dirname(opts.logFile), { recursive: true });
-    writeFileSync(opts.logFile, raw);
+    // A runner may ignore the sink.
+    if (!existsSync(opts.logFile)) {
+      mkdirSync(dirname(opts.logFile), { recursive: true });
+      writeFileSync(opts.logFile, run.stdout);
+    }
+    if (run.stderr !== "") appendFileSync(opts.logFile, `\n--- stderr ---\n${run.stderr}`);
   } catch {
     // An unwritable log must not lose the turn; the result still carries the summary.
   }

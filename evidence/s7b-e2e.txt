@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-08-26T07:32:14Z
+# avo S7b e2e — 2026-10-16T22:04:58Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 00c180a1, a stub agent and an f that counts lines
+PASS  repo at HEAD 7d1fef8a, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-178141d6)
+PASS  the injected directive is recorded (avo-intervention-21b5869e)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive
@@ -58,11 +58,11 @@ PASS  an unchanged tree is never scored, which is why the supervisor cannot see 
 PASS  .avo/STOP halts the loop before the first turn is spawned
 PASS  a loop that never ran a turn exits 1
 PASS  and nothing was committed
-PASS  a STOP file dropped mid-run halts it after 24 of 50 iterations
+PASS  a STOP file dropped mid-run halts it after 16 of 50 iterations
 PASS  an agent binary that cannot be started stops the loop after one try, not five
 PASS  and it exits 1
 PASS  a turn past its --timeout is killed
-PASS  a 30s turn under --timeout 2 returned in 3s
+PASS  a 30s turn under --timeout 2 returned in 2s
 
 ## 6. crash safety: the manifest is rewritten after EVERY iteration
 PASS  a killed run left a manifest behind
@@ -86,8 +86,8 @@ PASS  one JSON object, every field typed as documented
 PASS  it is a single JSON object on stdout
 
 ## 9. #8 measured: readLineage runs once per iteration now
-      2000 commits: the git log readLineage runs took 7ms
-PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 7ms
+      2000 commits: the git log readLineage runs took 5ms
+PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 5ms
 
 ## 10. #42: an agent that runs avo commit itself
 PASS  every iteration decides noop — the tree really was clean
@@ -106,7 +106,7 @@ PASS  the four counts are disjoint, so they add up to the input actually sent
 PASS  the agent's own total_cost_usd is summed over the run (#28 can spend it)
 PASS  and each iteration keeps its own share of it
 PASS  the final message survives too — it is in the same event
-PASS  the log says where it was cut rather than just stopping
+PASS  the turn log holds every line, uncut (#22)
 PASS  the human rendering shows the cached/uncached split
 PASS  and what it cost
 PASS  an agent that reports no cost leaves it null, not 0

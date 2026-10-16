@@ -533,6 +533,27 @@ test("a child that overruns the output cap keeps its LAST line, not only its fir
   }
 });
 
+test("a sink gets all of stdout while memory stays capped (#22)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-sink-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, `#!/bin/sh\ni=0\nwhile [ $i -lt 6000 ]; do printf '%090d\\n' "$i"; i=$((i+1)); done\necho err >&2\n`, { mode: 0o755 });
+    const sink = join(dir, "logs", "out.log");
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink });
+    assert.match(r.stdout, /--- avo elided \d+ bytes of output here ---/);
+    const log = readFileSync(sink, "utf8");
+    assert.equal(log.length, 6000 * 91, "every byte of stdout, and no stderr");
+    // A sink that cannot open loses nothing else.
+    for (const bad of [join(script, "x.log"), dir]) {
+      const again = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink: bad });
+      assert.equal(again.code, 0);
+      assert.equal(again.stderr, "err\n");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("output that fits under the cap is passed through byte for byte, with no elision marker", async () => {
   const dir = mkdtempSync(join(tmpdir(), "avo-nocap-"));
   try {

@@ -405,8 +405,13 @@ printf '%s' "$json" | jq -e '[.iterations[].agent.cost_usd] == [0.25,0.25]' >/de
 yes_no $? "and each iteration keeps its own share of it" "per-iteration cost is missing"
 printf '%s' "$json" | jq -e '.iterations[0].agent.summary == "widened the band"' >/dev/null
 yes_no $? "the final message survives too — it is in the same event" "the agent's summary was lost with the tail"
-grep -q -- '--- avo elided [0-9]* bytes of output here ---' "$cost/.avo/runs/"*/logs/1.log
-yes_no $? "the log says where it was cut rather than just stopping" "the elision is silent"
+log1="$(ls "$cost/.avo/runs/"*/logs/1.log)"
+if ! grep -q -- '--- avo elided' "$log1" && [[ "$(grep -c '"type":"assistant"' "$log1")" == 6000 ]] &&
+  tail -n 1 "$log1" | grep -q '"type":"result"'; then
+  ok "the turn log holds every line, uncut (#22)"
+else
+  bad "the turn log is not the full output: $(wc -c < "$log1") bytes"
+fi
 avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 1 2>/dev/null | grep -qE '[0-9]+ in / [0-9]+ out / [0-9]+ cache read \+ [0-9]+ cache write'
 yes_no $? "the human rendering shows the cached/uncached split" "renderRun still prints in/out only"
 # shellcheck disable=SC2016  # a literal dollar sign in the rendered cost line, not an expansion

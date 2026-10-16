@@ -332,6 +332,9 @@ gap it elides, because the payload is printed last in every stream `avo` reads (
 `evidence/issue-43-replay.txt`, reproducible with
 `npx tsx bench/replay-tokens.ts <repo>/.avo/runs/<id>`).
 
+The cap applies only to the copy in memory. The turn log under `logs/` (the `log_path` of `avo fan`)
+gets all of the agent's stdout as it arrives, then its stderr after a `--- stderr ---` line (#22).
+
 **A turn's rationale is what the agent *said*, and silence is recorded as silence.** The final
 message becomes `avo commit --why`, which lands permanently in the commit body, `lineage/vNNN.md` and
 `memory.jsonl`. So a structured stream with no parseable result falls back to the agent's last
