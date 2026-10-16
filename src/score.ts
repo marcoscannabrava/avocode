@@ -48,6 +48,8 @@ export const ScoreOutputSchema = Type.Object(
     unit: Type.String({ minLength: 1 }),
     higher_is_better: Type.Boolean(),
     scores: Type.Optional(Type.Record(Type.String(), Type.Number())),
+    /** Per-config standard error, keyed like `scores`. */
+    stderr: Type.Optional(Type.Record(Type.String(), Type.Number({ minimum: 0 }))),
     log: Type.Optional(Type.String()),
     duration_s: Type.Optional(Type.Number({ minimum: 0 })),
   },
@@ -77,6 +79,8 @@ export interface Attempt {
   higher_is_better: boolean;
   /** The vector form of `f`. `avo commit` compares these, not `primary` (PLAN §6 Q1). */
   scores: Record<string, number>;
+  /** Per-config standard error, when sent. */
+  stderr?: Record<string, number>;
   duration_s: number | null;
   /** Configs actually run; `["*"]` for a single whole-repo run. */
   configs: string[];
@@ -258,6 +262,9 @@ export function parseScoreOutput(stdout: string): ParseSuccess | ParseFailure {
   for (const [cfg, v] of Object.entries(output.scores ?? {})) {
     if (!Number.isFinite(v)) errors.push(`field 'scores.${cfg}': must be a finite number (got ${JSON.stringify(v)})`);
   }
+  for (const [cfg, v] of Object.entries(output.stderr ?? {})) {
+    if (!Number.isFinite(v)) errors.push(`field 'stderr.${cfg}': must be a finite number (got ${JSON.stringify(v)})`);
+  }
   if (errors.length > 0) return { errors };
 
   return { output, warnings };
@@ -327,10 +334,28 @@ export function normalize(
   const pass = ok && correct;
 
   const scores: Record<string, number> = {};
+  const stderr: Record<string, number> = {};
   for (const g of good) {
     const own = g.output.scores;
-    if (own !== undefined && Object.keys(own).length > 0) Object.assign(scores, own);
-    else if (g.config !== "*" && typeof g.output.primary === "number") scores[g.config] = g.output.primary;
+    const err = g.output.stderr ?? {};
+    if (own !== undefined && Object.keys(own).length > 0) {
+      Object.assign(scores, own);
+      Object.assign(stderr, err);
+    } else if (g.config !== "*" && typeof g.output.primary === "number") {
+      scores[g.config] = g.output.primary;
+      // A one-config run may key it `*`.
+      const e = err[g.config] ?? err["*"];
+      if (e !== undefined) stderr[g.config] = e;
+    } else if (err["*"] !== undefined) {
+      stderr["*"] = err["*"];
+    }
+  }
+  const scored = Object.keys(scores).length > 0 ? Object.keys(scores) : ["*"];
+  for (const k of Object.keys(stderr)) {
+    if (!scored.includes(k)) {
+      warnings.push(`stderr for unscored config '${k}' ignored`);
+      delete stderr[k];
+    }
   }
 
   const primaries = outputs.map((o) => o.primary).filter((p): p is number => typeof p === "number");
@@ -349,6 +374,7 @@ export function normalize(
     unit: first?.unit ?? "",
     higher_is_better: higherIsBetter,
     scores,
+    ...(Object.keys(stderr).length > 0 ? { stderr } : {}),
     // One scorer's self-reported duration beats our wall clock (no process startup); across
     // configs only the wall clock describes the fan-out.
     duration_s:
@@ -372,6 +398,7 @@ export function renderAttempt(a: Attempt): string {
   row("primary", a.primary === null ? `— (failing sentinel; ${dir})` : `${a.primary} ${a.unit} (${dir})`);
   const cfgs = Object.entries(a.scores);
   if (cfgs.length > 0) row("scores", cfgs.map(([k, v]) => `${k}=${v}`).join("  "));
+  if (a.stderr !== undefined) row("stderr", Object.entries(a.stderr).map(([k, v]) => `${k}=${v}`).join("  "));
   if (a.duration_s !== null) row("duration", `${a.duration_s}s`);
   row("configs", `${a.configs.join(", ")}${a.parallel ? " (parallel)" : ""}`);
   lines.push("");

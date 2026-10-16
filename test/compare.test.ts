@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { compareVectors, relDelta, scoreVector, type Vector } from "../src/compare.ts";
+import { compareVectors, relDelta, scoreVector, stderrVector, type Vector } from "../src/compare.ts";
 import { CONFIG_PATH, DEFAULT_CONFIG, loadConfig, type AvoConfig } from "../src/config.ts";
 
 const cfg = (over: Partial<AvoConfig> = {}): AvoConfig => ({ ...DEFAULT_CONFIG, ...over });
@@ -167,6 +167,84 @@ test("a floor of zero still requires a strict improvement", () => {
   assert.equal(compareVectors({ a: 10 }, { a: 10 }, cfg()).commit, false);
 });
 
+// ---------------------------------------------------------------- dominate-z
+
+const zcfg = (over: Partial<AvoConfig> = {}): AvoConfig => cfg({ reduce: "dominate-z", ...over });
+
+test("dominate-z combines both stderrs: σ = sqrt(σc² + σb²)", () => {
+  // σ = sqrt(3² + 4²) = 5, so the bar at z=2 is exactly 10
+  const err = { candidateStderr: { a: 3 }, bestStderr: { a: 4 } };
+  const at = compareVectors({ a: 110 }, { a: 100 }, zcfg(), err);
+  assert.equal(at.deltas[0]?.sigma, 5);
+  assert.equal(at.z, 2);
+  assert.equal(at.decision, "tie", "Δ == z·σ is not an improvement");
+  assert.equal(compareVectors({ a: 110.001 }, { a: 100 }, zcfg(), err).decision, "improved");
+  assert.equal(compareVectors({ a: 90 }, { a: 100 }, zcfg(), err).decision, "tie", "Δ == −z·σ is not a regression");
+  assert.equal(compareVectors({ a: 89.999 }, { a: 100 }, zcfg(), err).decision, "regressed");
+});
+
+test("dominate-z reads z from the config", () => {
+  const err = { candidateStderr: { a: 1 }, bestStderr: { a: 0 } };
+  assert.equal(compareVectors({ a: 102.5 }, { a: 100 }, zcfg({ z: 3 }), err).decision, "tie");
+  assert.equal(compareVectors({ a: 103.5 }, { a: 100 }, zcfg({ z: 3 }), err).decision, "improved");
+});
+
+test("dominate-z counts a missing side as exact, so an old best still compares", () => {
+  const c = compareVectors({ a: 104.1 }, { a: 100 }, zcfg(), { candidateStderr: { a: 2 } });
+  assert.equal(c.deltas[0]?.sigma, 2);
+  assert.equal(c.decision, "improved");
+});
+
+test("dominate-z without stderr behaves exactly like dominate, floor included", () => {
+  const cases: [Vector, Vector][] = [
+    [{ a: 102 }, { a: 100 }],
+    [{ a: 106 }, { a: 100 }],
+    [{ a: 94 }, { a: 100 }],
+    [{ a: 106, b: 80 }, { a: 100, b: 100 }],
+    [{ a: 100 }, { a: 100 }],
+  ];
+  for (const [c, b] of cases) {
+    const want = compareVectors(c, b, cfg({ floor: 0.05 }));
+    const got = compareVectors(c, b, zcfg({ floor: 0.05 }), { candidateStderr: {}, bestStderr: {} });
+    assert.equal(got.decision, want.decision);
+    assert.equal(got.reason, want.reason);
+    assert.deepEqual(got.deltas, want.deltas);
+  }
+});
+
+test("dominate-z mixes rules per config: σ where sent, the floor elsewhere", () => {
+  const c = compareVectors({ a: 101, b: 50 }, { a: 100, b: 100 }, zcfg({ floor: 0.05 }), {
+    candidateStderr: { b: 30 },
+    bestStderr: { b: 30 },
+  });
+  // a: +1% is inside the floor; b: −50 is inside 2·sqrt(1800) ≈ 84.9
+  assert.equal(c.decision, "tie");
+  assert.match(c.reason, /z=2/);
+});
+
+test("dominate-z still blocks a regression past the bar on any config", () => {
+  const c = compareVectors({ a: 200, b: 80 }, { a: 100, b: 100 }, zcfg(), {
+    candidateStderr: { a: 1, b: 1 },
+    bestStderr: { a: 1, b: 1 },
+  });
+  assert.equal(c.decision, "regressed");
+  assert.deepEqual(c.regressed, ["b"]);
+});
+
+test("plain dominate ignores stderr entirely", () => {
+  const c = compareVectors({ a: 101 }, { a: 100 }, cfg(), { candidateStderr: { a: 50 }, bestStderr: { a: 50 } });
+  assert.equal(c.decision, "improved");
+  assert.equal(c.deltas[0]?.sigma, undefined);
+  assert.equal(c.z, undefined);
+});
+
+test("stderrVector keys σ like scoreVector and never flips its sign", () => {
+  const s = { primary: 3, higher_is_better: false, scores: { a: 3, b: 4 }, stderr: { a: 0.5, zz: 1 } };
+  assert.deepEqual(stderrVector(s), { a: 0.5 });
+  assert.deepEqual(stderrVector({ primary: 3, higher_is_better: true, scores: {}, stderr: { "*": 0.2 } }), { "*": 0.2 });
+  assert.deepEqual(stderrVector({ primary: 3, higher_is_better: true, scores: {} }), {});
+});
+
 // ---------------------------------------------------------------- .avo/config.json
 
 test("a missing config file is the common case and never warns", () => {
@@ -213,6 +291,24 @@ test("invalid config names are dropped rather than handed to the scorer", () => 
   const { config, warnings } = loadConfig(dir);
   assert.equal(config.configs, null);
   assert.match(warnings[0] as string, /invalid config names/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("reduce dominate-z and z are read; z defaults to 2", () => {
+  const dir = repo({ [CONFIG_PATH]: JSON.stringify({ reduce: "dominate-z", z: 3 }) });
+  const { config, warnings } = loadConfig(dir);
+  assert.deepEqual(warnings, []);
+  assert.equal(config.reduce, "dominate-z");
+  assert.equal(config.z, 3);
+  assert.equal(DEFAULT_CONFIG.z, 2);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a negative z is rejected", () => {
+  const dir = repo({ [CONFIG_PATH]: JSON.stringify({ reduce: "dominate-z", z: -1 }) });
+  const { config, warnings } = loadConfig(dir);
+  assert.deepEqual(config, DEFAULT_CONFIG);
+  assert.match(warnings[0] as string, /'z'/);
   rmSync(dir, { recursive: true, force: true });
 });
 

@@ -52,6 +52,20 @@ test("toVersionScore persists the vector the comparator will read back, not the 
   assert.deepEqual(toVersionScore({ ...ATTEMPT, primary: null }).scores, {});
 });
 
+test("toVersionScore keeps stderr only when the scorer sent it", () => {
+  assert.equal("stderr" in toVersionScore(ATTEMPT), false);
+  assert.deepEqual(toVersionScore({ ...ATTEMPT, stderr: { "*": 0.4 } }).stderr, { "*": 0.4 });
+});
+
+test("isVersionScore reads old trailers and checks a new stderr", () => {
+  const old = { primary: 1, unit: "s", higher_is_better: false, scores: { a: 1 } };
+  assert.equal(isVersionScore(old), true);
+  assert.equal(isVersionScore({ ...old, stderr: { a: 0.1 } }), true);
+  assert.equal(isVersionScore({ ...old, stderr: { a: -0.1 } }), false);
+  assert.equal(isVersionScore({ ...old, stderr: { a: "x" } }), false);
+  assert.equal(isVersionScore({ ...old, stderr: null }), false);
+});
+
 test("isVersionScore rejects a trailer that is not a score", () => {
   assert.equal(isVersionScore({ primary: 1, unit: "s", higher_is_better: false, scores: {} }), true);
   assert.equal(isVersionScore({ primary: null, unit: "s", higher_is_better: false, scores: {} }), true);

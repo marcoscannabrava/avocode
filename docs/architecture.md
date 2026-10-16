@@ -118,7 +118,9 @@ Full authoring guide: [../templates/score/README.md](../templates/score/README.m
 
 - **Required:** `ok` (the scorer itself worked), `correct` (**the gate**), `primary` (`number|null`),
   `unit` (non-empty), `higher_is_better`.
-- **Optional:** `scores`, `log`, `duration_s`.
+- **Optional:** `scores`, `stderr`, `log`, `duration_s`. `stderr` is the standard error of each
+  config, keyed like `scores` (`*` for a scorer with no `scores`). Each value must be finite and
+  `>= 0`.
 - Unknown fields are allowed but warned about, so a misspelled `higherIsBetter` reads as both
   "required field missing" and "unknown field".
 
@@ -144,7 +146,18 @@ regression on another — the silent regression the rule exists to stop. Two ant
 with it: a config present in the best version but **missing** from the candidate blocks the commit
 (you cannot improve by measuring less), while a *new* config does not.
 
-`floor` is a **symmetric** relative noise band, so noise can neither commit nor block. A candidate
+`floor` is a **symmetric** relative noise band, so noise can neither commit nor block.
+
+`reduce: "dominate-z"` is *dominate-or-tie* with a per-config noise bar for stochastic benches. For
+a config where the candidate or the best version has a `stderr`, avo uses the absolute change
+`Δ = candidate − best` (direction-normalized) and the combined error
+`σ = sqrt(σ_candidate² + σ_best²)`. A missing side counts as `0`. The config improved if
+`Δ > z·σ` and regressed if `Δ < −z·σ`. `z` defaults to `2`. These configs ignore `floor`. A config
+with no `stderr` on either side uses `floor`, so without `stderr` the rule is exactly `dominate`.
+The `Avo-Score` trailer stores the `stderr`, so the best version keeps its σ. Trailers from before
+this field read as "no `stderr`".
+
+A candidate
 whose `higher_is_better` differs from the best version's is refused as incomparable rather than
 ranked.
 

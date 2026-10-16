@@ -1,6 +1,14 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
+import {
+  compareVectors,
+  formatRel,
+  scoreVector,
+  stderrVector,
+  type Comparison,
+  type Scored,
+  type Vector,
+} from "./compare.ts";
 import { loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
 import { MEMORY_PATH, remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
@@ -53,6 +61,8 @@ export interface VersionScore extends Scored {
   unit: string;
   higher_is_better: boolean;
   scores: Record<string, number>;
+  /** Absent on versions written before AVO-15. */
+  stderr?: Record<string, number>;
 }
 
 export interface Version {
@@ -73,8 +83,14 @@ export function isVersionScore(v: unknown): v is VersionScore {
     typeof o["unit"] === "string" &&
     typeof o["higher_is_better"] === "boolean" &&
     typeof o["scores"] === "object" &&
-    o["scores"] !== null
+    o["scores"] !== null &&
+    (o["stderr"] === undefined || isNumberMap(o["stderr"]))
   );
+}
+
+function isNumberMap(v: unknown): boolean {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  return Object.values(v).every((x) => typeof x === "number" && Number.isFinite(x) && x >= 0);
 }
 
 export function toVersionScore(a: Attempt): VersionScore {
@@ -85,6 +101,8 @@ export function toVersionScore(a: Attempt): VersionScore {
     // Persist the comparator's own vector, so keys match whether or not the scorer sent
     // `scores` (PLAN §6 Q1).
     scores: Object.keys(a.scores).length > 0 ? a.scores : a.primary === null ? {} : { "*": a.primary },
+    // The next comparison needs the best's σ.
+    ...(a.stderr !== undefined ? { stderr: a.stderr } : {}),
   };
 }
 
@@ -473,6 +491,8 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
   const cmp = compareVectors(candidate, bestVec, config, {
     candidateHigherIsBetter: attempt.higher_is_better,
     bestHigherIsBetter: best?.score.higher_is_better,
+    candidateStderr: stderrVector(attempt),
+    bestStderr: best === null ? undefined : stderrVector(best.score),
   });
   const common = { attempt, best: bestRef, comparison: cmp, warnings };
 
@@ -701,7 +721,8 @@ export function renderLineage(l: Lineage, cfg: AvoConfig): string {
     );
   }
   const best = bestVersion(l.versions);
-  lines.push("", `best: v${best?.version} (${best?.sha.slice(0, 7)}); reduce: ${cfg.reduce}, floor: ${cfg.floor}`, "");
+  const z = cfg.reduce === "dominate-z" ? `, z: ${cfg.z}` : "";
+  lines.push("", `best: v${best?.version} (${best?.sha.slice(0, 7)}); reduce: ${cfg.reduce}, floor: ${cfg.floor}${z}`, "");
   return `${lines.join("\n")}\n`;
 }
 
@@ -712,7 +733,10 @@ export function renderVersion(v: Version): string {
     `  date     ${v.date}`,
     `  subject  ${v.subject}`,
     `  primary  ${fmt(v.score.primary, v.score.unit)} (${dir})`,
-    ...Object.entries(v.score.scores).map(([k, s]) => `  ${k.padEnd(8)} ${s}`),
+    ...Object.entries(v.score.scores).map(([k, s]) => {
+      const e = v.score.stderr?.[k];
+      return `  ${k.padEnd(8)} ${s}${e === undefined ? "" : ` ±${e}`}`;
+    }),
     "",
     v.why ?? "(no rationale recorded)",
     "",
@@ -763,6 +787,8 @@ export async function lineageCommand(argv: readonly string[], io: Io, runner: Ru
   const cmp = compareVectors(scoreVector(to.score), scoreVector(from.score), config, {
     candidateHigherIsBetter: to.score.higher_is_better,
     bestHigherIsBetter: from.score.higher_is_better,
+    candidateStderr: stderrVector(to.score),
+    bestStderr: stderrVector(from.score),
   });
   const patch = await git(runner, opts.cwd, ["diff", `${from.sha}..${to.sha}`]);
   if (opts.json) {

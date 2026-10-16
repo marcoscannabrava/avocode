@@ -11,6 +11,8 @@ export interface Scored {
   primary: number | null;
   higher_is_better: boolean;
   scores: Record<string, number>;
+  /** Standard error per config, from the scorer. */
+  stderr?: Record<string, number>;
 }
 
 /**
@@ -26,6 +28,16 @@ export function scoreVector(s: Scored): Vector {
     return v;
   }
   return s.primary === null ? {} : { "*": s.primary * sign };
+}
+
+/** Stderr on the vector's keys, never sign-flipped. */
+export function stderrVector(s: Scored): Vector {
+  const v: Vector = {};
+  for (const k of Object.keys(scoreVector(s))) {
+    const e = s.stderr?.[k];
+    if (e !== undefined) v[k] = e;
+  }
+  return v;
 }
 
 /**
@@ -55,6 +67,8 @@ export interface ConfigDelta {
   /** Relative change, direction-normalized. Positive is always an improvement. */
   rel: number;
   verdict: "improved" | "regressed" | "same";
+  /** `dominate-z` only: sqrt(σc² + σb²). */
+  sigma?: number;
 }
 
 export interface Comparison {
@@ -71,6 +85,8 @@ export interface Comparison {
   missing: string[];
   reduce: AvoConfig["reduce"];
   floor: number;
+  /** Only for `reduce: "dominate-z"`. */
+  z?: number;
   /** Only for `reduce: "mean"`. */
   mean?: { best: number; candidate: number; rel: number };
 }
@@ -92,7 +108,13 @@ export function compareVectors(
   candidate: Vector,
   best: Vector | null,
   cfg: AvoConfig,
-  meta: { candidateHigherIsBetter?: boolean | undefined; bestHigherIsBetter?: boolean | undefined } = {},
+  meta: {
+    candidateHigherIsBetter?: boolean | undefined;
+    bestHigherIsBetter?: boolean | undefined;
+    /** Per-config stderr; read only by `dominate-z`. */
+    candidateStderr?: Vector | undefined;
+    bestStderr?: Vector | undefined;
+  } = {},
 ): Comparison {
   const base: Omit<Comparison, "commit" | "decision" | "reason"> = {
     deltas: [],
@@ -102,6 +124,7 @@ export function compareVectors(
     missing: [],
     reduce: cfg.reduce,
     floor: cfg.floor,
+    ...(cfg.reduce === "dominate-z" ? { z: cfg.z } : {}),
   };
 
   if (best === null) {
@@ -154,6 +177,16 @@ export function compareVectors(
     const b = best[config] as number;
     const c = candidate[config] as number;
     const rel = relDelta(c, b);
+    const sc = meta.candidateStderr?.[config];
+    const sb = meta.bestStderr?.[config];
+    if (cfg.reduce === "dominate-z" && (sc !== undefined || sb !== undefined)) {
+      // A missing side counts as exact.
+      const sigma = Math.hypot(sc ?? 0, sb ?? 0);
+      const bar = cfg.z * sigma;
+      const d = c - b;
+      const verdict = d > bar ? "improved" : d < -bar ? "regressed" : "same";
+      return { config, best: b, candidate: c, rel, verdict, sigma };
+    }
     return {
       config,
       best: b,
@@ -165,7 +198,10 @@ export function compareVectors(
   const improved = deltas.filter((d) => d.verdict === "improved").map((d) => d.config);
   const regressed = deltas.filter((d) => d.verdict === "regressed").map((d) => d.config);
   const withDeltas = { ...base, deltas, improved, regressed, added, missing };
-  const band = cfg.floor > 0 ? ` (floor ±${pct(cfg.floor).slice(1)})` : "";
+  const bands: string[] = [];
+  if (cfg.floor > 0) bands.push(`floor ±${pct(cfg.floor).slice(1)}`);
+  if (deltas.some((d) => d.sigma !== undefined)) bands.push(`z=${cfg.z}`);
+  const band = bands.length > 0 ? ` (${bands.join(", ")})` : "";
 
   if (cfg.reduce === "mean") {
     const weight = (c: string) => cfg.weights[c] ?? 1;

@@ -128,6 +128,25 @@ test("parseConfigList accepts plain tokens, dedupes, and rejects anything else",
 const META = { ts: "2026-08-24T00:00:00.000Z", parallel: false, exitCode: 0, git: { head: null, dirty: false }, durationS: 1 };
 const part = (config: string, o: unknown) => ({ config, result: parseScoreOutput(line(o)) });
 
+test("stderr must be finite and non-negative", () => {
+  const r = ok(parseScoreOutput(line({ ...GOOD, scores: { a: 1 }, stderr: { a: 0 } })));
+  assert.deepEqual(r.warnings, []);
+  assert.match(bad(parseScoreOutput(line({ ...GOOD, stderr: { a: -0.1 } }))).errors[0] ?? "", /stderr\.a/);
+  assert.match(bad(parseScoreOutput(line({ ...GOOD, stderr: { a: 1e999 } }))).errors[0] ?? "", /stderr\.a/);
+  assert.match(bad(parseScoreOutput(line({ ...GOOD, stderr: { a: "x" } }))).errors[0] ?? "", /stderr/);
+});
+
+test("normalize keys stderr like scores and drops unscored keys", () => {
+  const multi = normalize([part("*", { ...GOOD, scores: { a: 1, b: 2 }, stderr: { a: 0.1, c: 9 } })], META);
+  assert.deepEqual(multi.stderr, { a: 0.1 });
+  assert.ok(multi.warnings.some((w) => /'c'/.test(w)));
+  const whole = normalize([part("*", { ...GOOD, stderr: { "*": 0.3 } })], META);
+  assert.deepEqual(whole.stderr, { "*": 0.3 });
+  const perConfig = normalize([part("b1", { ...GOOD, stderr: { "*": 0.2 } }), part("b2", { ...GOOD, stderr: { b2: 0.5 } })], META);
+  assert.deepEqual(perConfig.stderr, { b1: 0.2, b2: 0.5 });
+  assert.equal("stderr" in normalize([part("*", GOOD)], META), false);
+});
+
 test("a passing single run normalizes to pass with normalized == primary", () => {
   const a = normalize([part("*", GOOD)], META);
   assert.equal(a.pass, true);
