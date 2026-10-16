@@ -442,6 +442,11 @@ export function readManifest(cwd: string, runId: string): Manifest | { error: st
   try {
     const m = JSON.parse(raw) as Manifest;
     if (m.version !== 1 || !Array.isArray(m.probes)) return { error: `${relative(cwd, path)} is not a v1 run manifest` };
+    // Older manifests have no directions.
+    for (const p of m.probes) {
+      p.direction ??= null;
+      if (p.result !== null) p.result.direction ??= p.direction;
+    }
     return m;
   } catch (e) {
     return { error: `${relative(cwd, path)} is corrupt (${(e as Error).message})` };
@@ -617,6 +622,11 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
     }
   }
   if (directions !== null && directions.length === 0) return { error: "the directions file has no directions" };
+  if (directions !== null) {
+    // The API path skips parseDirections.
+    directions = directions.map((d) => d.trim());
+    if (directions.some((d) => d === "" || /[\r\n]/.test(d))) return { error: "each direction must be one non-empty line" };
+  }
   if (directions !== null && opts.n !== null && opts.n !== directions.length) {
     return { error: `--n is ${opts.n} but there are ${directions.length} directions` };
   }

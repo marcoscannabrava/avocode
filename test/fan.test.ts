@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { loadConfig } from "../src/config.ts";
 import { bufferIo } from "../src/io.ts";
+import { spawnRunner } from "../src/score.ts";
 import {
   CHAIN_ENV,
   DEFAULT_N,
@@ -27,6 +28,7 @@ import {
   probeEnv,
   promptSha,
   readManifest,
+  runFan,
   type FanResult,
   type ProbeResult,
 } from "../src/fan.ts";
@@ -545,6 +547,47 @@ test("--resume gives a re-run probe its direction from the manifest", async () =
   assert.equal(out.results.find((r) => r.i === 2)?.direction, "second");
   const seen = readFileSync(join(f.dir, WORKTREES_DIR, json.run_id, "2", "direction.txt"), "utf8");
   assert.match(seen, /^Your direction: second\n/);
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("a manifest older than --directions still resumes and renders", async () => {
+  const f = fixture("fanoldmanifest");
+  const { json } = await fan(f, ["--prompt", "vary it", "--n", "2"]);
+  const path = join(f.dir, WORKTREES_DIR, json.run_id, MANIFEST_NAME);
+  type Old = { probes: { i: number; status: string; direction?: unknown; result: Record<string, unknown> | null }[] };
+  const m = JSON.parse(readFileSync(path, "utf8")) as Old;
+  // Strip every direction field: v1 had none.
+  for (const p of m.probes) {
+    delete p.direction;
+    if (p.result !== null) delete p.result.direction;
+  }
+  const second = m.probes.find((p) => p.i === 2);
+  if (second !== undefined) {
+    second.status = "pending";
+    second.result = null;
+  }
+  writeFileSync(path, JSON.stringify(m, null, 2));
+  execFileSync("git", ["worktree", "remove", "--force", `${WORKTREES_DIR}/${json.run_id}/2`], { cwd: f.dir });
+
+  const io = bufferIo();
+  assert.equal(await fanCommand(["--resume", json.run_id, "--cwd", f.dir], io), 0, io.stderr);
+  assert.doesNotMatch(io.stdout, /direction:/);
+  const again = readManifest(f.dir, json.run_id);
+  assert.ok(!("error" in again));
+  assert.deepEqual(again.probes.map((p) => p.result?.direction), [null, null]);
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("API directions must each be one non-empty line", async () => {
+  const f = fixture("fandirapi");
+  for (const bad of [["ok", "   "], ["two\nlines"]]) {
+    const o = parseFanArgs(["--prompt", "p", "--cwd", f.dir], {});
+    assert.ok(!("error" in o));
+    o.directions = bad;
+    const r = await runFan(o, { runner: spawnRunner, now: () => new Date(), env: process.env });
+    assert.ok("error" in r && /one non-empty line/.test(r.error), JSON.stringify(bad));
+  }
+  assert.deepEqual(listRuns(f.dir), []);
   rmSync(f.dir, { recursive: true, force: true });
 });
 
