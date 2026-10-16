@@ -21,25 +21,25 @@ typecheck:
 test:
     node_modules/.bin/tsx --test test/*.test.ts
 
-# No suite may hang forever (#53).
+# Suite cap; --foreground keeps Ctrl-C working (#53).
 e2e_timeout := env_var_or_default("AVO_E2E_TIMEOUT", "1800")
 
 # Exercises the real bin/avo; writes evidence/*-e2e.txt.
 e2e:
-    timeout -k 10 {{e2e_timeout}} ./test/e2e.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-score.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-lineage.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-mem.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-know.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-install.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-fan.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-supervise.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-run.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-pi.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-bench.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-arcagi3.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-lint.sh
-    timeout -k 10 {{e2e_timeout}} ./test/e2e-install-sh.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-score.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-lineage.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-mem.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-know.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-install.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-fan.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-supervise.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-run.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-pi.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-bench.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-arcagi3.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-lint.sh
+    timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-install-sh.sh
 
 # Everything, including the slow end-to-end pass.
 all: check e2e
