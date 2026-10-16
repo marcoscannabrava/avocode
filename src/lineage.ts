@@ -648,7 +648,9 @@ export async function commitCommand(
   const decision = await decideCommit(parsed, runner, now);
   decision.warnings.push(...(await recordDecisionMemory(parsed, decision, runner, now)));
   decision.warnings.push(...(await indexNewVersion(parsed, decision, runner)));
-  io.out(parsed.json ? `${JSON.stringify(decision)}\n` : renderDecision(decision));
+  // `ok`: the command ran, like score.
+  const ok = decision.errors.length === 0;
+  io.out(parsed.json ? `${JSON.stringify({ ok, ...decision })}\n` : renderDecision(decision));
   if (decision.errors.length > 0) return 2;
   return decision.action === "refused" ? 1 : 0;
 }
