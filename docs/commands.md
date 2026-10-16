@@ -6,7 +6,8 @@ Every `avo` subcommand, its guarantees, and the reasoning behind the parts that 
 degrades to a named fallback with one warning instead of crashing.
 
 `avo <command> --help` (or `-h`, or `avo help <command>`) prints the options of that command and
-exits `0`.
+exits `0`. It runs nothing else. A `-h` that is the value of a flag, as in `avo commit --why -h`, is
+not a help request. Arguments after `--` are not read as help.
 
 | Command | One line |
 | --- | --- |
