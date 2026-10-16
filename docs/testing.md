@@ -91,6 +91,7 @@ The e2e job runs **without any agent CLI installed** — deliberately, because t
 `.github/workflows/qmd.yml` installs a pinned `qmd` and runs `e2e-know.sh` on the qmd path. qmd
 downloads large models on first use, so the job keeps them in the Actions cache. It runs each night,
 on demand, and on a PR that changes the knowledge code. A `SKIP` in its evidence makes the job fail.
+A hybrid `avo know query` that falls back to the local scan also makes it fail.
 
 ## Benchmark a real run
 

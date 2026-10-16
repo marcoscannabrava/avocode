@@ -1,9 +1,6 @@
 name: qmd
 
-# The qmd path of `avo know`, with a real `qmd` (#15). Kept off
-# the main workflow: qmd pulls GGUF models (~2 GB) on first use.
-# It runs nightly, on demand, and on a PR that touches the
-# knowledge code or its e2e.
+# Runs the know e2e with real qmd.
 on:
   schedule:
     - cron: "37 4 * * *"
@@ -15,33 +12,47 @@ on:
       - test/e2e-know.sh
       - .github/workflows/qmd.yml
 
+permissions:
+  contents: read
+
 jobs:
   e2e-with-qmd:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
-      # The version #15 and #16 were measured against.
+      # Matches #15 and #16.
       QMD_VERSION: "2.8.3"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
       - run: npm ci
       - run: npm install -g "@tobilu/qmd@$QMD_VERSION"
       - run: qmd --version
-      # Models are large; reuse them across runs.
-      - uses: actions/cache@v4
+      # Saved after the hybrid query step.
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/qmd/models
-          key: qmd-models-${{ env.QMD_VERSION }}
+          key: qmd-models-all-${{ env.QMD_VERSION }}
       - run: ./test/e2e-know.sh
-      # A SKIP here means qmd was not used: fail.
+      # A SKIP means qmd was not used.
       - name: the qmd path ran
         run: |
           grep -q '^# qmd on PATH: yes' evidence/s4-e2e.txt
           if grep -q '^SKIP' evidence/s4-e2e.txt; then exit 1; fi
-      - uses: actions/upload-artifact@v4
+      # The e2e accepts a fallback; this does not.
+      - name: hybrid qmd query answers
+        run: |
+          d="$(mktemp -d)"
+          git -C "$d" init -q
+          printf '# Registers\n\nSpills hurt occupancy.\n' > "$d/regs.md"
+          ./bin/avo know init --cwd "$d" --json > /dev/null
+          ./bin/avo know add "$d/regs.md" --cwd "$d" --json
+          ./bin/avo know query "register occupancy" --cwd "$d" --json | tee q.json
+          jq -e '.backend == "qmd" and (.hits | length) > 0' q.json
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: s4-e2e-with-qmd
