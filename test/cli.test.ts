@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -93,6 +93,16 @@ test("every subcommand answers --help and -h with its own stanza (#50)", async (
       assert.equal(io.stderr, "");
     }
   }
+});
+
+test("avo run --help names every flag it parses", () => {
+  const src = readFileSync(new URL("../src/run.ts", import.meta.url), "utf8");
+  const from = src.indexOf("export function parseRunArgs");
+  const body = src.slice(from, src.indexOf("return opts;", from));
+  const flags = new Set([...body.matchAll(/"(--[a-z-]+)"/g)].map((m) => m[1] as string));
+  assert.ok(flags.has("--max-wall"), `parsed ${[...flags].join(" ")}`);
+  const stanza = commandUsage("run") ?? "";
+  for (const f of flags) assert.ok(stanza.includes(f), `avo run --help omits ${f}`);
 });
 
 test("avo help names an unknown topic and exits 2", async () => {
