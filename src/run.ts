@@ -404,7 +404,7 @@ export function writeRunManifest(cwd: string, report: RunReport): void {
   }
 }
 
-/** The id is a name, never a path. */
+/** Ids are names, never paths. */
 const RUN_ID = /^\w[\w.-]*$/;
 
 export function readRunManifest(cwd: string, runId: string): RunReport | { error: string } {
@@ -428,10 +428,7 @@ function uniqueRunId(cwd: string, now: Date, sha: string): string {
   return id;
 }
 
-/**
- * True while the loop that owns `m` still runs here: same host, the pid answers, and on Linux
- * that pid is still avo, not a reuse. A manifest with no pid, from before #27, is never live.
- */
+/** Its loop still runs on this host. */
 export function runIsLive(m: RunReport): boolean {
   if (m.finished_at !== null || m.pid === undefined || m.host !== hostname()) return false;
   try {

@@ -688,7 +688,7 @@ async function killedRun(f: Fixture, done: number, max: number, pid = deadPid())
   return json.run_id;
 }
 
-/** A live process whose cmdline looks like avo. */
+/** A live process that looks like avo. */
 function fakeLoop(): { pid: number; stop: () => void } {
   const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", "main.ts"], { stdio: "ignore" });
   return { pid: child.pid as number, stop: () => child.kill("SIGKILL") };
@@ -835,7 +835,7 @@ test("--resume and --clean read a run id, never a path", async () => {
   for (const bad of ["..", "../x", `${id}/..`, "/tmp"]) {
     assert.match((await resume(f, bad)).err, /is not a run id/, bad);
   }
-  // A copied directory must not write back under its old id.
+  // A copied manifest keeps its old id.
   mkdirSync(join(f.dir, RUNS_DIR, "copy"));
   writeFileSync(join(f.dir, RUNS_DIR, "copy", RUN_MANIFEST), readFileSync(join(f.dir, RUNS_DIR, id, RUN_MANIFEST)));
   assert.ok("error" in readRunManifest(f.dir, "copy"));
