@@ -27,7 +27,7 @@ trap 'rm -f "$probe"; rm -rf "$work"' EXIT
 rm -f "$probe"
 
 say "# avo lint-gate e2e — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-say "# $(npm exec --yes -- shellcheck --version 2>/dev/null | grep ^version || echo 'version: unknown')"
+say "# $(timeout -k 5 60 npm exec --yes -- shellcheck --version 2>/dev/null | grep ^version || echo 'version: unknown')"
 say ""
 
 say "## 1. the gate is green on this repo, and says nothing about skipping"
@@ -65,6 +65,35 @@ printf '%s' "$missing_out" | grep -qF 'refusing to pass a gate that did not run'
 yes_no $? "it says why it failed" "the message was: $missing_out"
 printf '%s' "$missing_out" | grep -qiE 'install it|npm fallback'
 yes_no $? "it says how to fix it" "no install hint in: $missing_out"
+say ""
+
+say "## 3b. a hung shellcheck is a FAIL, not a wait (#53)"
+hang="$work/hang"
+printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$hang"
+chmod +x "$hang"
+t0=$SECONDS
+hang_out="$(SC_TIMEOUT=2 SHELLCHECK="$hang" ./test/lint-sh.sh 2>&1)"; hang_code=$?
+took=$((SECONDS - t0))
+if [[ $hang_code -ne 0 && $took -lt 30 ]]; then ok "a probe that hangs answers no (exit $hang_code in ${took}s)"
+else bad "a hung probe took ${took}s and exited $hang_code"; fi
+printf '%s' "$hang_out" | grep -qF 'refusing to pass a gate that did not run'
+yes_no $? "it fails as no runner" "the message was: $hang_out"
+# Version answers, run hangs.
+cat > "$hang" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then printf 'version: 0.11.0\n'; exit 0; fi
+exec sleep 600
+STUB
+t0=$SECONDS
+hang_out="$(SC_TIMEOUT=2 SHELLCHECK="$hang" ./test/lint-sh.sh 2>&1)"; hang_code=$?
+took=$((SECONDS - t0))
+if [[ $hang_code -ne 0 && $took -lt 30 ]]; then ok "a run that hangs is red (exit $hang_code in ${took}s)"
+else bad "a hung run took ${took}s and exited $hang_code"; fi
+printf '%s' "$hang_out" | grep -qF 'did not finish'
+yes_no $? "it says the run timed out" "the message was: $hang_out"
+suites="$(sed -n '/^e2e:/,/^$/p' justfile | grep -F './test/')"
+if [[ -n "$suites" ]] && ! printf '%s\n' "$suites" | grep -qv 'timeout'; then ok "just e2e bounds every suite"
+else bad "a suite in just e2e has no timeout: $suites"; fi
 say ""
 
 say "## 4. just lint propagates the gate rather than swallowing it"

@@ -79,6 +79,13 @@ than naming its own — findings are not stable across versions. A runner at the
 and still runs; refusing to lint would be a worse failure than the drift. `SHELLCHECK=<path>` pins a
 runner and disables the fallback.
 
+No step of the gate can block forever
+([#53](https://github.com/marcoscannabrava/avocode/issues/53)). Each shellcheck probe and the run
+itself have a time limit of `SC_TIMEOUT` seconds (default 60). A probe that does not answer in time
+counts as "no runner". A run that does not finish in time makes lint red. `just e2e` also gives each
+suite a limit of `AVO_E2E_TIMEOUT` seconds (default 1800), so a stuck suite fails instead of
+waiting forever.
+
 ## CI
 
 `.github/workflows/ci.yml` runs two jobs on every push to `main` and every PR: `check` (lint +

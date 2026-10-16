@@ -21,22 +21,25 @@ typecheck:
 test:
     node_modules/.bin/tsx --test test/*.test.ts
 
+# No suite may hang forever (#53).
+e2e_timeout := env_var_or_default("AVO_E2E_TIMEOUT", "1800")
+
 # Exercises the real bin/avo; writes evidence/*-e2e.txt.
 e2e:
-    ./test/e2e.sh
-    ./test/e2e-score.sh
-    ./test/e2e-lineage.sh
-    ./test/e2e-mem.sh
-    ./test/e2e-know.sh
-    ./test/e2e-install.sh
-    ./test/e2e-fan.sh
-    ./test/e2e-supervise.sh
-    ./test/e2e-run.sh
-    ./test/e2e-pi.sh
-    ./test/e2e-bench.sh
-    ./test/e2e-arcagi3.sh
-    ./test/e2e-lint.sh
-    ./test/e2e-install-sh.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-score.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-lineage.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-mem.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-know.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-install.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-fan.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-supervise.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-run.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-pi.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-bench.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-arcagi3.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-lint.sh
+    timeout -k 10 {{e2e_timeout}} ./test/e2e-install-sh.sh
 
 # Everything, including the slow end-to-end pass.
 all: check e2e
