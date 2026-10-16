@@ -174,8 +174,10 @@ Two qmd facts, verified against 2.8.3 rather than assumed:
 - `qmd embed` only vectorizes documents the index already knows about, so `avo know add` runs
   `qmd update` first. `avo commit` (and each commit in `avo run`) does the same for `lineage/` after
   it writes a new version. This step is skipped when qmd is not available, and on `--dry-run` or
-  `--no-record`. A failed reindex is a warning; the commit stays. A file you put in `lineage/` by
-  hand still needs `avo know reindex`.
+  `--no-record`. A failed reindex is a warning; the commit stays. Each qmd step has 60 seconds in
+  the commit path, not the 30 minutes of `avo know`. The first `qmd embed` downloads a model and
+  can take longer; then the commit warns, and `avo know reindex` finishes the index. A file you put
+  in `lineage/` by hand still needs `avo know reindex`.
 - `.qmd/` is gitignored. `index.yml` records collection paths as *absolute* paths, so a committed
   index is wrong on every other machine, and `index.sqlite` is a multi-megabyte binary.
 
