@@ -59,7 +59,8 @@ appends it to `.avo/attempts.jsonl`. Attempts are not commits — that gate is `
 | `--no-record` | skip the attempt log |
 | `--cwd <dir>` | treat dir as the repo root |
 
-Exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed output, timeout).
+Exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed output, timeout,
+configs that disagree on `higher_is_better`).
 
 ## `avo commit` — the commit rule
 
