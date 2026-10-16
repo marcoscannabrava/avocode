@@ -7,6 +7,9 @@ import type { CustomAgent, OutputFormat } from "./agents.ts";
 /** Optional per-repo settings. Absent is the common case and never a warning. */
 export const CONFIG_PATH = ".avo/config.json";
 
+/** Rendered, human- and qmd-readable record of each committed version. */
+export const LINEAGE_DIR = "lineage";
+
 /** Config names must be plain tokens — also how we detect a scorer with no `--configs`. */
 export const CONFIG_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 

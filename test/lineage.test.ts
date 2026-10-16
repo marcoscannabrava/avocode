@@ -9,6 +9,7 @@ import { bufferIo } from "../src/io.ts";
 import {
   bestCommand,
   bestVersion,
+  COMMIT_REINDEX_TIMEOUT_MS,
   commitCommand,
   ensureTrajectoryIgnored,
   extractWhy,
@@ -22,7 +23,8 @@ import {
   withoutTrajectory,
   type Version,
 } from "../src/lineage.ts";
-import { spawnRunner, type Attempt } from "../src/score.ts";
+import { QMD, QMD_CONFIG } from "../src/knowledge.ts";
+import { spawnRunner, type Attempt, type Runner } from "../src/score.ts";
 
 // ---------------------------------------------------------------- pure helpers
 
@@ -249,6 +251,71 @@ test("a refused commit writes nothing at all — no lineage file, no staged inde
   assert.equal(refused.json["action"], "refused");
   assert.equal(existsSync(join(dir, "lineage/v002.md")), false);
   assert.equal(git("diff", "--cached", "--name-only").trim(), "");
+});
+
+test("a committed version is reindexed into qmd, and nothing else is (#14)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, ".qmd"));
+  writeFileSync(join(dir, QMD_CONFIG), "collections:\n  lineage:\n    path: x\n");
+  writeFileSync(join(dir, ".git/info/exclude"), ".qmd/\n");
+  const calls: string[] = [];
+  let installed = true;
+  const runner: Runner = (cmd, args, opts) => {
+    if (cmd !== QMD) return spawnRunner(cmd, args, opts);
+    calls.push(args.join(" "));
+    const base = { stdout: "qmd 2.8.3\n", stderr: "", timedOut: false };
+    return Promise.resolve(installed ? { ...base, code: 0, spawnError: null } : { ...base, code: -1, spawnError: "ENOENT" });
+  };
+  const run = async (extra: string[]) => {
+    const io = bufferIo();
+    const code = await commitCommand(["--cwd", dir, "--json", ...extra], io, runner, clock);
+    return { code, json: JSON.parse(io.stdout) as { action: string; warnings: string[] } };
+  };
+  const reindexed = () => calls.filter((c) => c.startsWith("update") || c.startsWith("embed"));
+
+  assert.equal((await run(["--dry-run"])).json.action, "would-commit");
+  assert.deepEqual(reindexed(), [], "a dry run has no version to index");
+
+  assert.equal((await run([])).json.action, "committed");
+  assert.deepEqual(reindexed(), ["update -c lineage", "embed -c lineage"]);
+
+  writeFileSync(join(dir, "impl.sh"), "echo 42\n# padding padding padding padding padding\n");
+  assert.equal((await run([])).json.action, "refused");
+  assert.equal(reindexed().length, 2, "a refusal writes no lineage file");
+
+  writeFileSync(join(dir, "impl.sh"), "echo 42\n# padding\n");
+  assert.equal((await run(["--no-record"])).json.action, "committed");
+  assert.equal(reindexed().length, 2, "--no-record skips it, as it skips memory");
+
+  installed = false;
+  writeFileSync(join(dir, "impl.sh"), "echo 42\n");
+  const v3 = await run([]);
+  assert.equal(v3.json.action, "committed");
+  assert.equal(reindexed().length, 2, "no qmd, no reindex");
+  assert.ok(!v3.json.warnings.some((w) => /qmd/.test(w)), "and no qmd warning on a good commit");
+});
+
+test("a slow qmd embed is bounded and never fails the commit (#14)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, ".qmd"));
+  writeFileSync(join(dir, QMD_CONFIG), "collections:\n  lineage:\n    path: x\n");
+  writeFileSync(join(dir, ".git/info/exclude"), ".qmd/\n");
+  const limits: number[] = [];
+  const runner: Runner = (cmd, args, opts) => {
+    if (cmd !== QMD) return spawnRunner(cmd, args, opts);
+    if (args[0] === "update" || args[0] === "embed") limits.push(opts.timeoutMs ?? 0);
+    const timedOut = args[0] === "embed";
+    return Promise.resolve({ code: timedOut ? -1 : 0, stdout: "qmd 2.8.3\n", stderr: "", timedOut, spawnError: null });
+  };
+  const io = bufferIo();
+  assert.equal(await commitCommand(["--cwd", dir, "--json"], io, runner, clock), 0);
+  const out = JSON.parse(io.stdout) as { action: string; warnings: string[] };
+  assert.equal(out.action, "committed");
+  assert.deepEqual(limits, [COMMIT_REINDEX_TIMEOUT_MS, COMMIT_REINDEX_TIMEOUT_MS]);
+  assert.ok(out.warnings.some((w) => /qmd embed failed \(timed out\)/.test(w)));
+  assert.ok(out.warnings.some((w) => /avo know reindex/.test(w)));
 });
 
 test("--dry-run reports the decision and leaves the repository untouched", async (t) => {

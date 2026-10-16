@@ -1,13 +1,14 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
-import { loadConfig, type AvoConfig } from "./config.ts";
+import { LINEAGE_DIR, loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
+import { reindex, resolveKnowledge } from "./knowledge.ts";
 import { MEMORY_PATH, remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
 import { runScore, spawnRunner, type Attempt, type RunResult, type Runner, type ScoreOptions } from "./score.ts";
 
-/** Rendered, human- and qmd-readable record of each committed version. */
-export const LINEAGE_DIR = "lineage";
+// Lives in config.ts; knowledge.ts imports it.
+export { LINEAGE_DIR };
 /**
  * Trajectory, not population. Written *by* the harness during a variation step, so they must never
  * enter the lineage: committing them puts the log of how a version was reached inside it, and leaves
@@ -620,6 +621,18 @@ export async function recordDecisionMemory(
   return [...backend.warnings, ...w.warnings, ...(w.error === null ? [] : [w.error])];
 }
 
+/** Cold qmd embed must not block commits. */
+export const COMMIT_REINDEX_TIMEOUT_MS = 60_000;
+
+/** Puts a new lineage file into qmd. */
+export async function indexNewVersion(opts: CommitOptions, d: CommitDecision, runner: Runner): Promise<string[]> {
+  if (!opts.record || opts.dryRun || d.action !== "committed") return [];
+  // Without qmd, the local scan reads live.
+  if ((await resolveKnowledge(runner, opts.cwd)).kind !== "qmd") return [];
+  const { warnings } = await reindex(runner, opts.cwd, "lineage", COMMIT_REINDEX_TIMEOUT_MS);
+  return warnings.length === 0 ? [] : [...warnings, "run 'avo know reindex' to finish the index"];
+}
+
 /** Exit codes mirror `avo score`: 0 committed or no-op, 1 refused, 2 harness error. */
 export async function commitCommand(
   argv: readonly string[],
@@ -634,6 +647,7 @@ export async function commitCommand(
   }
   const decision = await decideCommit(parsed, runner, now);
   decision.warnings.push(...(await recordDecisionMemory(parsed, decision, runner, now)));
+  decision.warnings.push(...(await indexNewVersion(parsed, decision, runner)));
   io.out(parsed.json ? `${JSON.stringify(decision)}\n` : renderDecision(decision));
   if (decision.errors.length > 0) return 2;
   return decision.action === "refused" ? 1 : 0;
