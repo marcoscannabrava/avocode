@@ -247,7 +247,8 @@ resumed from v4 rather than re-materialized" (`PLAN.md:558`).
 
 `avo run --resume <run-id>` (`resumeRun` in `run.ts`, #27) adds the loop state on top. It keeps the
 run id, the budget and the iteration count. It gives the next turn the last outcome and directive.
-It refuses a finished run (`finished_at` set). It checks the guards again. It refuses when the
+It refuses a finished run (`finished_at` set), and a run whose recorded pid is still alive on this
+host. It checks the guards again. It refuses when the
 manifest's `head` is not an ancestor of HEAD, because then the run's versions are not in the history
 the agent reads. A HEAD that only moved forward gives a warning. `--list` shows each run and the
 resume command for unfinished ones. `--clean <id|all>` removes run directories that hold a valid

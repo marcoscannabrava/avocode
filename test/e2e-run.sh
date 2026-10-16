@@ -279,6 +279,12 @@ make_repo "$rs"
 avo run --cwd "$rs" --agent stub --prompt "make kernel.txt longer, paced" --max-iters 6 >/dev/null 2>&1 &
 loop_pid=$!
 sleep 3
+live="$(find "$rs/.avo/runs" -name manifest.json | head -1)"
+live_id="$(basename "$(dirname "$live")")"
+out="$(avo run --cwd "$rs" --resume "$live_id" 2>&1)"; code=$?
+if [[ $code == 1 ]] && printf '%s' "$out" | grep -q 'still running'; then ok "a live run is not resumed"; else bad "a live run resumed (exit $code): $out"; fi
+avo run --cwd "$rs" --list | grep -q "$live_id.*running (pid"
+yes_no $? "--list marks the live run as running" "--list does not see the live run"
 kill -9 "$loop_pid" 2>/dev/null
 # tsx runs node as a child; kill that too.
 pkill -9 -f -- "--cwd $rs" 2>/dev/null

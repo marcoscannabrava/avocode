@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
   readRunManifest,
   renderRun,
   runCommand,
+  runIsLive,
   turnPrompt,
   type Iteration,
   type RunReport,
@@ -663,18 +664,34 @@ test("--resume, --list and --clean are modes, and take no prompt", () => {
   assert.ok("error" in parseRunArgs(["--resume", "abc", "--prompt", "go"]), "the manifest holds the prompt");
   assert.ok("error" in parseRunArgs(["--resume", "abc", "--list"]), "one mode at a time");
   assert.ok("error" in parseRunArgs(["--resume", "abc", "--dry-run"]));
+  assert.match(
+    (parseRunArgs(["--resume", "abc", "--max-iters", "9"]) as { error: string }).error,
+    /--resume does not take --max-iters/,
+    "the manifest holds the budget; a flag is never ignored",
+  );
+  assert.ok("error" in parseRunArgs(["--clean", "all", "--agent", "pi"]));
+  assert.ok(!("error" in parseRunArgs(["--resume", "abc"], { AVO_AGENT: "pi" })), "the env is no flag");
   assert.ok("error" in parseRunArgs(["--clean"]), "--clean needs a target");
 });
 
+/** A pid that has exited. */
+const deadPid = (): number => spawnSync("true").pid as number;
+
 /** A run killed after `done` iterations of `max`. */
-async function killedRun(f: Fixture, done: number, max: number): Promise<string> {
+async function killedRun(f: Fixture, done: number, max: number, pid = deadPid()): Promise<string> {
   const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", String(done)]);
   const m = readRunManifest(f.dir, json.run_id) as RunReport;
   writeFileSync(
     join(f.dir, RUNS_DIR, json.run_id, RUN_MANIFEST),
-    JSON.stringify({ ...m, max_iters: max, finished_at: null, stop_reason: "" }),
+    JSON.stringify({ ...m, max_iters: max, finished_at: null, stop_reason: "", pid }),
   );
   return json.run_id;
+}
+
+/** A live process whose cmdline looks like avo. */
+function fakeLoop(): { pid: number; stop: () => void } {
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", "main.ts"], { stdio: "ignore" });
+  return { pid: child.pid as number, stop: () => child.kill("SIGKILL") };
 }
 
 async function resume(f: Fixture, id: string): Promise<{ code: number; out: string; err: string }> {
@@ -770,4 +787,56 @@ test("--list names each run and how to resume an unfinished one; --clean removes
   const e = bufferIo();
   await runCommand(["--list", "--cwd", f.dir], e);
   assert.match(e.stdout, /no runs in/);
+});
+
+test("a run that is still alive is neither resumed nor cleaned", async () => {
+  const f = fixture("runlive");
+  const loop = fakeLoop();
+  try {
+    const id = await killedRun(f, 1, 3, loop.pid);
+    const m = readRunManifest(f.dir, id) as RunReport;
+    assert.equal(m.host, hostname(), "a new run records where it runs");
+    assert.ok(runIsLive(m));
+    const r = await resume(f, id);
+    assert.equal(r.code, 1);
+    assert.match(r.err, new RegExp(`still running \\(pid ${loop.pid}\\)`));
+    assert.equal((readRunManifest(f.dir, id) as RunReport).iterations.length, 1, "a refusal changes nothing");
+
+    const l = bufferIo();
+    await runCommand(["--list", "--cwd", f.dir], l);
+    assert.match(l.stdout, new RegExp(`running \\(pid ${loop.pid}\\)`));
+    const c = bufferIo();
+    assert.equal(await runCommand(["--clean", "all", "--cwd", f.dir], c), 2);
+    assert.match(c.stderr, /still running/);
+    assert.ok(existsSync(join(f.dir, RUNS_DIR, id)), "a live run keeps its directory");
+  } finally {
+    loop.stop();
+  }
+});
+
+test("a dead pid, a reused pid, another host or no pid is not a live run", () => {
+  const base = { finished_at: null, host: hostname() } as unknown as RunReport;
+  assert.equal(runIsLive({ ...base, pid: deadPid() }), false);
+  assert.equal(runIsLive({ ...base, host: "elsewhere", pid: process.pid }), false);
+  assert.equal(runIsLive({ ...base }), false, "a manifest from before #27");
+  if (existsSync("/proc/self/cmdline")) {
+    const other = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      assert.equal(runIsLive({ ...base, pid: other.pid as number }), false, "a reused pid is not avo");
+    } finally {
+      other.kill("SIGKILL");
+    }
+  }
+});
+
+test("--resume and --clean read a run id, never a path", async () => {
+  const f = fixture("runid");
+  const id = await killedRun(f, 1, 2);
+  for (const bad of ["..", "../x", `${id}/..`, "/tmp"]) {
+    assert.match((await resume(f, bad)).err, /is not a run id/, bad);
+  }
+  // A copied directory must not write back under its old id.
+  mkdirSync(join(f.dir, RUNS_DIR, "copy"));
+  writeFileSync(join(f.dir, RUNS_DIR, "copy", RUN_MANIFEST), readFileSync(join(f.dir, RUNS_DIR, id, RUN_MANIFEST)));
+  assert.ok("error" in readRunManifest(f.dir, "copy"));
 });

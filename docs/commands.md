@@ -365,10 +365,15 @@ gets the last outcome and the last directive, as if the loop had not stopped. Ru
   resume refuses (exit 1).
 - A turn that was killed is not in the manifest. Its changes, if any, stay in the tree, and the next
   turn's `avo commit` scores them.
-- Do not resume a run that is still alive. Two loops on one tree compete.
+- The manifest records the pid and host of the loop. A resume refuses a run whose loop is still
+  alive on this host (exit 1), because two loops on one tree compete. `--list` shows such a run as
+  `running`. On Linux, a pid that the system gave to a different program does not count as alive.
+- `--resume` takes only `--json` and `--cwd`. The manifest holds the prompt, agent and budget, so
+  a flag such as `--max-iters` is an error, not a silent no-op.
 
 **`--clean` removes run directories.** It removes only a directory that holds a valid run manifest,
-so a bad id cannot delete other files. `all` removes every run, unfinished ones too.
+so a bad id cannot delete other files. An id is a name, never a path: `..` or `a/b` is refused.
+`all` removes every run, unfinished ones too, but not a run that is still alive.
 
 `avo run` carries `avo fan`'s four guards on the same budget (`AVO_FAN_DEPTH`, `AVO_FAN_LEVEL`,
 `AVO_FAN_CHAIN`), because a turn is itself an agent that can call `avo run` — a loop inside a loop is

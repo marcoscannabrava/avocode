@@ -9,6 +9,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import {
   capOutput,
@@ -147,6 +148,9 @@ export interface RunReport {
   head: string;
   started_at: string;
   finished_at: string | null;
+  /** The loop's process; absent in old manifests. */
+  pid?: number;
+  host?: string;
   thresholds: { stall: number; thrash: number };
   iterations: Iteration[];
   /** Version numbers this run committed, in order. The run's actual output. */
@@ -189,6 +193,20 @@ export interface RunOptions {
   thrash: number | null;
 }
 
+/** Flags that only shape a new run. */
+const NEW_RUN_FLAGS = new Set([
+  "--prompt",
+  "--prompt-file",
+  "--agent",
+  "--model",
+  "-n",
+  "--max-iters",
+  "--timeout",
+  "--stall",
+  "--thrash",
+  "--dry-run",
+]);
+
 export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): RunOptions | { error: string } {
   const opts: RunOptions = {
     mode: "run",
@@ -219,8 +237,11 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     return null;
   };
 
+  let newRunFlag: string | null = null;
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
+    if (NEW_RUN_FLAGS.has(a)) newRunFlag ??= a;
     if (a === "--json") opts.json = true;
     else if (a === "--dry-run") opts.dryRun = true;
     else if (a === "--list") {
@@ -285,9 +306,8 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
   }
 
   if (opts.mode !== "run") {
-    // The manifest holds the prompt.
-    if (opts.prompt !== null || opts.promptFile !== null) return { error: `avo run: --${opts.mode} takes no prompt` };
-    if (opts.dryRun) return { error: "avo run: --dry-run only plans a new run" };
+    // The manifest holds these; never ignore one.
+    if (newRunFlag !== null) return { error: `avo run: --${opts.mode} does not take ${newRunFlag}` };
     return opts;
   }
   if (opts.prompt === null && opts.promptFile === null) {
@@ -384,10 +404,16 @@ export function writeRunManifest(cwd: string, report: RunReport): void {
   }
 }
 
+/** The id is a name, never a path. */
+const RUN_ID = /^\w[\w.-]*$/;
+
 export function readRunManifest(cwd: string, runId: string): RunReport | { error: string } {
+  if (!RUN_ID.test(runId)) return { error: `'${runId}' is not a run id` };
   try {
     const m = JSON.parse(readFileSync(join(runDir(cwd, runId), RUN_MANIFEST), "utf8")) as RunReport;
-    if (m.version !== 1 || !Array.isArray(m.iterations)) return { error: `${runId}'s manifest is not a v1 run manifest` };
+    if (m.version !== 1 || !Array.isArray(m.iterations) || m.run_id !== runId) {
+      return { error: `${runId}'s manifest is not a v1 run manifest` };
+    }
     return m;
   } catch {
     return { error: `no run '${runId}' in ${RUNS_DIR}` };
@@ -400,6 +426,25 @@ function uniqueRunId(cwd: string, now: Date, sha: string): string {
   let id = base;
   for (let k = 2; existsSync(runDir(cwd, id)); k++) id = `${base}-${k}`;
   return id;
+}
+
+/**
+ * True while the loop that owns `m` still runs here: same host, the pid answers, and on Linux
+ * that pid is still avo, not a reuse. A manifest with no pid, from before #27, is never live.
+ */
+export function runIsLive(m: RunReport): boolean {
+  if (m.finished_at !== null || m.pid === undefined || m.host !== hostname()) return false;
+  try {
+    process.kill(m.pid, 0);
+  } catch (e) {
+    // EPERM: alive, but not ours to signal.
+    if ((e as NodeJS.ErrnoException).code !== "EPERM") return false;
+  }
+  try {
+    return readFileSync(`/proc/${m.pid}/cmdline`, "utf8").includes("main.ts");
+  } catch {
+    return true; // No /proc: trust the pid.
+  }
 }
 
 export function listRuns(cwd: string): RunReport[] {
@@ -570,6 +615,8 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     head: baseline,
     started_at: now().toISOString(),
     finished_at: null,
+    pid: process.pid,
+    host: hostname(),
     thresholds,
     iterations: [],
     committed: [],
@@ -627,6 +674,7 @@ export async function resumeRun(opts: RunOptions, deps: RunDeps): Promise<RunRep
   if (manifest.finished_at !== null) {
     return { error: `run '${manifest.run_id}' already finished (${manifest.stopped})` };
   }
+  if (runIsLive(manifest)) return { error: `run '${manifest.run_id}' is still running (pid ${manifest.pid})` };
 
   // A resume spawns agents, so the guards apply unchanged.
   const guards = checkGuards(env, manifest.prompt_sha);
@@ -649,6 +697,8 @@ export async function resumeRun(opts: RunOptions, deps: RunDeps): Promise<RunRep
   manifest.warnings.push(...guards.warnings, ...loaded.warnings, `resumed at iteration ${next} of ${manifest.max_iters}`);
   manifest.stopped = "max-iters";
   manifest.stop_reason = "";
+  manifest.pid = process.pid;
+  manifest.host = hostname();
   const resumed: RunOptions = {
     ...opts,
     agent: manifest.agent,
@@ -674,7 +724,8 @@ export function cleanRuns(cwd: string, target: string): RunCleanResult {
   const ids = target === "all" ? listRuns(cwd).map((m) => m.run_id) : [target];
   const out: RunCleanResult = { ok: true, removed: [], errors: [] };
   for (const id of ids) {
-    const m = /^\w[\w.-]*$/.test(id) ? readRunManifest(cwd, id) : { error: `'${id}' is not a run id` };
+    const read = readRunManifest(cwd, id);
+    const m = "error" in read || !runIsLive(read) ? read : { error: `run '${id}' is still running (pid ${read.pid})` };
     if ("error" in m) {
       out.errors.push(m.error);
       out.ok = false;
@@ -701,13 +752,18 @@ const listEntry = (r: RunReport) => ({
   max_iters: r.max_iters,
   committed: r.committed,
   stopped: r.finished_at === null ? null : r.stopped,
+  running: runIsLive(r),
 });
 
 /** One line per run; the unfinished ones say how to resume. */
 export function renderRunList(runs: readonly RunReport[]): string {
   if (runs.length === 0) return `no runs in ${RUNS_DIR}\n`;
   const lines = runs.map((r) => {
-    const state = r.finished_at === null ? `unfinished — 'avo run --resume ${r.run_id}'` : `stopped: ${r.stopped}`;
+    const state = runIsLive(r)
+      ? `running (pid ${r.pid})`
+      : r.finished_at === null
+        ? `unfinished — 'avo run --resume ${r.run_id}'`
+        : `stopped: ${r.stopped}`;
     const committed = r.committed.length === 0 ? "nothing committed" : r.committed.map((v) => `v${v}`).join(", ");
     return `${r.run_id}  ${r.agent.padEnd(8)} ${r.iterations.length}/${r.max_iters} iteration(s), ${committed}, ${state}`;
   });
