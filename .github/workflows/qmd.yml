@@ -36,7 +36,8 @@ jobs:
         with:
           path: ~/.cache/qmd/models
           key: qmd-models-all-${{ env.QMD_VERSION }}
-      - run: ./test/e2e-know.sh
+      # qmd turns off its LLM under CI.
+      - run: env -u CI ./test/e2e-know.sh
       # A SKIP means qmd was not used.
       - name: the qmd path ran
         run: |
@@ -45,6 +46,7 @@ jobs:
       # The e2e accepts a fallback; this does not.
       - name: hybrid qmd query answers
         run: |
+          unset CI
           d="$(mktemp -d)"
           git -C "$d" init -q
           printf '# Registers\n\nSpills hurt occupancy.\n' > "$d/regs.md"
