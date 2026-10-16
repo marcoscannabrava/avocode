@@ -302,8 +302,8 @@ export async function listMemories(
 ): Promise<{ memories: Memory[]; warnings: string[] }> {
   if (backend.kind === "beads") {
     let read = await readBdMemories(runner, cwd);
-    // Cold bd can read empty; retry once.
-    const retried = read.memories === null || read.memories.length === 0;
+    // Retry empty reads once; failures already warn.
+    const retried = read.memories !== null && read.memories.length === 0;
     if (retried) read = await readBdMemories(runner, cwd);
     const { r, memories } = read;
     if (memories !== null) {

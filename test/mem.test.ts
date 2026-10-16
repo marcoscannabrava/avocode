@@ -321,6 +321,19 @@ test("listMemories reads bd once when the first read has memories", async () => 
   }
 });
 
+test("listMemories does not retry a failed bd read, so a hang costs one timeout", async () => {
+  const cwd = scratch();
+  try {
+    const runner = stub({ ...BD_READY, "bd --json memories": { code: 1, stderr: "database is locked" } });
+    const backend = await resolveBackend(runner, cwd);
+    const { warnings } = await listMemories(runner, cwd, backend);
+    assert.match(warnings[0] ?? "", /bd memories failed \(database is locked\)/);
+    assert.equal(runner.calls.filter((c) => c.args.join(" ") === "--json memories").length, 1);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 // ------------------------------------------------------------ the mem command
 
 test("avo mem add then avo mem shows the insight (the slice's acceptance case)", async () => {
