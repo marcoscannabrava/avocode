@@ -269,6 +269,58 @@ test("listMemories reads bd, then adds anything the file store holds from a bd-l
   }
 });
 
+/** bd answers memories reads from a queue. */
+function coldBd(reads: string[]): Runner & { calls: Call[] } {
+  const base = stub(BD_READY);
+  const runner = (cmd: string, args: readonly string[], opts: RunOpts): Promise<RunResult> => {
+    if (args.join(" ") !== "--json memories") return base(cmd, args, opts);
+    base.calls.push({ cmd, args: [...args] });
+    const stdout = reads.shift() ?? "{}";
+    return Promise.resolve({ code: 0, stdout, stderr: "", timedOut: false, spawnError: null });
+  };
+  return Object.assign(runner, { calls: base.calls });
+}
+
+test("listMemories retries an empty bd read once and warns when the retry finds memories (#10)", async () => {
+  const cwd = scratch();
+  try {
+    const runner = coldBd(["{}", JSON.stringify({ k: "learned online" })]);
+    const backend = await resolveBackend(runner, cwd);
+    const { memories, warnings } = await listMemories(runner, cwd, backend);
+    assert.deepEqual(
+      memories.map((m) => m.text),
+      ["learned online"],
+    );
+    assert.match(warnings[0] ?? "", /read empty once/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("listMemories reads a store that stays empty as empty, without a warning", async () => {
+  const cwd = scratch();
+  try {
+    const runner = coldBd(["{}", JSON.stringify({ schema_version: 1 })]);
+    const backend = await resolveBackend(runner, cwd);
+    assert.deepEqual(await listMemories(runner, cwd, backend), { memories: [], warnings: [] });
+    assert.equal(runner.calls.filter((c) => c.args.join(" ") === "--json memories").length, 2);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("listMemories reads bd once when the first read has memories", async () => {
+  const cwd = scratch();
+  try {
+    const runner = coldBd([JSON.stringify({ k: "learned online" })]);
+    const backend = await resolveBackend(runner, cwd);
+    assert.equal((await listMemories(runner, cwd, backend)).warnings.length, 0);
+    assert.equal(runner.calls.filter((c) => c.args.join(" ") === "--json memories").length, 1);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 // ------------------------------------------------------------ the mem command
 
 test("avo mem add then avo mem shows the insight (the slice's acceptance case)", async () => {

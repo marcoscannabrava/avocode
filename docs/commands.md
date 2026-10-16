@@ -134,7 +134,9 @@ Two backends, one shape. With `bd` ([beads](https://www.npmjs.com/package/@beads
 insights go to `bd remember`, versions become beads with deterministic ids (`<prefix>-v<N>`) linked
 by `bd dep add`, and dead ends become insight beads. Without it — the common case — everything lands
 in `lineage/memory.jsonl` with one warning. `avo mem --json` looks the same either way: an agent must
-not have to know whether `bd` was installed.
+not have to know whether `bd` was installed. When a `bd` read of memories is empty, avo reads again
+one time. A cold `bd` start can give an empty result one time. If the second read finds memories,
+avo shows them with a warning.
 
 Memory is a cache of *why*, never the source of truth. A failed memory write is a warning on an
 otherwise good commit, and avo's own writes (`lineage/memory.jsonl`, `.avo/.gitignore`) never count
