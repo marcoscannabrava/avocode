@@ -1,4 +1,4 @@
-# avo lint-gate e2e — 2026-10-16T21:57:04Z
+# avo lint-gate e2e — 2026-10-16T23:53:03Z
 # version: 0.11.0
 
 ## 1. the gate is green on this repo, and says nothing about skipping
@@ -14,6 +14,13 @@ PASS  the finding is reported, not just counted
 PASS  an unrunnable shellcheck exits non-zero (exit 1)
 PASS  it says why it failed
 PASS  it says how to fix it
+
+## 3b. a hung shellcheck is a FAIL, not a wait (#53)
+PASS  a probe that hangs answers no (exit 1 in 2s)
+PASS  it fails as no runner
+PASS  a run that hangs is red (exit 124 in 2s)
+PASS  it says the run timed out
+PASS  just e2e bounds every suite
 
 ## 4. just lint propagates the gate rather than swallowing it
 PASS  the lint recipe calls the gate
@@ -33,4 +40,4 @@ PASS  oxlint has no warnings on this repo
 PASS  the lint recipe denies oxlint warnings
 PASS  a single warning fails oxlint (exit 1)
 
-# 20 checks passed, 0 failed
+# 25 checks passed, 0 failed
