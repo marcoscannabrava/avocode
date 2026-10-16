@@ -1,8 +1,8 @@
-# avo S7b e2e — 2026-10-16T23:28:26Z
+# avo S7b e2e — 2026-10-16T23:54:46Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 
 ## 0. fixture
-PASS  repo at HEAD 3ea97462, a stub agent and an f that counts lines
+PASS  repo at HEAD 3c26c7af, a stub agent and an f that counts lines
 
 ## 1. --dry-run
 PASS  --dry-run exits 0
@@ -47,7 +47,7 @@ PASS  a thrashing agent is told to re-diagnose, not to explore
 PASS  exactly one directive: a directive never quotes the previous directive
 PASS  and it never cites an intervention as if it were knowledge
 PASS  an unexplored doc in K is still cited on the LAST turn, not buried after the first
-PASS  the injected directive is recorded (avo-intervention-eeaf92d7)
+PASS  the injected directive is recorded (avo-intervention-f1488fab)
 PASS  recorded as an intervention, not as an insight
 PASS  avo mem lists it, so a finished run can be audited
 PASS  but it does not prime a future session with a stale directive
@@ -86,8 +86,8 @@ PASS  one JSON object, every field typed as documented
 PASS  it is a single JSON object on stdout
 
 ## 9. #8 measured: readLineage runs once per iteration now
-      2000 commits: the git log readLineage runs took 5ms
-PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 5ms
+      2000 commits: the git log readLineage runs took 6ms
+PASS  #8 is not a problem for the inner loop: an agent turn costs seconds to minutes, this costs 6ms
 
 ## 10. #42: an agent that runs avo commit itself
 PASS  every iteration decides noop — the tree really was clean
@@ -120,11 +120,22 @@ PASS  and the manifest says the version has no rationale
 PASS  so does the rendering an operator reads
 PASS  a dead end with no rationale records none, rather than the last event on the wire
 
-## 13. #41: an agent finds avo with no install step
+## 13. #28: cost, token and wall budgets
+PASS  a budget stop exits 0
+PASS  --max-cost 0.5 stops after two $0.25 turns
+PASS  it stops before the next turn, and says which
+PASS  --max-tokens 100000 stops after two 55,924-token turns
+PASS  --max-wall 1 stops after one one-second turn
+PASS  no usage reported: both budgets marked unenforced
+PASS  and it warns once, not once per turn
+PASS  the manifest on disk records it too
+PASS  --dry-run shows the budget
+
+## 14. #41: an agent finds avo with no install step
 PASS  the stripped PATH has no avo
 PASS  avo run puts its own bin/avo first on the agent's PATH
 PASS  the agent's 'avo best --json' ran
 PASS  avo started through a symlink puts the checkout's bin/ first
 
 ## summary
-all checks passed (96 of them)
+all checks passed (105 of them)

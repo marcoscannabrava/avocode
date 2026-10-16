@@ -95,7 +95,9 @@ avo lineage --cwd <target>                   # P_t, the versions that survived
 touch <target>/.avo/STOP                     # stop the loop cleanly after this turn
 ```
 
-There is no `--max-cost` yet (#28). The cost knobs are `--max-iters`, `--timeout`, and `.avo/STOP`.
+To limit the cost, use `--max-cost <usd>`, `--max-tokens <n>` and `--max-wall <s>` (#28), together
+with `--max-iters`, `--timeout` and `.avo/STOP`. A budget stops the loop before the next turn, not
+during a turn.
 
 ## Troubleshooting
 

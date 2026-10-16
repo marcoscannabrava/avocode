@@ -1,0 +1,61 @@
+name: qmd
+
+# Runs the know e2e with real qmd.
+on:
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - src/knowledge.ts
+      - src/init.ts
+      - test/e2e-know.sh
+      - .github/workflows/qmd.yml
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-with-qmd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Matches #15 and #16.
+      QMD_VERSION: "2.8.3"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm install -g "@tobilu/qmd@$QMD_VERSION"
+      - run: qmd --version
+      # Saved after the hybrid query step.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/qmd/models
+          key: qmd-models-all-${{ env.QMD_VERSION }}
+      # qmd turns off its LLM under CI.
+      - run: env -u CI ./test/e2e-know.sh
+      # A SKIP means qmd was not used.
+      - name: the qmd path ran
+        run: |
+          grep -q '^# qmd on PATH: yes' evidence/s4-e2e.txt
+          if grep -q '^SKIP' evidence/s4-e2e.txt; then exit 1; fi
+      # The e2e accepts a fallback; this does not.
+      - name: hybrid qmd query answers
+        run: |
+          unset CI
+          d="$(mktemp -d)"
+          git -C "$d" init -q
+          printf '# Registers\n\nSpills hurt occupancy.\n' > "$d/regs.md"
+          ./bin/avo know init --cwd "$d" --json > /dev/null
+          ./bin/avo know add "$d/regs.md" --cwd "$d" --json
+          ./bin/avo know query "register occupancy" --cwd "$d" --json | tee q.json
+          jq -e '.backend == "qmd" and (.hits | length) > 0' q.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: s4-e2e-with-qmd
+          path: evidence/s4-e2e.txt
