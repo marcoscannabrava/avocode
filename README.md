@@ -154,6 +154,7 @@ avo mem            # what the loop learned, including the dead ends
 ```sh
 avo run --prompt-file task.md --max-iters 20 --dry-run   # what it WOULD do; spawns nothing
 avo run --prompt-file task.md --max-iters 20             # for real
+avo run --prompt-file task.md --max-cost 5 --max-wall 3600  # stop at $5 or one hour
 touch .avo/STOP                                          # the brake, from anywhere
 ```
 

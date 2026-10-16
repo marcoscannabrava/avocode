@@ -30,7 +30,7 @@ commands:
   know [...]        K: 'init', 'query "<q>"', 'add <url|path>', 'search "<q>"', 'reindex'
   supervise [...]   detect a stall or a thrash and emit a steering directive that cites P_t and K
   version           print the version
-  help              print this message
+  help [<command>]  print this message, or one command's options (also: <command> --help)
 
 avo score:
   --json            emit the normalized attempt as one JSON line
@@ -64,7 +64,7 @@ avo know:
   -n <N>            max hits (default 5); -c <name> one collection; --min-score <s>
   add <url|path>    write knowledge/<slug>.md with provenance frontmatter, then qmd embed
   --name <slug>     name the doc; --force replace a differing one; --no-embed skip qmd embed
-  reindex           re-scan the collections into qmd; needed after files land in lineage/
+  reindex           re-scan the collections into qmd (avo commit does it for lineage/)
   search "<q>"      web search; --ingest also writes the pages into K (firecrawl only)
   --backend <b>     firecrawl (FIRECRAWL_API_KEY) | searxng (SEARXNG_URL) | ddgs (keyless)
   --json --cwd <dir> --timeout <s>
@@ -114,18 +114,58 @@ avo commit:
   --json --parallel --timeout <s> --no-record --cwd <dir>   as for avo score
   exit codes        0 = committed or no-op, 1 = refused, 2 = harness error
 
+avo lineage:
+  show <n>          one version, with its rationale
+  diff <a> <b>      the score delta and the patch between two versions
+  --json --cwd <dir>
+  exit codes        0 = ok, 2 = harness error
+
+avo best:
+  --json --cwd <dir>
+  exit codes        0 = a best version exists, 1 = no version yet, 2 = harness error
+
+avo doctor:
+  --json            the report as one JSON line
+  exit codes        0 = ready, 1 = a required dependency is missing, 2 = bad option
+
 every command supports --json for agent consumption (invariant 3).
 `;
 
+/** One command's usage stanza, or null. */
+export function commandUsage(cmd: string): string | null {
+  const start = USAGE.indexOf(`\navo ${cmd}:\n`);
+  if (start < 0) return null;
+  const end = USAGE.indexOf("\n\n", start + 1);
+  return `${USAGE.slice(start + 1, end)}\n`;
+}
+
 export async function main(argv: readonly string[], io: Io = processIo): Promise<number> {
   const [cmd, ...rest] = argv;
+  // Help wins before any option parser.
+  const stanza = cmd === undefined ? null : commandUsage(cmd);
+  if (stanza !== null && rest.some((a) => a === "--help" || a === "-h")) {
+    io.out(stanza);
+    return 0;
+  }
   switch (cmd) {
     case undefined:
-    case "help":
     case "-h":
     case "--help":
       io.out(USAGE);
       return 0;
+    case "help": {
+      if (rest[0] === undefined) {
+        io.out(USAGE);
+        return 0;
+      }
+      const topic = commandUsage(rest[0]);
+      if (topic === null) {
+        io.err(`avo: no help for '${rest[0]}'\n\n${USAGE}`);
+        return 2;
+      }
+      io.out(topic);
+      return 0;
+    }
     case "version":
     case "-v":
     case "--version":

@@ -5,6 +5,9 @@ Every `avo` subcommand, its guarantees, and the reasoning behind the parts that 
 **Two rules hold everywhere:** every subcommand supports `--json`, and a missing optional dependency
 degrades to a named fallback with one warning instead of crashing.
 
+`avo <command> --help` (or `-h`, or `avo help <command>`) prints the options of that command and
+exits `0`.
+
 | Command | One line |
 | --- | --- |
 | [`avo init`](#avo-init) | scaffold `.avo/`, `knowledge/`, `lineage/` in a repo |
@@ -155,7 +158,7 @@ avo know add ./notes/tuning.md         # -> knowledge/notes-tuning.md, with prov
 avo know add https://example.com/doc   # needs FIRECRAWL_API_KEY (free tier: 1000 credits/month)
 avo know query "register pressure"     # hybrid BM25 + vector + local rerank
 avo know query "..." --lexical         # BM25 only: no LLM expansion, no rerank, instant
-avo know reindex                       # after avo commit writes a new lineage/vNNN.md
+avo know reindex                       # re-scan both collections; avo commit does it for lineage/
 avo know search "blackwell occupancy"  # the web; --ingest pipes the pages straight into K
 ```
 
@@ -170,8 +173,10 @@ files and returns identical JSON — same keys, same `Hit` shape, and a `score` 
 Two qmd facts, verified against 2.8.3 rather than assumed:
 
 - `qmd embed` only vectorizes documents the index already knows about, so `avo know add` runs
-  `qmd update` first. A doc written straight into `lineage/` — what `avo commit` does — needs
-  `avo know reindex` before qmd can see it.
+  `qmd update` first. `avo commit` (and each commit in `avo run`) does the same for `lineage/` after
+  it writes a new version. This step is skipped when qmd is not available, and on `--dry-run` or
+  `--no-record`. A failed reindex is a warning; the commit stays. A file you put in `lineage/` by
+  hand still needs `avo know reindex`.
 - `.qmd/` is gitignored. `index.yml` records collection paths as *absolute* paths, so a committed
   index is wrong on every other machine, and `index.sqlite` is a multi-megabyte binary.
 
@@ -284,6 +289,7 @@ avo run --prompt-file task.md --max-iters 20
 avo run --prompt "make the tokenizer faster without changing its output" --max-iters 5 --json
 avo run --prompt-file task.md --dry-run      # the resolved plan and the first turn prompt; spawns nothing
 avo run --prompt-file task.md --stall 3 --thrash 2 --timeout 600 --agent claude --model opus
+avo run --prompt-file task.md --max-iters 50 --max-cost 5 --max-tokens 2000000 --max-wall 3600
 ```
 
 **Every iteration is a fresh process.** Nothing from the previous turn is in the agent's context, so
@@ -300,6 +306,7 @@ v3" from a run that ended days ago.
 | It stops when | Because |
 | --- | --- |
 | `--max-iters` is reached | the budget is the operator's, not the agent's |
+| a budget is crossed: `--max-cost <usd>`, `--max-tokens <n>` or `--max-wall <s>` | a turn count does not bound the bill. Stop reason `budget` (#28) |
 | `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is done |
 | 3 iterations in a row change nothing **and leave HEAD where it was** | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. The one stop condition steering cannot express |
 | the agent binary cannot be started | it will not start next iteration either; retrying nine more times is spinning |
@@ -325,6 +332,20 @@ idle ones (#42). A commit *without* the trailers moves HEAD but is not a version
   arithmetic we would have to keep in step with per-model rates. It is `null`, not `0`, when the
   agent reports none — nothing measured and nothing spent are different facts, and a cost budget has
   to refuse the first (#28).
+
+**Budgets stop the loop between turns, not during one.** Before each turn, `avo run` compares
+the run totals with each budget you set. When a total is at or past its budget, the loop stops
+with `stopped: "budget"`. A turn that has started always runs to its end, so the last turn can go
+past the budget. `--timeout` bounds that turn.
+
+- `--max-cost` uses `cost_usd`, the sum the agent reported.
+- `--max-tokens` uses all four token counts: `input + output + cache_read + cache_write`.
+- `--max-wall` uses the time since the run started.
+
+An agent that reports no usage cannot be held to a cost or token budget. When a turn reports no
+cost or no tokens, `avo run` gives one warning, and the manifest lists that budget in
+`budget.unenforced`. The loop does not stop for that reason. A budget you did not set is never
+listed. Wall time is always measured, so `--max-wall` is always enforced.
 
 Before this, a real six-iteration run reported **44 input tokens for a loop that sent 985,039**, and
 no cost: `cache_read_input_tokens` was dropped, and four turns lost their closing `result` event to

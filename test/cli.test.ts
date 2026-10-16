@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { main, USAGE } from "../src/cli.ts";
+import { commandUsage, main, USAGE } from "../src/cli.ts";
 import { bufferIo } from "../src/io.ts";
 import { VERSION } from "../src/version.ts";
 
@@ -77,4 +77,26 @@ test("every subcommand in the usage text is actually dispatched", async () => {
     assert.doesNotMatch(io.stderr, /unknown command/, `'${cmd}' is documented but not dispatched`);
   }
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("every subcommand answers --help and -h with its own stanza (#50)", async () => {
+  const block = USAGE.split("commands:\n")[1]?.split("\n\n")[0] ?? "";
+  const documented = [...block.matchAll(/^ {2}([a-z]+)/gm)].map((m) => m[1] as string);
+  const commands = documented.filter((c) => c !== "version" && c !== "help");
+  assert.ok(commands.length >= 12, `parsed ${commands.length} commands`);
+  for (const cmd of commands) {
+    for (const argv of [[cmd, "--help"], [cmd, "-h"], [cmd, "--json", "--help"], ["help", cmd]]) {
+      const io = bufferIo();
+      assert.equal(await main(argv, io), 0, `${argv.join(" ")} exit code; stderr=${io.stderr}`);
+      assert.ok(io.stdout.startsWith(`avo ${cmd}:\n`), `${argv.join(" ")} printed no '${cmd}:' stanza`);
+      assert.equal(io.stdout, commandUsage(cmd));
+      assert.equal(io.stderr, "");
+    }
+  }
+});
+
+test("avo help names an unknown topic and exits 2", async () => {
+  const io = bufferIo();
+  assert.equal(await main(["help", "frobnicate"], io), 2);
+  assert.match(io.stderr, /no help for 'frobnicate'/);
 });
