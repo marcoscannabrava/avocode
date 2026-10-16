@@ -8,6 +8,7 @@
  * *between*: every iteration is a fresh process, so the turn prompt is the only continuity.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -49,6 +50,8 @@ export const RUN_MANIFEST = "manifest.json";
 /** Stops the loop from outside — no process to find, and an agent can reach it. */
 export const STOP_FILE = ".avo/STOP";
 export const DEFAULT_MAX_ITERS = 10;
+/** Optional list of `f`'s files, one per line. */
+export const PROTECTED_LIST = ".avo/protected.txt";
 /**
  * Idle iterations before giving up. An unchanged tree records no attempt, so the stall detector
  * cannot see it — the one stop condition the supervisor cannot express.
@@ -123,7 +126,13 @@ export interface Iteration {
   warnings: string[];
 }
 
-export type StopReason = "max-iters" | "stop-file" | "no-progress" | "agent-unavailable" | "dry-run";
+export type StopReason =
+  | "max-iters"
+  | "stop-file"
+  | "no-progress"
+  | "agent-unavailable"
+  | "scorer-changed"
+  | "dry-run";
 
 /**
  * The whole run, and the on-disk manifest. One shape, not two: a manifest that can drift from
@@ -148,6 +157,8 @@ export interface RunReport {
   started_at: string;
   finished_at: string | null;
   thresholds: { stall: number; thrash: number };
+  /** sha256 of each `f` file at start (#38). */
+  scorer_hashes: Record<string, string | null>;
   iterations: Iteration[];
   /** Version numbers this run committed, in order. The run's actual output. */
   committed: number[];
@@ -331,6 +342,47 @@ export function turnPrompt(
   }
   if (directive !== null) lines.push("", directive.trimEnd());
   return `${lines.join("\n")}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// the scorer's own files
+// ---------------------------------------------------------------------------
+
+/** `.avo/score`, plus the protected list and its paths. */
+export function scorerPaths(cwd: string): string[] {
+  const paths = [SCORER_PATH];
+  let list: string;
+  try {
+    list = readFileSync(join(cwd, PROTECTED_LIST), "utf8");
+  } catch {
+    return paths;
+  }
+  paths.push(PROTECTED_LIST);
+  for (const raw of list.split("\n")) {
+    const line = raw.trim();
+    if (line !== "" && !line.startsWith("#")) paths.push(line);
+  }
+  return [...new Set(paths)];
+}
+
+/** sha256 per path; `null` when absent. */
+export function hashFiles(cwd: string, paths: readonly string[]): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const p of paths) {
+    try {
+      out[p] = createHash("sha256").update(readFileSync(join(cwd, p))).digest("hex");
+    } catch {
+      out[p] = null;
+    }
+  }
+  return out;
+}
+
+/** Start-time paths whose hash moved since. */
+export function scorerChanges(cwd: string, start: Record<string, string | null>): string[] {
+  // Start-time list: an edit cannot shrink it.
+  const now = hashFiles(cwd, Object.keys(start));
+  return Object.keys(start).filter((p) => now[p] !== start[p]);
 }
 
 // ---------------------------------------------------------------------------
@@ -541,6 +593,7 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     started_at: now().toISOString(),
     finished_at: null,
     thresholds,
+    scorer_hashes: hashFiles(opts.cwd, scorerPaths(opts.cwd)),
     iterations: [],
     committed: [],
     interventions: 0,
@@ -638,6 +691,18 @@ async function iterate(
       break;
     }
 
+    // An edited `f` scores nothing honestly (#38).
+    const changed = scorerChanges(opts.cwd, report.scorer_hashes);
+    if (changed.length > 0) {
+      it.head_after = await head(runner, opts.cwd);
+      report.head = it.head_after;
+      report.stopped = "scorer-changed";
+      report.stop_reason = `iteration ${iter} changed ${changed.join(", ")}; nothing was committed`;
+      report.errors.push(report.stop_reason);
+      writeRunManifest(opts.cwd, report);
+      break;
+    }
+
     // The only writer of a version (invariant 1), through the same `decideCommit` the command
     // calls, so the rule cannot differ. The agent's final message is the `--why`.
     const why = capOutput(turn.summary ?? "", WHY_CAP_CHARS, 40).text.trim();
@@ -722,6 +787,7 @@ export function renderPlan(r: RunReport): string {
     `  iterations   up to ${r.max_iters}`,
     `  timeout      ${r.timeout_s === 0 ? "none" : `${r.timeout_s}s per turn`}`,
     `  thresholds   stall ${r.thresholds.stall}, thrash ${r.thresholds.thrash}`,
+    `  scorer       ${Object.keys(r.scorer_hashes).length} file(s) hashed; a change stops the run`,
     `  baseline     ${r.baseline.slice(0, 8)}`,
     `  run dir      ${join(RUNS_DIR, r.run_id)} (not created)`,
     `  stop file    ${STOP_FILE} (${existsSync(join(r.cwd, STOP_FILE)) ? "present — a real run would stop at once" : "absent"})`,
@@ -735,7 +801,7 @@ export function renderPlan(r: RunReport): string {
     "  4. inject that directive into the next turn's prompt and record it as an intervention",
     "",
     `stops on: --max-iters ${r.max_iters}, ${STOP_FILE}, ${MAX_CONSECUTIVE_NOOPS} unchanged iterations in a row,`,
-    "          or an agent binary that cannot be started",
+    "          an agent binary that cannot be started, or a changed scorer",
     "",
     "turn prompt (iteration 1):",
     "",

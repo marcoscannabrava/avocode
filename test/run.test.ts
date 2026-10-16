@@ -15,11 +15,14 @@ import {
   RUN_MANIFEST,
   STOP_FILE,
   describeOutcome,
+  hashFiles,
   listRuns,
   parseRunArgs,
   readRunManifest,
   renderRun,
   runCommand,
+  scorerChanges,
+  scorerPaths,
   turnPrompt,
   type Iteration,
   type RunReport,
@@ -244,6 +247,17 @@ case "$prompt" in
   *noop*)  echo "I considered it and changed nothing"; exit 0 ;;
   *crash*) echo "boom" >&2; exit 3 ;;
   *slow*)  sleep 60; exit 0 ;;
+  # Edits f itself (#38).
+  *tamper*)
+    echo "line" >> kernel.txt
+    echo "# tuned" >> .avo/score
+    echo "I improved the scorer"
+    exit 0 ;;
+  *guarded*)
+    echo "line" >> kernel.txt
+    echo "edited" >> bench.txt
+    echo "I edited a protected file"
+    exit 0 ;;
   *selfcommit*)
     echo "own commit" >> kernel.txt
     git add -A >/dev/null 2>&1
@@ -509,6 +523,61 @@ test(".avo/STOP halts the loop before the next turn", async () => {
   assert.equal(f.git("log", "--format=%s").trim(), "baseline", "nothing was committed");
 });
 
+// --------------------------------------------- the scorer is fixed for a run (#38)
+
+test("the scorer's files are .avo/score plus the protected list and its paths", () => {
+  const f = fixture("runpaths");
+  assert.deepEqual(scorerPaths(f.dir), [".avo/score"], "no protected list: the scorer alone");
+  writeFileSync(join(f.dir, ".avo/protected.txt"), "# comment\n\nbench.txt\n.avo/score\n  data/x.txt  \n");
+  assert.deepEqual(scorerPaths(f.dir), [".avo/score", ".avo/protected.txt", "bench.txt", "data/x.txt"]);
+});
+
+test("a hash change, a new file and a deleted file all count as a change", () => {
+  const f = fixture("runhash");
+  writeFileSync(join(f.dir, "bench.txt"), "v1\n");
+  const start = hashFiles(f.dir, [".avo/score", "bench.txt", "absent.txt"]);
+  assert.match(start[".avo/score"] ?? "", /^[0-9a-f]{64}$/);
+  assert.equal(start["absent.txt"], null);
+  assert.deepEqual(scorerChanges(f.dir, start), []);
+  writeFileSync(join(f.dir, "bench.txt"), "v2\n");
+  writeFileSync(join(f.dir, "absent.txt"), "now here\n");
+  assert.deepEqual(scorerChanges(f.dir, start), ["bench.txt", "absent.txt"]);
+});
+
+test("the manifest records the scorer's hash at start", async () => {
+  const f = fixture("runhashman");
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "1"]);
+  assert.deepEqual(Object.keys(json.scorer_hashes), [".avo/score"]);
+  const m = readRunManifest(f.dir, json.run_id);
+  assert.ok(!("error" in m));
+  assert.deepEqual(m.scorer_hashes, json.scorer_hashes);
+});
+
+test("a turn that edits the scorer stops the run and commits nothing", async () => {
+  const f = fixture("runtamper");
+  const { code, json } = await run(f, ["--prompt", "tamper", "--max-iters", "5"]);
+  assert.equal(code, 1, "a tampered run is an error");
+  assert.equal(json.stopped, "scorer-changed");
+  assert.equal(json.iterations.length, 1, "it stops at the first turn");
+  assert.equal(json.iterations[0]?.decision, null, "avo commit never ran");
+  assert.match(json.stop_reason, /\.avo\/score/);
+  assert.deepEqual(json.committed, []);
+  assert.equal(f.git("log", "--format=%s").trim(), "baseline", "nothing was committed");
+  assert.equal(existsSync(join(f.dir, ".avo/attempts.jsonl")), false, "the edited f was never run");
+});
+
+test("a turn that edits a protected file stops the run too", async () => {
+  const f = fixture("runprotect");
+  writeFileSync(join(f.dir, "bench.txt"), "fixed\n");
+  writeFileSync(join(f.dir, ".avo/protected.txt"), "bench.txt\n");
+  f.git("add", "-A");
+  f.git("commit", "-qm", "protect bench.txt");
+  const { json } = await run(f, ["--prompt", "guarded", "--max-iters", "3"]);
+  assert.equal(json.stopped, "scorer-changed");
+  assert.match(json.stop_reason, /bench\.txt/);
+  assert.deepEqual(json.committed, []);
+});
+
 test("a turn that exceeds its timeout is killed and the loop carries on", async () => {
   const f = fixture("runslow");
   const { json } = await run(f, ["--prompt", "slow", "--max-iters", "1", "--timeout", "2"]);
@@ -624,6 +693,7 @@ test("a report with no iterations still renders", () => {
     started_at: "2026-08-24T00:00:00.000Z",
     finished_at: "2026-08-24T00:00:01.000Z",
     thresholds: { stall: 5, thrash: 3 },
+    scorer_hashes: {},
     iterations: [],
     committed: [],
     interventions: 0,

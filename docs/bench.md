@@ -145,8 +145,10 @@ corpus over 1000 words; only gate 3 sees it. A unit suite runs on small fixtures
 full-scale check, special-casing those fixtures buys a real score.
 
 The hash gate is not oversold: it covers `.avo/score` itself, but an agent that edits the scorer *and*
-the hash file defeats it from inside. `./bench/init.sh --verify <dest>` is the external audit that
-does not, and it is the last thing to run after any loop:
+the hash file defeats it from inside. `avo run` closes most of that gap during a loop: it hashes
+`.avo/score` and every path in `.avo/protected.txt` at start, and stops with `scorer-changed` when a
+turn changes one (#38). `./bench/init.sh --verify <dest>` is the external audit that does not trust
+the repo at all, and it is the last thing to run after any loop:
 
 ```sh
 ./bench/init.sh --verify ~/work/fuzzysearch    # exit 1 if f was edited — the curve means nothing

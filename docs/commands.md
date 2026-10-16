@@ -302,6 +302,15 @@ v3" from a run that ended days ago.
 | `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is done |
 | 3 iterations in a row change nothing **and leave HEAD where it was** | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. The one stop condition steering cannot express |
 | the agent binary cannot be started | it will not start next iteration either; retrying nine more times is spinning |
+| a turn changes `f` (stop reason `scorer-changed`) | a score from an edited `f` is not a measurement. avo commits nothing from that turn and exits 1 (#38) |
+
+**The scorer is fixed for a run.** At start, `avo run` writes the sha256 of `.avo/score` to the
+manifest as `scorer_hashes`. If `.avo/protected.txt` exists, it also hashes that file and each path
+in it (one path per line; `#` starts a comment). After each turn and before `avo commit`, `avo run`
+hashes the same paths again. A changed, new or deleted file stops the run. The check uses the list
+from the start, so an edit to `.avo/protected.txt` cannot remove a path from it. The hashes live
+inside the repo, so this check stops an unattended run early. It does not replace an external audit
+such as `bench/init.sh --verify`.
 
 **The agent usually commits for itself, and the manifest says so.** The `avo-vary` skill — wired in
 by `avo install`, and pointed at by the turn prompt — has the agent run `avo commit --why "..."`
