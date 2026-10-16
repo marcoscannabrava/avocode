@@ -488,6 +488,47 @@ test("uncommitted work in the root is warned about, because probes branch from H
   rmSync(f.dir, { recursive: true, force: true });
 });
 
+test("--dirty starts every probe from the uncommitted root tree (#21)", async () => {
+  const f = fixture("fandirtyflag");
+  writeFileSync(join(f.dir, "kernel.txt"), "baseline\nhalf a variation\n");
+  writeFileSync(join(f.dir, "notes.txt"), "untracked\n");
+  const head = f.git("rev-parse", "HEAD").trim();
+  const status = f.git("status", "--porcelain");
+
+  const { code, json } = await fan(f, ["--prompt", "vary it", "--n", "2", "--dirty"]);
+  assert.equal(code, 0);
+  assert.equal(json.warnings.join(" ").includes("uncommitted"), false);
+  assert.notEqual(json.baseline, head);
+  assert.equal(f.git("rev-parse", `${json.baseline}^`).trim(), head, "the snapshot sits on HEAD");
+  for (const r of json.results) {
+    const tree = join(f.dir, r.worktree);
+    assert.match(readFileSync(join(tree, "kernel.txt"), "utf8"), /^baseline\nhalf a variation\nprobe/);
+    assert.equal(readFileSync(join(tree, "notes.txt"), "utf8"), "untracked\n");
+    // Only the probe's own lines count.
+    assert.deepEqual(r.diffstat.changed, ["kernel.txt"]);
+    assert.equal(r.diffstat.insertions, r.i);
+  }
+  assert.equal(f.git("rev-parse", "HEAD").trim(), head);
+  const after = f.git("status", "--porcelain").replace("?? .avo/.gitignore\n", "");
+  assert.equal(after, status, "the root index and tree are untouched");
+
+  const io = bufferIo();
+  assert.equal(await fanCommand(["--promote", "2", "--run", json.run_id, "--json", "--cwd", f.dir], io), 0);
+  const out = JSON.parse(io.stdout) as { applied: string; warnings: string[] };
+  assert.equal(out.applied, "clean");
+  assert.deepEqual(out.warnings, []);
+  assert.equal(readFileSync(join(f.dir, "kernel.txt"), "utf8"), "baseline\nhalf a variation\nprobe 2 line 0\nprobe 2 line 1\n");
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("--dirty on a clean tree branches from HEAD as before", async () => {
+  const f = fixture("fandirtyclean");
+  const { code, json } = await fan(f, ["--prompt", "vary it", "--n", "1", "--dirty"]);
+  assert.equal(code, 0);
+  assert.equal(json.baseline, f.git("rev-parse", "HEAD").trim());
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
 test("a repo with no scorer still fans out; the probes are simply unscored", async () => {
   const f = fixture("fanscoreless", { scorer: false });
   const { code, json } = await fan(f, ["--prompt", "vary it", "--n", "1"]);

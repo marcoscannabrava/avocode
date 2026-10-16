@@ -195,7 +195,13 @@ avo fan --n 4 --prompt-file probe.md            # four probes, four worktrees
 avo fan --n 3 --prompt "try X, Y or Z" --json   # the JSON is what an agent reads
 avo fan --agent pi --model groq/llama-3.3-70b   # the agent, and the probe model
 avo fan --timeout 300                           # kill a probe's process group after 300s
+avo fan --dirty --prompt-file finish.md         # probes start from your uncommitted work
 ```
+
+By default, probes do not see uncommitted work in your tree, and `avo fan` warns about it. With
+`--dirty`, avo makes a commit of your working tree on top of `HEAD` and starts each probe from it.
+Your index, `HEAD` and files do not change. That commit is the baseline, so a probe's diff holds only
+the probe's own work, and `--promote` applies it on top of your uncommitted work.
 
 Each probe returns `{i, ok, score, diffstat, summary, worktree, tokens, cost_usd, wall_s,
 log_path}` — `tokens` and `cost_usd` as described under [`avo run`](#avo-run--the-continuous-loop),

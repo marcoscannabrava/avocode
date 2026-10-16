@@ -498,7 +498,10 @@ Modes (`FanMode`, `fan.ts:138`): `run`, `promote`, `resume`, `list`, `clean`.
 2. Resolve the agent (same rule as `avo run`, `fan.ts:566-580`).
 3. `baseline = git rev-parse HEAD` (`fan.ts:582-586`).
 4. Warn if the root tree is dirty, because probes branch from HEAD and will not see uncommitted
-   work (`fan.ts:591-603`). avo's own trajectory paths are filtered out first.
+   work (`fan.ts:591-603`). avo's own trajectory paths are filtered out first. With `--dirty`
+   (#21), `snapshotTree` instead commits the working tree on HEAD through a side index
+   (`GIT_INDEX_FILE`), and that commit becomes the baseline. The manifest keeps the real HEAD in
+   `head`, so `--promote` does not warn that HEAD moved.
 5. Write the manifest with every probe `pending` (`fan.ts:605-625`).
 6. **Create worktrees serially** (`addWorktrees`, `fan.ts:636-651`):
    `git worktree add --detach .avo/worktrees/<run>/<i> <baseline>`. Serial because "concurrent

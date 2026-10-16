@@ -78,6 +78,7 @@ avo fan:
   --model <m>       the probe model (default $AVO_PROBE_MODEL); small models are the point
   --timeout <s>     kill a probe's process group after s seconds (default 900, 0 = no limit)
   --keep            keep every worktree; by default the ones nothing changed are removed
+  --dirty           probes start from uncommitted root work, not HEAD
   --no-score        do not run .avo/score in each worktree
   --promote <i>     apply probe i's diff to the working tree (--run <id> to pick an older run)
   --resume <id>     re-run the probes an interrupted fan-out never finished
