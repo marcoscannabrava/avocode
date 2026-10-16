@@ -184,6 +184,22 @@ test("one failing config fails the whole attempt", () => {
   assert.equal(a.primary, null);
 });
 
+test("configs that disagree on direction are a harness error naming them", () => {
+  const low = { ...GOOD, higher_is_better: false };
+  const a = normalize([part("b1", GOOD), part("b2", low), part("b3", low)], META);
+  assert.equal(a.pass, false);
+  assert.equal(a.primary, null);
+  assert.equal(a.errors.length, 1);
+  assert.match(a.errors[0] ?? "", /disagree on higher_is_better: true for b1; false for b2, b3/);
+});
+
+test("configs that agree on direction raise no error", () => {
+  const low = { ...GOOD, higher_is_better: false };
+  const a = normalize([part("b1", low), part("b2", low)], META);
+  assert.deepEqual(a.errors, []);
+  assert.equal(a.higher_is_better, false);
+});
+
 test("a single scorer's self-reported duration is preferred over our wall clock", () => {
   assert.equal(normalize([part("*", { ...GOOD, duration_s: 42.1 })], META).duration_s, 42.1);
   assert.equal(normalize([part("*", GOOD)], META).duration_s, 1);
