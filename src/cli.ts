@@ -93,12 +93,14 @@ avo run:
                     (default: $AVO_AGENT, the config, then the first on PATH)
   --model <m>       the model each turn runs on (default: the agent's own)
   --timeout <s>     kill a turn's process group after s seconds (default 900, 0 = no limit)
+  --max-cost <usd> --max-tokens <n> --max-wall <s>
+                    run budgets, checked before each turn (default: none)
   --stall <n> --thrash <k>   the supervisor's thresholds, as for avo supervise
   --dry-run         print the resolved plan and the first turn prompt; spawn nothing
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
-  stops on          --max-iters, an .avo/STOP file, 3 unchanged iterations in a row, or an agent
-                    binary that cannot be started
+  stops on          --max-iters, a crossed budget, an .avo/STOP file, 3 unchanged iterations in
+                    a row, or an agent binary that cannot be started
 
 avo supervise:
   --stall <n>       attempts with no committed improvement before it steers
@@ -139,11 +141,24 @@ export function commandUsage(cmd: string): string | null {
   return `${USAGE.slice(start + 1, end)}\n`;
 }
 
+/** A help flag, unless it is a value. */
+export function asksHelp(stanza: string, args: readonly string[]): boolean {
+  // Flags the stanza shows with a <value>.
+  const takesValue = new Set([...stanza.matchAll(/(-{1,2}[a-z][a-z-]*) "?</g)].map((m) => m[1]));
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--") return false;
+    if (a === "--help" || a === "-h") return true;
+    if (takesValue.has(a)) i++;
+  }
+  return false;
+}
+
 export async function main(argv: readonly string[], io: Io = processIo): Promise<number> {
   const [cmd, ...rest] = argv;
   // Help wins before any option parser.
   const stanza = cmd === undefined ? null : commandUsage(cmd);
-  if (stanza !== null && rest.some((a) => a === "--help" || a === "-h")) {
+  if (stanza !== null && asksHelp(stanza, rest)) {
     io.out(stanza);
     return 0;
   }
@@ -154,7 +169,7 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
       io.out(USAGE);
       return 0;
     case "help": {
-      if (rest[0] === undefined) {
+      if (rest[0] === undefined || rest[0] === "--help" || rest[0] === "-h") {
         io.out(USAGE);
         return 0;
       }

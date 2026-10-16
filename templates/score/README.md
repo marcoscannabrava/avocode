@@ -84,9 +84,11 @@ The scorer's line is validated, then normalized into an **attempt** (appended to
   Direction handling lives here, once, instead of in every consumer.
 - With several configs, `primary` is their arithmetic mean — informative, but *not* the commit
   criterion; that is the `scores` vector.
+- All configs must report the same `higher_is_better`. If they do not, `avo score` stops with a
+  harness error (exit `2`) that names the configs on each side.
 
-Exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed output, timeout). So
-`avo score >/dev/null || echo "no improvement"` behaves as a shell reader expects, and
+Exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed output, timeout,
+mixed directions). So `avo score >/dev/null || echo "no improvement"` behaves as a shell reader expects, and
 `avo score --json` is parseable in all three cases.
 
 ## Cost and honesty

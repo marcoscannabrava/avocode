@@ -706,7 +706,8 @@ async function iterate(
       cache_write: report.tokens.cache_write + (turn.tokens?.cache_write ?? 0),
     };
     if (turn.cost_usd !== null) report.cost_usd = (report.cost_usd ?? 0) + turn.cost_usd;
-    markUnenforced(report, turn);
+    // A turn that never ran reports nothing.
+    if (!turn.spawn_failed) markUnenforced(report, turn);
 
     // It will not start next iteration either; retrying is spinning.
     if (turn.spawn_failed) {
