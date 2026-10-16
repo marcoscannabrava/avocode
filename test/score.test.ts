@@ -86,8 +86,11 @@ test("a nested bad score names the config that broke", () => {
 });
 
 test("non-finite numbers are rejected even though JSON accepts 1e999", () => {
-  assert.match(bad(parseScoreOutput(line({ ...GOOD, scores: { b1: 1e999 } }))).errors[0] ?? "", /scores\.b1/);
-  assert.match(bad(parseScoreOutput(line({ ...GOOD, primary: 1e999 }))).errors[0] ?? "", /field 'primary'/);
+  // JSON.stringify writes Infinity as null.
+  const inf = (o: unknown) => line(o).replace('"INF"', "1e999");
+  assert.equal(JSON.parse(inf({ primary: "INF" })).primary, Infinity);
+  assert.match(bad(parseScoreOutput(inf({ ...GOOD, scores: { b1: "INF" } }))).errors[0] ?? "", /scores\.b1/);
+  assert.match(bad(parseScoreOutput(inf({ ...GOOD, primary: "INF" }))).errors[0] ?? "", /field 'primary'/);
 });
 
 test("primary may be null only when the candidate is not passing", () => {

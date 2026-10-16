@@ -122,8 +122,6 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
-    let stdout = "";
-    let stderr = "";
     let timedOut = false;
     let spawnError: string | null = null;
     const timer =
@@ -275,7 +273,7 @@ export function parseConfigList(stdout: string): string[] | null {
 
 /** Runs `tasks` with at most `limit` in flight, preserving input order. */
 export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
+  const results: R[] = [];
   let next = 0;
   const worker = async (): Promise<void> => {
     for (;;) {

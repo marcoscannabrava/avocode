@@ -12,7 +12,7 @@ check: lint typecheck test
 # Static analysis. The shellcheck half lives in test/lint-sh.sh: it discovers its own file
 # list from git and treats an unrunnable shellcheck as a failure, not a skip (#2).
 lint:
-    node_modules/.bin/oxlint src test pi bench
+    node_modules/.bin/oxlint --deny-warnings src test pi bench
     ./test/lint-sh.sh
 
 typecheck:
