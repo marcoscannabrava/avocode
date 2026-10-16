@@ -648,7 +648,7 @@ export async function knowAdd(
   }
 
   // A file slug ignores its directory.
-  const fileSlug = slugify(basename(target).replace(/\.[^.]+$/, ""));
+  const fileSlug = slugify(basename(target).replace(/(?<=.)\.[^.]+$/, ""));
   const slug = opts.name === null ? (isUrl ? slugForUrl(target) : fileSlug) : slugify(opts.name);
   const rel = `${KNOWLEDGE_DIR}/${slug}${INDEXED_EXT}`;
   const path = join(cwd, rel);
