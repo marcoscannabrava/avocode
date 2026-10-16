@@ -21,6 +21,8 @@ import {
   firstOnPath,
   listRuns,
   makeRunId,
+  directedPrompt,
+  parseDirections,
   parseFanArgs,
   probeEnv,
   promptSha,
@@ -34,7 +36,9 @@ import {
 test("avo fan defaults to three probes and a bounded timeout", () => {
   const o = parseFanArgs(["--prompt", "go"], {});
   assert.ok(!("error" in o));
-  assert.equal(o.n, DEFAULT_N);
+  // Unset here; runFan falls back to DEFAULT_N.
+  assert.equal(o.n, null);
+  assert.equal(DEFAULT_N, 3);
   assert.equal(o.timeoutS, DEFAULT_TIMEOUT_S);
   assert.equal(o.mode, "run");
   assert.equal(o.score, true);
@@ -82,6 +86,32 @@ test("--promote takes a 1-based probe number", () => {
   assert.ok("error" in parseFanArgs(["--promote", "first"], {}));
   const o = parseFanArgs(["--promote", "2"], {});
   assert.ok(!("error" in o) && o.mode === "promote" && o.target === "2");
+});
+
+test("--directions belongs to a new run only", () => {
+  const o = parseFanArgs(["--resume", "r", "--directions", "d.txt"], {});
+  assert.ok("error" in o && /new run/.test(o.error));
+  const ok = parseFanArgs(["--prompt", "p", "--directions", "d.txt"], {});
+  assert.ok(!("error" in ok) && ok.directionsFile === "d.txt" && ok.n === null);
+});
+
+test("a directions file is one direction per line", () => {
+  const text = "# directions from avo supervise\n\n- unroll the loop\n* use a lookup table\n2. cache the result\n3) skip\n  plain line  \n-\n";
+  assert.deepEqual(parseDirections(text), [
+    "unroll the loop",
+    "use a lookup table",
+    "cache the result",
+    "skip",
+    "plain line",
+    "-",
+  ]);
+  assert.deepEqual(parseDirections("\n# only a comment\n"), []);
+});
+
+test("a direction goes after the shared prompt", () => {
+  assert.equal(directedPrompt("task", null), "task");
+  const p = directedPrompt("task\n\n", "try X");
+  assert.match(p, /^task\n\nYour direction: try X\n/);
 });
 
 test("a flag with no value is named rather than silently swallowing the next one", () => {
@@ -160,6 +190,7 @@ test("output is capped by lines and by bytes, and says which happened", () => {
 
 const probe = (i: number, pass: boolean, normalized: number | null): ProbeResult => ({
   i,
+  direction: null,
   ok: true,
   score:
     normalized === null
@@ -238,6 +269,10 @@ case "$prompt" in
   *slow*)  sleep 60; exit 0 ;;
   *crash*) echo "boom" >&2; exit 3 ;;
 esac
+# A directed probe records what it was told and its chain.
+if [[ $prompt == *"Your direction:"* ]]; then
+  printf '%s\\n%s\\n' "$(printf '%s\\n' "$prompt" | grep '^Your direction:')" "\${AVO_FAN_CHAIN}" > direction.txt
+fi
 # The probe index proves the guard environment reached the child, and makes each probe's diff — and
 # so its score — different, which is what lets a test assert on 'best'.
 for ((k = 0; k < \${AVO_FAN_PROBE:-1}; k++)); do echo "probe \${AVO_FAN_PROBE} line $k" >> kernel.txt; done
@@ -448,6 +483,78 @@ test("--resume re-runs only the probes an interrupted run never finished", async
   assert.match(out.warnings.join(" "), /resuming 1 of 2/);
   assert.equal(out.results.find((r) => r.i === 2)?.diffstat.insertions, 2);
   rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("--directions gives each probe its own line, and sets --n", async () => {
+  const f = fixture("fandir");
+  writeFileSync(join(f.dir, "dirs.txt"), "- unroll it\n- cache it\n");
+  const { code, json } = await fan(f, ["--prompt", "vary the kernel", "--directions", join(f.dir, "dirs.txt")]);
+  assert.equal(code, 0);
+  assert.equal(json.n, 2, "--n defaults to the number of directions");
+  assert.deepEqual(
+    json.results.map((r) => r.direction),
+    ["unroll it", "cache it"],
+  );
+  for (const r of json.results) {
+    const [line, chain] = readFileSync(join(f.dir, r.worktree, "direction.txt"), "utf8").split("\n");
+    assert.equal(line, `Your direction: ${r.direction}`, "each probe saw only its own direction");
+    // Both the shared prompt and this probe's prompt are on the chain.
+    const own = promptSha(directedPrompt("vary the kernel", r.direction));
+    assert.equal(chain, `${json.prompt_sha},${own}`);
+  }
+  const m = readManifest(f.dir, json.run_id);
+  assert.ok(!("error" in m));
+  assert.deepEqual(m.probes.map((p) => p.direction), ["unroll it", "cache it"]);
+  assert.equal(m.prompt, "vary the kernel", "the manifest keeps the shared prompt");
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("--n that disagrees with --directions is a usage error", async () => {
+  const f = fixture("fandirn");
+  writeFileSync(join(f.dir, "dirs.txt"), "a\nb\n");
+  const before = f.worktrees();
+  const { code, json } = await fan(f, ["--prompt", "p", "--n", "3", "--directions", join(f.dir, "dirs.txt")]);
+  assert.equal(code, 2);
+  assert.match((json as unknown as { error: string }).error, /--n is 3 but there are 2 directions/);
+  writeFileSync(join(f.dir, "empty.txt"), "# nothing\n");
+  const empty = await fan(f, ["--prompt", "p", "--directions", join(f.dir, "empty.txt")]);
+  assert.equal(empty.code, 2);
+  assert.match((empty.json as unknown as { error: string }).error, /no directions/);
+  assert.equal(f.worktrees(), before);
+  assert.deepEqual(listRuns(f.dir), []);
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("--resume gives a re-run probe its direction from the manifest", async () => {
+  const f = fixture("fandirresume");
+  writeFileSync(join(f.dir, "dirs.txt"), "first\nsecond\n");
+  const { json } = await fan(f, ["--prompt", "vary it", "--directions", join(f.dir, "dirs.txt")]);
+  const path = join(f.dir, WORKTREES_DIR, json.run_id, MANIFEST_NAME);
+  const m = JSON.parse(readFileSync(path, "utf8")) as { probes: { i: number; status: string; result: unknown }[] };
+  const second = m.probes.find((p) => p.i === 2);
+  if (second !== undefined) {
+    second.status = "pending";
+    second.result = null;
+  }
+  writeFileSync(path, JSON.stringify(m, null, 2));
+  execFileSync("git", ["worktree", "remove", "--force", `${WORKTREES_DIR}/${json.run_id}/2`], { cwd: f.dir });
+
+  const io = bufferIo();
+  assert.equal(await fanCommand(["--resume", json.run_id, "--json", "--cwd", f.dir], io), 0);
+  const out = JSON.parse(io.stdout) as FanResult;
+  assert.equal(out.results.find((r) => r.i === 2)?.direction, "second");
+  const seen = readFileSync(join(f.dir, WORKTREES_DIR, json.run_id, "2", "direction.txt"), "utf8");
+  assert.match(seen, /^Your direction: second\n/);
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("a nested run of a directed probe's own prompt is a cycle", () => {
+  const shared = promptSha("vary it");
+  const own = promptSha(directedPrompt("vary it", "first"));
+  // What a directed probe inherits.
+  const env = { [CHAIN_ENV]: `${shared},${own}`, [LEVEL_ENV]: "1" };
+  assert.equal(checkGuards(env, own).ok, false);
+  assert.equal(checkGuards(env, shared).ok, false);
 });
 
 test("resuming a run that does not exist points at --list", async () => {

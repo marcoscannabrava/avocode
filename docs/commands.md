@@ -195,9 +195,24 @@ avo fan --n 4 --prompt-file probe.md            # four probes, four worktrees
 avo fan --n 3 --prompt "try X, Y or Z" --json   # the JSON is what an agent reads
 avo fan --agent pi --model groq/llama-3.3-70b   # the agent, and the probe model
 avo fan --timeout 300                           # kill a probe's process group after 300s
+avo fan --prompt-file probe.md --directions d.txt   # one direction per probe
 ```
 
-Each probe returns `{i, ok, score, diffstat, summary, worktree, tokens, cost_usd, wall_s,
+Without `--directions`, all probes get the same prompt, and diversity comes only from sampling.
+With `--directions <file>`, each probe gets one direction:
+
+- The file holds one direction per line. avo ignores blank lines and `#` lines, and removes list
+  markers (`- `, `* `, `1. `). Thus you can give it a supervisor's list of directions as it is.
+- Probe `i` gets the shared prompt, then `Your direction: <line i>`.
+- `--n` is the number of directions. If you also give `--n` and it is different, avo stops with
+  exit 2.
+- The manifest stores each probe's direction, so `--resume` gives a re-run probe the same
+  direction. `--directions` with `--resume` is a usage error.
+- The cycle guard hashes the shared prompt. Each directed probe also adds the hash of its full
+  prompt to `AVO_FAN_CHAIN`. Thus a nested fan-out of the shared prompt, or of the probe's own
+  prompt, is a cycle.
+
+Each probe returns `{i, direction, ok, score, diffstat, summary, worktree, tokens, cost_usd, wall_s,
 log_path}` — `tokens` and `cost_usd` as described under [`avo run`](#avo-run--the-continuous-loop),
 which is what prices the small-model question (#35). `ok` describes the *process*, `score` the
 *candidate* — a probe can finish cleanly and still fail `f`. `best` names the highest-scoring probe

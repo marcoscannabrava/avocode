@@ -69,6 +69,8 @@ export interface ProbeScore {
 export interface ProbeResult {
   /** 1-based, as `--promote <i>` takes it. */
   i: number;
+  /** The `--directions` line this probe got. */
+  direction: string | null;
   /** The agent process ran to completion and was not killed. Says nothing about the candidate. */
   ok: boolean;
   score: ProbeScore | null;
@@ -114,6 +116,8 @@ interface ManifestProbe {
   i: number;
   worktree: string;
   status: "pending" | "done";
+  /** Absent in manifests older than `--directions`. */
+  direction?: string | null;
   result: ProbeResult | null;
 }
 
@@ -141,9 +145,13 @@ export interface FanOptions {
   mode: FanMode;
   json: boolean;
   cwd: string;
-  n: number;
+  /** `null` until given: directions may set it. */
+  n: number | null;
   prompt: string | null;
   promptFile: string | null;
+  /** One direction per probe; the file wins. */
+  directionsFile: string | null;
+  directions: string[] | null;
   agent: string | null;
   model: string | null;
   timeoutS: number;
@@ -160,9 +168,11 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     mode: "run",
     json: false,
     cwd: process.cwd(),
-    n: DEFAULT_N,
+    n: null,
     prompt: null,
     promptFile: null,
+    directionsFile: null,
+    directions: null,
     agent: env[AGENT_ENV] ?? null,
     model: env[PROBE_MODEL_ENV] ?? null,
     timeoutS: DEFAULT_TIMEOUT_S,
@@ -204,6 +214,9 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
           break;
         case "--prompt-file":
           opts.promptFile = v;
+          break;
+        case "--directions":
+          opts.directionsFile = v;
           break;
         case "--agent":
           opts.agent = v;
@@ -250,6 +263,10 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
       return { error: "avo fan: --prompt and --prompt-file are alternatives; pass one" };
     }
   }
+  // A resume reads its directions from the manifest.
+  if (opts.directionsFile !== null && opts.mode !== "run") {
+    return { error: "avo fan: --directions only applies to a new run" };
+  }
   if (opts.mode === "promote") {
     const i = Number(opts.target);
     if (!Number.isInteger(i) || i < 1) return { error: `avo fan: --promote needs a probe number (1-based), got '${opts.target}'` };
@@ -263,6 +280,29 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
 
 export function promptSha(prompt: string): string {
   return createHash("sha256").update(prompt).digest("hex").slice(0, 12);
+}
+
+// ---------------------------------------------------------------------------
+// directions
+// ---------------------------------------------------------------------------
+
+/**
+ * One direction per non-blank line. `#` lines are comments, and a list marker (`- `, `* `, `1. `)
+ * is dropped, so a supervisor's directive list goes in as written.
+ */
+export function parseDirections(text: string): string[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"))
+    .map((l) => l.replace(/^(?:[-*+]|\d+[.)])\s+/, "").trim())
+    .filter((l) => l !== "");
+}
+
+/** The shared prompt, then this probe's direction. */
+export function directedPrompt(prompt: string, direction: string | null): string {
+  if (direction === null) return prompt;
+  return `${prompt.trimEnd()}\n\nYour direction: ${direction}\nOther probes try other directions; stay on this one.\n`;
 }
 
 export interface GuardsOk {
@@ -316,6 +356,17 @@ export function checkGuards(env: NodeJS.ProcessEnv, sha: string): GuardsOk | Gua
     };
   }
   return { ok: true, level, maxDepth, chain, warnings };
+}
+
+/**
+ * A directed probe also chains its own full prompt, so re-fanning exactly what it was given is a
+ * cycle too. The shared prompt is already on the chain: a nested run of it, with any directions, is
+ * refused.
+ */
+function probeChain(env: Record<string, string>, prompt: string, direction: string | null): Record<string, string> {
+  if (direction === null) return {};
+  const chain = env[CHAIN_ENV] ?? "";
+  return { [CHAIN_ENV]: [chain, promptSha(prompt)].filter((s) => s !== "").join(",") };
 }
 
 /** The environment a probe inherits: one level deeper, with this prompt added to the chain. */
@@ -465,17 +516,19 @@ interface ProbeContext {
 async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeResult> {
   const worktree = join(ctx.cwd, probe.worktree);
   const logPath = join(WORKTREES_DIR, ctx.runId, "logs", `${probe.i}.log`);
+  const direction = probe.direction ?? null;
+  const prompt = directedPrompt(ctx.prompt, direction);
 
   const turn = await driveAgent(
     ctx.runner,
     ctx.template,
-    { prompt: ctx.prompt, model: ctx.model },
+    { prompt, model: ctx.model },
     {
       cwd: worktree,
       logPath,
       logFile: join(ctx.cwd, logPath),
       timeoutS: ctx.timeoutS,
-      env: { ...ctx.env, [PROBE_ENV]: String(probe.i) },
+      env: { ...ctx.env, ...probeChain(ctx.env, prompt, direction), [PROBE_ENV]: String(probe.i) },
     },
     ctx.now,
   );
@@ -501,6 +554,7 @@ async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeR
 
   return {
     i: probe.i,
+    direction,
     ok: turn.ok,
     score,
     diffstat: await diffstatOf(ctx.runner, worktree, ctx.baseline),
@@ -554,6 +608,20 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   }
   if (prompt.trim() === "") return { error: "the prompt is empty; a probe with no task is not a probe" };
 
+  let directions = opts.directions;
+  if (opts.directionsFile !== null) {
+    try {
+      directions = parseDirections(readFileSync(opts.directionsFile, "utf8"));
+    } catch (e) {
+      return { error: `cannot read --directions ${opts.directionsFile} — ${(e as Error).message}` };
+    }
+  }
+  if (directions !== null && directions.length === 0) return { error: "the directions file has no directions" };
+  if (directions !== null && opts.n !== null && opts.n !== directions.length) {
+    return { error: `--n is ${opts.n} but there are ${directions.length} directions` };
+  }
+  const n = opts.n ?? directions?.length ?? DEFAULT_N;
+
   const sha = promptSha(prompt);
   const guards = checkGuards(env, sha);
   if (!guards.ok) return { error: guards.error };
@@ -603,10 +671,11 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   }
 
   const runId = uniqueRunId(opts.cwd, now(), sha);
-  const probes: ManifestProbe[] = Array.from({ length: opts.n }, (_, k) => ({
+  const probes: ManifestProbe[] = Array.from({ length: n }, (_, k) => ({
     i: k + 1,
     worktree: join(WORKTREES_DIR, runId, String(k + 1)),
     status: "pending",
+    direction: directions?.[k] ?? null,
     result: null,
   }));
   const manifest: Manifest = {
@@ -628,7 +697,7 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   if (created.length > 0) return { error: created.join("; ") };
 
   const cap = concurrencyCap();
-  if (opts.n > cap) warnings.push(`--n ${opts.n} exceeds the concurrency cap of ${cap}; the rest queue`);
+  if (n > cap) warnings.push(`--n ${n} exceeds the concurrency cap of ${cap}; the rest queue`);
 
   return await executeProbes(opts, deps, manifest, template, warnings, cap, probeEnv(guards, sha, runId, 0));
 }
@@ -968,6 +1037,7 @@ export function renderFan(f: FanResult): string {
       `  ${String(r.i).padEnd(3)} ${flag}  ${scoreCell(r).padEnd(20)} ` +
         `${d.files} file(s) +${d.insertions}/-${d.deletions}  ${r.wall_s}s${f.best === r.i ? "  <- best" : ""}`,
     );
+    if (r.direction !== null) lines.push(`      direction: ${r.direction.slice(0, 100)}`);
     if (r.summary !== null) lines.push(`      ${r.summary.split("\n")[0]?.slice(0, 100) ?? ""}`);
     if (r.error !== null) lines.push(`      error: ${r.error}`);
     lines.push(`      ${r.worktree}`);

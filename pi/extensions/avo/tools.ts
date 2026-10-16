@@ -362,7 +362,7 @@ const fanTool = (deps: PiToolDeps): ToolDefinition =>
     label: "avo fan",
     description:
       "Explore several directions at once: N git worktrees, N headless agent processes each given " +
-      "the same prompt, each candidate scored by .avo/score. Returns every probe's score, diffstat " +
+      "the same prompt (plus one of `directions`, when given), each candidate scored by .avo/score. Returns every probe's score, diffstat " +
       "and summary, and names the best PASSING one. Promotion is a separate, explicit step — this " +
       "never touches the root working tree or HEAD. Expensive; use it when you genuinely cannot " +
       "tell which direction is better by reading.",
@@ -375,6 +375,12 @@ const fanTool = (deps: PiToolDeps): ToolDefinition =>
     parameters: Type.Object({
       prompt: Type.String({ minLength: 1, description: "The task every probe is given. Each probe is a fresh agent with no other context." }),
       n: Type.Optional(Type.Number({ minimum: 1, description: "How many probes. Default 3; they run min(8, cpus-2) at a time." })),
+      directions: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), {
+          minItems: 1,
+          description: "One direction per probe, appended to the prompt. Sets n; a different n is refused.",
+        }),
+      ),
       agent: Type.Optional(Type.String({ description: "Which agent to drive: pi | claude | codex | a custom one from .avo/config.json." })),
       model: Type.Optional(Type.String({ description: "The probe model. Small models are the point here; defaults to $AVO_PROBE_MODEL." })),
       timeout_s: Type.Optional(Type.Number({ minimum: 0, description: "Kill a probe's process group after this many seconds. Default 900." })),
@@ -392,6 +398,7 @@ const fanTool = (deps: PiToolDeps): ToolDefinition =>
       if (p.keep === true) argv.push("--keep");
       const opts = parseFanArgs(argv, deps.env);
       if ("error" in opts) harnessError(`avo_fan: ${opts.error}`);
+      if (p.directions !== undefined) opts.directions = p.directions;
       const result = await runFan(opts, { runner: deps.runner, now: deps.now, env: deps.env });
       // A guard refusal arrives as an error string: a refusal, not a crash, but also the one case
       // where no probe ran, so the model must not read it as a fan-out that found nothing.
