@@ -211,9 +211,12 @@ function sinceBest(attempts: readonly Attempt[], best: Version | null): Attempt[
   });
 }
 
+/** The paths, or null when unknown. */
+const knownPaths = (a: Attempt): string[] | null => (Array.isArray(a.git.paths) ? a.git.paths : null);
+
 /** Unchanged HEAD: a re-score, not a variation. */
 const isRescore = (a: Attempt, best: Version | null): boolean =>
-  best !== null && a.git.head === best.sha && a.git.paths !== undefined && a.git.paths.length === 0;
+  best !== null && a.git.head === best.sha && knownPaths(a)?.length === 0;
 
 /** Distinct trees; a treeless line counts alone. */
 export function countVariations(attempts: readonly Attempt[]): number {
@@ -228,14 +231,19 @@ export function countVariations(attempts: readonly Attempt[]): number {
 
 /** Unknown paths overlap anything. */
 function overlaps(a: Attempt, b: Attempt): boolean {
-  if (a.git.paths === undefined || b.git.paths === undefined) return true;
-  const other = new Set(b.git.paths);
-  return a.git.paths.some((p) => other.has(p));
+  const mine = knownPaths(a);
+  const theirs = knownPaths(b);
+  if (mine === null || theirs === null) return true;
+  const other = new Set(theirs);
+  return mine.some((p) => other.has(p));
 }
 
 /** Paths every known streak member touched. */
 function sharedPaths(streak: readonly Attempt[]): string[] {
-  const known = streak.flatMap((a) => (a.git.paths === undefined ? [] : [a.git.paths]));
+  const known = streak.flatMap((a) => {
+    const paths = knownPaths(a);
+    return paths === null ? [] : [paths];
+  });
   const [first, ...rest] = known;
   if (first === undefined) return [];
   return first.filter((p) => rest.every((r) => r.includes(p)));

@@ -53,9 +53,10 @@ Each attempt also records what it scored, in `git`:
 | `git.head` | the HEAD commit |
 | `git.dirty` | `true` when `git status` shows a change |
 | `git.tree` | the hash of the working tree, without the paths avo writes. Two attempts with the same `tree` scored the same candidate. `avo score` uses a temporary index, so your index does not change |
-| `git.paths` | the paths that the candidate changes against HEAD, without the paths avo writes |
+| `git.paths` | the paths that the candidate changes against HEAD, without the paths avo writes. Paths are relative to `--cwd`. When `tree` is `null`, this field is absent |
 
-Attempt lines from before these two fields still parse. `avo supervise` counts each such line as
+`avo score` reads these fields before the scorer runs, so files that the scorer writes are not
+part of the candidate. Attempt lines from before these two fields still parse. `avo supervise` counts each such line as
 one candidate.
 
 | Flag | |

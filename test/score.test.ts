@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -320,11 +320,14 @@ test("a passing scorer exits 0, emits one JSON line, and records the attempt", a
     const a = JSON.parse(io.stdout) as Attempt;
     assert.equal(a.pass, true);
     assert.equal(a.normalized, 12.5);
-    // The stub git yields no tree hash.
-    assert.deepEqual(a.git, { head: "deadbeef", dirty: true, tree: null, paths: [] });
+    // The stub git yields no tree, so no paths.
+    assert.deepEqual(a.git, { head: "deadbeef", dirty: true, tree: null });
     assert.deepEqual(attemptsOf(dir), [a]);
     // The scorer is invoked with no arguments when not fanning out.
-    assert.deepEqual(f.calls[0], { cmd: join(dir, SCORER_PATH), args: [] });
+    assert.deepEqual(
+      f.calls.filter((c) => c.cmd !== "git"),
+      [{ cmd: join(dir, SCORER_PATH), args: [] }],
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -704,6 +707,68 @@ test("an edit changes the tree and names its paths; undoing it restores the tree
     git("reset", "-q", "--hard");
     rmSync(join(dir, "new.h"));
     assert.equal((await readGit(spawnRunner, dir)).tree, clean.tree);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ignored files are not part of the tree, and no temp index is left", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    writeFileSync(join(dir, ".gitignore"), ".venv/\n");
+    git("add", ".gitignore");
+    git("commit", "-qm", "ignore");
+    const before = await readGit(spawnRunner, dir);
+    mkdirSync(join(dir, ".venv/lib"), { recursive: true });
+    writeFileSync(join(dir, ".venv/lib/big.so"), "x".repeat(1 << 16));
+    const after = await readGit(spawnRunner, dir);
+    assert.equal(after.tree, before.tree, "an ignored dir is not a variation");
+    assert.deepEqual(after.paths, []);
+    assert.equal(git("status", "--porcelain"), "");
+    assert.equal(existsSync(join(dir, ".git/index.lock")), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("in a subdirectory, paths are relative to it", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    const sub = join(dir, "pkg");
+    mkdirSync(join(sub, "lineage"), { recursive: true });
+    writeFileSync(join(sub, "lineage/memory.jsonl"), "");
+    writeFileSync(join(sub, "k.c"), "1\n");
+    git("add", "-A");
+    git("commit", "-qm", "pkg");
+    assert.deepEqual((await readGit(spawnRunner, sub)).paths, [], "its own memory log is not a change");
+    writeFileSync(join(sub, "k.c"), "2\n");
+    assert.deepEqual((await readGit(spawnRunner, sub)).paths, ["k.c"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed tree leaves paths unknown, not empty", async () => {
+  const runner: Runner = (cmd, args) =>
+    Promise.resolve(R(cmd === "git" && args[0] === "rev-parse" ? { stdout: "deadbeef\n" } : { code: 128 }));
+  const g = await readGit(runner, mkdtempSync(join(tmpdir(), "avo-tree-fail-")));
+  assert.equal(g.tree, null);
+  assert.equal(g.paths, undefined, "empty would read as a re-score");
+});
+
+test("the tree is read before the scorer, so its outputs are not the candidate", async () => {
+  const { dir } = gitRepo();
+  try {
+    mkdirSync(join(dir, ".avo"), { recursive: true });
+    const scorer = `#!/usr/bin/env bash\ndate +%s%N > out.txt\nprintf '%s\\n' '${JSON.stringify(GOOD)}'\n`;
+    writeFileSync(join(dir, SCORER_PATH), scorer, { mode: 0o755 });
+    const clean = (await readGit(spawnRunner, dir)).tree;
+    const io = bufferIo();
+    assert.equal(await scoreCommand(["--json", "--cwd", dir], io, spawnRunner), 0);
+    assert.ok(existsSync(join(dir, "out.txt")), "the scorer wrote its output");
+    const a = JSON.parse(io.stdout) as Attempt;
+    assert.equal(a.git.tree, clean, "the tree is the candidate as scored");
+    assert.deepEqual(a.git.paths, [".avo/score"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

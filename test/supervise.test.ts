@@ -249,6 +249,14 @@ test("thrash fires at exactly K variations that fail the same way in the same fi
   }
 });
 
+test("with no tree, paths are unknown, so thrash still fires", () => {
+  // What readGit writes outside git, or when the tree fails.
+  const attempts = [0, 1, 2].map((i) => failed(at(i), { git: { head: null, dirty: false, tree: null } }));
+  const { state, signals } = detect({ versions: [], attempts, stall: 99, thrash: 3 });
+  assert.equal(state.repeat, 3);
+  assert.ok(signals.some((s) => s.kind === "thrash"));
+});
+
 test("re-scoring one failing tree is not a thrash", () => {
   const attempts = Array.from({ length: 5 }, (_, i) => failed(at(i), on("same", ["kernel.cu"])));
   const { state, signals } = detect({ versions: [version(1)], attempts, stall: 99, thrash: 3 });

@@ -106,7 +106,7 @@ export interface AttemptGit {
   dirty: boolean;
   /** Working-tree hash; one tree, one variation. */
   tree?: string | null;
-  /** Changed paths vs HEAD, harness excluded. */
+  /** Changed paths vs HEAD, harness excluded; absent when unknown. */
   paths?: string[];
 }
 
@@ -533,12 +533,14 @@ export function parseScoreArgs(argv: readonly string[]): ScoreOptions | { error:
 
 export async function readGit(runner: Runner, cwd: string): Promise<AttemptGit> {
   const head = await runner("git", ["rev-parse", "HEAD"], { cwd, timeoutMs: 10_000 });
-  if (head.code !== 0 || head.spawnError !== null) return { head: null, dirty: false, tree: null, paths: [] };
+  if (head.code !== 0 || head.spawnError !== null) return { head: null, dirty: false, tree: null };
   const status = await runner("git", ["status", "--porcelain"], { cwd, timeoutMs: 10_000 });
   const sha = head.stdout.trim();
+  const dirty = status.stdout.trim() !== "";
   const tree = await candidateTree(runner, cwd);
-  const paths = tree === null ? [] : await changedPaths(runner, cwd, sha, tree);
-  return { head: sha, dirty: status.stdout.trim() !== "", tree, paths };
+  // Unknown paths must stay unknown, not empty.
+  const paths = tree === null ? null : await changedPaths(runner, cwd, sha, tree);
+  return paths === null ? { head: sha, dirty, tree } : { head: sha, dirty, tree, paths };
 }
 
 /** Tree hash via a temporary index copy. */
@@ -568,10 +570,11 @@ async function candidateTree(runner: Runner, cwd: string): Promise<string | null
 }
 
 /** Paths `tree` changes against `head`, harness paths excluded. */
-async function changedPaths(runner: Runner, cwd: string, head: string, tree: string): Promise<string[]> {
-  const args = ["diff-tree", "-r", "-z", "--name-only", "--no-renames", head, tree];
+async function changedPaths(runner: Runner, cwd: string, head: string, tree: string): Promise<string[] | null> {
+  // Relative to cwd, like HARNESS_PATHS.
+  const args = ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--relative", head, tree];
   const diff = await runner("git", args, { cwd, timeoutMs: 60_000 });
-  if (diff.code !== 0) return [];
+  if (diff.code !== 0 || diff.spawnError !== null) return null;
   return diff.stdout.split("\0").filter((p) => p !== "" && !isHarnessPath(p));
 }
 
@@ -604,6 +607,8 @@ export async function runScore(
   }
 
   const timeoutMs = opts.timeoutS * 1000;
+  // Before the scorer: its outputs are not the candidate.
+  const git = await readGit(runner, opts.cwd);
   const started = Date.now();
   const warmupWarnings: string[] = [];
 
@@ -646,7 +651,7 @@ export async function runScore(
     ts: now().toISOString(),
     parallel: configs !== null,
     exitCode: parts.find((p) => p.run.code !== 0)?.run.code ?? 0,
-    git: await readGit(runner, opts.cwd),
+    git,
     durationS,
   });
   attempt.warnings.unshift(...warmupWarnings);
