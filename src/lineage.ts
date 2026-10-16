@@ -176,7 +176,9 @@ export async function isGitRepo(runner: Runner, cwd: string): Promise<boolean> {
  * one span of the loop — how `avo run` learns the agent committed for itself (#42).
  */
 export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Promise<Lineage> {
-  const log = await git(runner, cwd, ["log", `--format=%H${US}%aI${US}%B${RS}`, rev]);
+  // git filters; the parse below still validates.
+  const grep = `--grep=^[[:space:]]*${VERSION_TRAILER}:`;
+  const log = await git(runner, cwd, ["log", "--extended-regexp", grep, `--format=%H${US}%aI${US}%B${RS}`, rev]);
   if (log.code !== 0 || log.spawnError !== null) return { versions: [], warnings: [] };
 
   const warnings: string[] = [];

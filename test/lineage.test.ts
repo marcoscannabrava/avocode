@@ -409,3 +409,22 @@ test("the config file steers the commit rule: reduce:mean admits what dominate r
   assert.equal(accepted.json["action"], "committed");
   assert.equal(accepted.json["version"], 2);
 });
+
+test("readLineage lets git filter yet reads only real trailers (#8)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  const score = JSON.stringify({ primary: 1, unit: "s", higher_is_better: false, scores: {} });
+
+  git("commit", "-q", "--allow-empty", "-m", "prose\n\nthis mentions Avo-Version: 9 mid-line");
+  git("commit", "-q", "--allow-empty", "-m", `indented v1\n\n  Avo-Version: 1\n  Avo-Score: ${score}`);
+  git("commit", "-q", "--allow-empty", "-m", "lowercase\n\navo-version: 7");
+  git("commit", "-q", "--allow-empty", "-m", "prose at line start\n\nAvo-Version: is the trailer key");
+  const { versions, warnings } = await readLineage(spawnRunner, dir);
+  assert.deepEqual(
+    versions.map((v) => v.version),
+    [1],
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] as string, /unreadable Avo-Version trailer \('is the trailer key'\)/);
+});
