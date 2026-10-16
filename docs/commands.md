@@ -5,6 +5,9 @@ Every `avo` subcommand, its guarantees, and the reasoning behind the parts that 
 **Two rules hold everywhere:** every subcommand supports `--json`, and a missing optional dependency
 degrades to a named fallback with one warning instead of crashing.
 
+`avo <command> --help` (or `-h`, or `avo help <command>`) prints the options of that command and
+exits `0`.
+
 | Command | One line |
 | --- | --- |
 | [`avo init`](#avo-init) | scaffold `.avo/`, `knowledge/`, `lineage/` in a repo |
