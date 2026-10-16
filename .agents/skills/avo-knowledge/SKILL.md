@@ -44,7 +44,7 @@ nothing configured it names all three and how to enable each rather than failing
 
 ```bash
 avo know add https://arxiv.org/abs/2506.xxxxx           # fetch -> knowledge/<slug>.md
-avo know add ./notes/kernel-design.md                   # a local file
+avo know add ./notes/kernel-design.md                   # -> knowledge/kernel-design.md
 avo know add <url> --name flash-attn-3                  # name the doc
 avo know add <url> --force                              # replace a differing existing doc
 ```
