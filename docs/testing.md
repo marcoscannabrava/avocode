@@ -85,6 +85,10 @@ runner and disables the fallback.
 typecheck + test) and `e2e`, which uploads `evidence/` as an artifact. Both install the shellcheck
 version read out of `test/lint-sh.sh`'s own pin.
 
+`.github/workflows/beads.yml` installs a pinned `bd` and runs `e2e-mem.sh` on the beads path. The
+`bd` install is large, so this job does not run on every PR. It runs each night, on demand, and on a
+PR that changes the memory code. A `SKIP` in its evidence makes the job fail.
+
 The e2e job runs **without any agent CLI installed** — deliberately, because the S0 acceptance case is
 `avo doctor` behaving correctly when the tools it drives are missing.
 

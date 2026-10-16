@@ -1,0 +1,43 @@
+name: beads
+
+# The beads path of `avo mem`, with a real `bd` (#12). Kept off
+# the main workflow: the `@beads/bd` install is ~137 MB, too heavy
+# for every PR. It runs nightly, on demand, and on a PR that touches
+# the memory code or its e2e.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - src/mem.ts
+      - src/init.ts
+      - test/e2e-mem.sh
+      - .github/workflows/beads.yml
+
+jobs:
+  e2e-with-bd:
+    runs-on: ubuntu-latest
+    env:
+      # The version evidence/s3-e2e-with-bd.txt was recorded with.
+      BD_VERSION: "1.2.2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm install -g "@beads/bd@$BD_VERSION"
+      - run: bd --version
+      - run: ./test/e2e-mem.sh
+      # A SKIP here means bd was not used: fail.
+      - name: the beads path ran
+        run: |
+          grep -q '^# bd on PATH: yes' evidence/s3-e2e.txt
+          if grep -q '^SKIP' evidence/s3-e2e.txt; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: s3-e2e-with-bd
+          path: evidence/s3-e2e.txt
