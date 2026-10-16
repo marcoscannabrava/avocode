@@ -1,0 +1,116 @@
+\section{System overview}
+\label{sec:overview}
+
+avocode extracts the AVO harness and makes it independent of the agent and of the domain.
+\Cref{tab:mapping} gives the mapping from the paper's objects to artifacts in a repository.
+\Cref{fig:loop} shows the loop.
+
+\begin{table}[t]
+\centering\small
+\caption{How avocode implements each object of AVO.}
+\label{tab:mapping}
+\begin{tabularx}{\linewidth}{@{}l l X l@{}}
+\toprule
+Symbol & Meaning & avocode artifact & Module \\
+\midrule
+$\f$ & scoring function & executable \file{.avo/score} printing one JSON line & \file{score.ts} \\
+$\succ$ & order on $\f$ & vector comparator, noise floor, reduction & \file{compare.ts} \\
+$\Pt$ & lineage & git commits with \cmd{Avo-Version}/\cmd{Avo-Score} trailers, \cmd{git notes}, \file{lineage/vNNN.md} & \file{lineage.ts} \\
+$\K$ & knowledge base & \file{knowledge/} $+$ \file{lineage/}, hybrid search; web ingest with provenance & \file{knowledge.ts} \\
+-- & agent memory & beads issue graph, or \file{lineage/memory.jsonl} & \file{mem.ts} \\
+$\Agent$ & variation operator & pi, Claude Code or Codex, driven by five skills & \file{agents.ts} \\
+-- & supervisor & stall/thrash detector with a citing directive & \file{supervise.ts} \\
+-- & trajectory & \file{.avo/attempts.jsonl}, \file{.avo/runs/}, \file{.avo/worktrees/} (never committed) & \file{score.ts} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=0.55cm and 0.7cm]
+  \node[box] (agent) {\textbf{Agent} $=\Vary$\\[-1pt]\scriptsize reads the past,\\[-2pt]\scriptsize makes one change};
+  \node[box, right=of agent] (score) {\textbf{\cmd{avo score}}\\[-1pt]\scriptsize runs \file{.avo/score}\\[-2pt]\scriptsize one JSON line};
+  \node[hl, right=of score] (commit) {\textbf{\cmd{avo commit}}\\[-1pt]\scriptsize keep only if it\\[-2pt]\scriptsize beats the best};
+  \node[box, right=of commit] (sup) {\textbf{\cmd{avo supervise}}\\[-1pt]\scriptsize stuck, or going\\[-2pt]\scriptsize in circles?};
+  \node[store, below=1.1cm of score, xshift=1.6cm, minimum width=8.4cm, align=center] (st)
+    {\textbf{repository state}\quad $\Pt$: commits $+$ trailers $+$ notes $+$ \file{lineage/}
+     \quad memory: versions, dead ends\\ $\K$: \file{knowledge/} $+$ \file{lineage/}
+     \quad trajectory: \file{.avo/attempts.jsonl}};
+  \draw[arr] (agent) -- (score);
+  \draw[arr] (score) -- (commit);
+  \draw[arr] (commit) -- (sup);
+  \draw[arr] (sup.north) -- ++(0,0.55) -| node[pos=0.25, above, lbl]
+    {next turn: fresh process $+$ directive if stuck} (agent.north);
+  \draw[darr] (st.west) -| node[pos=0.7, left, lbl] {read\\first} (agent.south);
+  \draw[darr] (commit.south) -- node[right, lbl] {version or\\dead end} (commit.south |- st.north);
+  \draw[darr] (st.north -| sup.south) -- node[right, lbl] {cite} (sup.south);
+\end{tikzpicture}
+\caption{The avocode loop. The agent proposes; the score and the commit rule decide. Every
+outcome, kept or refused, is written to the repository that the next turn reads.}
+\label{fig:loop}
+\end{figure}
+
+\subsection{Three layers}
+
+avocode has three layers, and only the first is required.
+\begin{description}[leftmargin=*,itemsep=2pt,font=\normalfont\bfseries]
+  \item[CLI.] \file{bin/avo} is a bash shim that runs \file{src/main.ts} through \cmd{tsx}. There is
+    no build step. The CLI is the only interface that must exist. An invariant of the design is
+    that every capability is reachable from \cmd{bash} before it gets any other binding.
+  \item[Skills.] Five Markdown files in \file{.agents/skills/} follow the Agent Skills format
+    \citep{agentskills2025spec}. They teach an agent the loop: \cmd{avo-vary} (one variation step),
+    \cmd{avo-score} (the $\f$ contract), \cmd{avo-lineage} (reading $\Pt$), \cmd{avo-knowledge}
+    ($\K$) and \cmd{avo-fanout} (parallel probes). The project calls the skills ``the product'':
+    the CLI enforces, and the skills teach.
+  \item[Bindings.] Native tools and an in-session supervisor for the pi agent
+    (\cref{sec:adapters}). These add convenience, never capability.
+\end{description}
+
+\subsection{One file, one contract}
+
+Each source file owns one contract (\cref{tab:modules}). The pi extension imports the same files
+as the CLI, so the commit rule, the detector and the recursion guards each exist once. Every
+external effect goes through an injectable seam: an \cmd{Io} sink for output, a \cmd{Runner} for
+processes and a \cmd{Fetcher} for the network. This is why the 441 unit tests run without a
+terminal, a scorer, git or a network.
+
+\begin{table}[t]
+\centering\small
+\caption{Source modules of avocode (TypeScript, about 9{,}100 lines in \file{src/}).}
+\label{tab:modules}
+\begin{tabularx}{\linewidth}{@{}l X r@{}}
+\toprule
+File & Owns & Lines \\
+\midrule
+\file{cli.ts} & subcommand dispatch, flags, exit codes & 162 \\
+\file{score.ts} & $\f$: run \file{.avo/score}, validate, normalize into an attempt & 644 \\
+\file{config.ts} & \file{.avo/config.json}: reduction, noise floor, configs, thresholds & 172 \\
+\file{compare.ts} & the commit rule's comparator over the score vector & 235 \\
+\file{lineage.ts} & $\Pt$: \avo{commit}, \avo{lineage}, \avo{best} & 805 \\
+\file{mem.ts} & memory: beads with a JSONL fallback & 447 \\
+\file{knowledge.ts} & $\K$: qmd collections, local fallback, ingest with provenance & 985 \\
+\file{websearch.ts} & $\K$ from the web: three backends behind one seam & 324 \\
+\file{agents.ts} & headless agent templates; one turn as \cmd{fan} and \cmd{run} see it & 436 \\
+\file{fan.ts} & \avo{fan}: worktrees, probes, guards, promote, resume & 1065 \\
+\file{supervise.ts} & \avo{supervise}: stall/thrash detector and directive & 550 \\
+\file{run.ts} & \avo{run}: the continuous loop and its manifest & 823 \\
+\file{init.ts}, \file{install.ts}, \file{doctor.ts}, \file{skills.ts} & scaffolding, agent wiring, dependency checks, skill validation & 927 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Design invariants}
+\label{sec:invariants}
+
+The design document lists nine invariants. They explain most choices in the rest of the article.
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+  \item \avo{commit} is the only writer of the committed lineage.
+  \item A failing $\f$ never yields a commit.
+  \item Every subcommand supports \cmd{--json}.
+  \item Degrade, never crash: each optional tool has a named fallback and one warning.
+  \item Idempotent by construction (\cmd{init}, \cmd{install}, \cmd{commit}).
+  \item Never leak secrets: report the presence of a key, never its value.
+  \item Worktrees are disposable; the main branch is not.
+  \item CLI first: a capability is reachable from \cmd{bash} before any binding.
+  \item The skills are the product.
+\end{enumerate}

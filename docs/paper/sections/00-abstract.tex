@@ -1,0 +1,25 @@
+\begin{abstract}
+Agentic Variation Operators (AVO) replace the fixed mutation and crossover steps of evolutionary
+search with an autonomous coding agent: $\Vary(\Pt) = \Agent(\Pt, \K, \f)$. NVIDIA used AVO to
+evolve attention kernels on B200 GPUs for seven days, and the result beat cuDNN and
+FlashAttention-4. The paper did not release its harness, its agent or its supervisor.
+
+This article describes \emph{avocode}, an open, agent-agnostic implementation of the AVO harness.
+avocode maps each formal object of AVO to a concrete artifact in a git repository. The scoring
+function $\f$ is an executable that prints one JSON line. The lineage $\Pt$ is a chain of git commits
+with score trailers. The knowledge base $\K$ is a hybrid-search index over documents \emph{and} over
+the lineage itself. The agent is any of three coding agents (pi, Claude Code or Codex), driven by
+five portable skill files. We make precise what the paper leaves open. The commit rule is weak
+Pareto dominance over a score vector, with strict gain on at least one configuration and a
+relative noise floor. The supervisor is a deterministic detector of two signals, \emph{stall} and
+\emph{thrash}, that emits a directive citing prior versions, recorded dead ends and unread
+documents. A fan-out operator runs $N$ probes in disposable git worktrees as a bounded first step
+toward the population search that the paper leaves as future work.
+
+On a fuzzy string search benchmark, two runs of the loop with Claude Code (65 minutes in total)
+committed seven versions and cut the median search time from \SI{1810}{ms} to \SI{0.231}{ms}, a
+$7837\times$ speedup, with no regression committed. One of the seven steps, a pigeonhole partition
+index, is absent from the hand-written reference solutions. We also report what this evidence does
+not show. The supervisor never fired in a real run, all results come from one benchmark and one
+agent, and the integrity of $\f$ rests partly on convention rather than enforcement.
+\end{abstract}

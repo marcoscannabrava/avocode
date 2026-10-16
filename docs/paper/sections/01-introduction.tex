@@ -1,0 +1,70 @@
+\section{Introduction}
+\label{sec:intro}
+
+Evolutionary search improves a solution by repeating two steps. A \emph{variation} operator makes
+new candidates from old ones, and a \emph{selection} step keeps the better ones
+\citep{back1997handbook}. For decades the variation operator was hand-designed: bit flips,
+subtree swaps and crossover \citep{oneill2010openissues}. Large language models (LLMs) changed this. In
+ELM \citep{lehman2022elm}, FunSearch \citep{romeraparedes2024funsearch}, EvoPrompting
+\citep{chen2023evoprompting} and AlphaEvolve \citep{novikov2025alphaevolve}, an LLM writes the new
+candidate. But a fixed framework still samples the parents, runs the evaluation and manages the
+population. The LLM fills one slot in a pipeline:
+\begin{equation}
+  \Vary(\Pt) = \Generate\big(\Sample(\Pt)\big).
+  \label{eq:intro-generate}
+\end{equation}
+
+The AVO paper \citep{chen2026avo} argues that this slot is too small. An LLM confined to
+$\Generate$ ``produces a single output per invocation, with no ability to proactively consult
+reference materials, test its changes, interpret feedback, or revise its approach before committing
+a candidate'' \citep[\S1]{chen2026avo}. AVO gives the whole variation step to an autonomous coding
+agent:
+\begin{equation}
+  \Vary(\Pt) = \Agent(\Pt, \K, \f),
+  \label{eq:intro-agent}
+\end{equation}
+where $\Pt$ is the lineage of solutions and their scores, $\K$ is a domain knowledge base and $\f$
+is the scoring function. The agent decides what to read, what to edit and when to test. NVIDIA ran
+this operator for seven days on multi-head attention for Blackwell B200 GPUs. It committed 40
+versions and reached up to \SI{1668}{TFLOPS}, which is up to 3.5\% faster than cuDNN and up to
+10.5\% faster than FlashAttention-4 on the tested configurations.
+
+The paper's result is about kernels. Its \emph{harness} is not. Equation~\eqref{eq:intro-agent}
+needs only four things: a way to measure a candidate, a record of the versions that survived, a
+place to look things up, and an agent. None of them is specific to GPUs. But the paper releases no
+code, names no model and gives no supervisor thresholds. It leaves the acceptance rule for a
+vector score as the phrase ``matches or improves''. A reader who wants to apply AVO to a different
+problem has to rebuild the harness from the prose.
+
+This article describes such a rebuild. \emph{avocode} is a command-line tool (\cmd{avo}) and a set
+of agent skills that turn any git repository with a measurable score into an AVO loop. Its thesis
+is that the harness generalizes past attention kernels to any repository with a strict, cheap
+scorer. The design follows one rule throughout: the agent proposes, and the measurement decides.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{A concrete mapping of AVO to a repository} (\cref{sec:overview}). $\f$ becomes an
+    executable with a one-line JSON contract, $\Pt$ becomes git commits with score trailers, and
+    $\K$ becomes a hybrid-search index whose corpus includes the lineage itself.
+  \item \textbf{A precise commit rule} (\cref{sec:lineage}). We define acceptance as weak Pareto
+    dominance over the score vector with strict gain on at least one configuration and a
+    symmetric relative noise floor. We state the invariants this rule gives and the ways it
+    resists gaming.
+  \item \textbf{An external, deterministic supervisor} (\cref{sec:supervise}). It detects two
+    signals, stall and thrash, and emits a directive that \emph{cites} prior versions, recorded
+    dead ends and documents in $\K$ that no version has used.
+  \item \textbf{Agent-agnostic delivery} (\cref{sec:adapters}). The same five skill files drive
+    pi, Claude Code and Codex. Every capability is reachable from a shell.
+  \item \textbf{A bounded fan-out operator} (\cref{sec:fan}). \avo{fan} runs $N$ probes in
+    disposable git worktrees on a small model. It is a first, local step toward the population
+    search that the paper defers.
+  \item \textbf{An empirical case study and an honest list of limits} (\cref{sec:eval,sec:limits}).
+    Two runs on a fuzzy search benchmark reach a $7837\times$ speedup with no committed
+    regression. We also show where the evidence is thin.
+\end{enumerate}
+
+\paragraph{Outline.} \Cref{sec:background} places AVO among related work. \Cref{sec:avo}
+summarizes the AVO paper. \Cref{sec:overview,sec:score,sec:lineage,sec:orchestration} describe
+avocode, from the system view down to the commit rule and the loop. \Cref{sec:eval} reports
+results. \Cref{sec:discussion} compares avocode with the paper, and \cref{sec:limits} lists
+limitations and future work.

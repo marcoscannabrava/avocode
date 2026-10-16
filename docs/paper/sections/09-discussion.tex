@@ -1,0 +1,93 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Fidelity to AVO}
+
+\Cref{tab:fidelity} compares avocode with the paper, object by object. Where the paper is specific,
+avocode follows it: a single lineage, versions as git commits with scores, a vector $\f$ with a
+correctness gate, a knowledge base, and a supervisor for stall and unproductive cycles. Where the
+paper is silent, avocode has to choose, and it chooses the stricter option each time.
+
+\begin{table}[t]
+\centering\small
+\caption{avocode compared with the AVO paper.}
+\label{tab:fidelity}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+Aspect & AVO paper & avocode \\
+\midrule
+Domain & CUDA attention kernels on B200 & any repository with \file{.avo/score} \\
+$\f$ & vector of TFLOPS per config; 0 if incorrect & JSON line with optional vector; \cmd{null} if $\neg\pass$, refused before ranking \\
+Acceptance & ``matches or improves'' the best; vector rule and tolerance not given & \cref{def:commit}: dominance, strict gain on one config, relative floor $\varphi$; ties refused \\
+Anti-gaming & not discussed & re-score at commit; no measuring less; frozen direction; bench hash gates \\
+$\Pt$ storage & git commit with its score & commit $+$ trailers $+$ git note $+$ \file{lineage/vNNN.md} \\
+Failed attempts & inside the agent's context, then lost & attempt log and content-keyed dead ends, read by later sessions \\
+$\K$ & CUDA/PTX docs, FA4 source & \file{knowledge/} with provenance $+$ the lineage itself, hybrid search \\
+Agent & one internal agent, unnamed LLMs & pi, Claude Code or Codex via portable skills \\
+Continuity & one conversation for 7 days & fresh process per turn; state in the repository \\
+Supervisor & a supervisor agent; mechanism not given & deterministic stall/thrash detector; citing directive; no LLM call \\
+Population & single lineage; branching is future work & single lineage $+$ \avo{fan} probes, one promoted \\
+Scale of evidence & 7 days, 40 versions, $>$500 directions & 65 minutes, 7 versions, 9 turns \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Strict acceptance and its cost}
+
+Requiring a strict gain (\cref{eq:gain}) keeps the lineage a record of progress, makes ``best $=$
+newest'' correct, and stops noise from committing non-changes. It has two costs that the case
+studies make visible.
+
+First, a monotone lineage cannot take a worse step to reach a better region. The project's own blog
+post compares this to digging for diamonds and stopping just short: a promising idea whose first
+implementation regresses becomes a dead end. Run~2 shows that a fresh agent can reach the same idea
+again and implement it better, but nothing in the harness asks it to. Non-monotone acceptance in the
+style of simulated annealing, or an archive of promising-but-refused candidates, would address this
+at the price of a more complex lineage.
+
+Second, the floor $\varphi$ interacts with the ``one idea per candidate'' rule. A real gain smaller
+than $\varphi$ cannot commit alone, so the agent bundles it with a partner. That makes a later
+refusal harder to attribute. A rule that requires both precision and small steps is in tension
+whenever the steps are smaller than the noise. Better measurement, for example repeated sampling of
+the candidate and re-measuring the incumbent on the same machine, would shrink $\varphi$ and ease
+the tension. avocode does neither today; it compares a fresh measurement with a stored one.
+
+\subsection{A deterministic supervisor}
+
+The paper's supervisor is drawn as an agent. avocode's is a counter, a signature matcher and a
+template. This is a deliberate trade. A deterministic supervisor is cheap enough to run after every
+turn, cannot hallucinate a citation, and is easy to test at its exact firing point. It leaves the
+judgment of novelty to the main agent and gives it evidence instead of advice: the versions it
+must not re-derive, the dead ends it must not retry, and the documents nobody has read. The cost is
+that it cannot recognize a repeated \emph{idea} that fails in a new way, or a plateau of tiny
+committed gains. Whether this is enough is open, because the supervisor never fired in a real run.
+
+\subsection{Externalized memory as the substrate of continuity}
+
+The largest structural change from the paper is that avocode's agent is stateless. The paper's agent
+carries its history in context for seven days, and the paper does not say how it handles context
+limits. In avocode, every turn starts blank, and continuity lives in four files and a git history.
+This has three effects. Any agent can be the operator, including a different one on each turn. A
+crash loses at most one turn. And everything the loop learned can be audited, searched and reused by
+a later session or a human. The cost is that each turn spends tokens re-reading the past; the
+cache-read volume in run~2 (5.6 million tokens over three turns) reflects this.
+
+\subsection{Agent-agnosticism}
+
+Because the enforcement lives in the CLI and the instructions live in skills, the same harness runs
+under three agents with no per-agent logic in the commit rule. Each adapter is a short command
+template plus an output parser. The design forbids any capability that exists only as a pi tool, so the pi
+extension can only make things faster or more convenient, never different.
+
+\subsection{Self-hosting}
+
+avocode was built by a loop of the same shape. An outer loop, \emph{ralph}, re-invoked a coding agent
+with a fixed prompt: orient from \file{PLAN.md} and the last line of \file{PROGRESS.jsonl}, run the
+health check, pick one task, prove it with a transcript in \file{evidence/}, commit, hand off and
+exit. The agent had no memory between runs. The core harness was built in one run of about three
+hours, and the remaining slices and four bug fixes in a second run of about four and a half hours,
+for a recorded cost of \$129 over 18 iterations. The difference from \avo{run} is the fitness signal:
+ralph's gate is ``lint, type check and tests pass'' plus a human-readable transcript, while \avo{run}'s
+gate is a number and \cref{def:commit}. Several design points of \avo{run} came from running ralph,
+including how it handles interrupts: an orphaned agent session once kept editing the checkout after
+its loop was stopped, and two agents committed to one tree.

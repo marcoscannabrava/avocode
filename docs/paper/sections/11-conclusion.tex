@@ -1,0 +1,18 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+AVO's central idea is that the variation operator of evolutionary search can be a whole coding
+agent rather than one LLM call. The paper showed this on attention kernels but left its harness
+unpublished and several of its rules unstated. avocode is an open implementation of that harness. It
+turns each formal object of AVO into a plain artifact in a git repository: $\f$ is a script that
+prints one JSON line, $\Pt$ is a chain of commits with score trailers, $\K$ is a search index whose
+corpus includes the lineage, and the agent is any of three coding agents taught by five skill files.
+It also makes the open rules precise. Acceptance is vector dominance with a strict gain and a noise
+floor, and stagnation is detected by two deterministic signals that steer with citations rather
+than advice.
+
+On a fuzzy search benchmark, the loop found a $7837\times$ speedup in about an hour of agent time,
+committed no regression, and found one technique that its authors had not written down. That
+evidence is narrow: one target, one agent, two runs, and a supervisor that never had to act. The
+harness is ready for the experiments that would test AVO's claim more broadly, and the most useful
+ones are the hardest: a target that plateaus, a population, and a kernel.

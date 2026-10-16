@@ -1,0 +1,67 @@
+\section{Limitations and future work}
+\label{sec:limits}
+
+\subsection{Limitations of the evidence}
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{One target, one agent, one machine, two runs.} All agent results come from two
+    \avo{run} sessions with Claude Code on \cmd{fuzzysearch}. There are no repeated runs, no
+    variance estimate, and no comparison between agents.
+  \item \textbf{The runs are not independent.} Run~2 resumed run~1's lineage. The $7837\times$
+    figure spans both.
+  \item \textbf{The runs stopped on a watchdog.} The best version is a lower bound. v7 was still
+    gaining 17\% per turn.
+  \item \textbf{The speedup depends on the baseline.} The seed's measured time differs between
+    sources, from \SI{356}{ms} in an early design note to \SIrange{1635}{1810}{ms} in committed
+    transcripts. The fast end agrees across sources. Ratios between versions are more stable than
+    ratios against v0.
+  \item \textbf{Timing noise.} Fresh re-measurements drifted $+0.9\%$ to $+12.9\%$, and the
+    scripted ladder's headroom moved between $1782\times$ and $1864\times$ across regenerations,
+    against a floor of 3\%.
+  \item \textbf{The supervisor is untested in practice.} It fired zero times in nine real turns. Its
+    default threshold of 5 comes from the design sketch, not from measurement.
+  \item \textbf{\avo{fan} is untested in practice.} No small-model key was available, so no real
+    run used it, and the claimed cost split between cheap probes and expensive refinement is
+    unmeasured.
+  \item \textbf{$\K$ was seeded by hand}, with notes that name the relevant algorithm families, and
+    qmd and web ingest were not used.
+  \item \textbf{The runs were supervised by a human} who set up $\K$, the watchdog and a
+    \cmd{PATH} workaround, and who removed the refused candidate before run~2.
+  \item \textbf{No ARC-AGI-3 agent result} and no GPU kernel target. avocode reproduces AVO's
+    harness, not its headline result.
+  \item \textbf{No ablations.} As in the paper, neither $\K$, memory nor the supervisor is ablated,
+    and there is no comparison with a $\Generate \circ \Sample$ baseline at equal cost.
+\end{enumerate}
+
+\subsection{Limitations of the system}
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Scorer integrity rests partly on convention.} Nothing in the harness stops an edit to
+    \file{.avo/score} that inflates its numbers. The benchmark hash gates and the external audit
+    close part of this gap, but only after the run. Locking or hashing the scorer at the harness
+    level, and refusing any candidate whose diff touches it, is a simple next step.
+  \item \textbf{The incumbent is never re-measured.} A drift in the machine goes unnoticed.
+  \item \textbf{In-band drift.} With $\varphi > 0$, small losses inside the band can accumulate on one
+    config over many versions.
+  \item \textbf{No cost or wall-clock budget} in \avo{run}.
+  \item \textbf{\avo{commit} does not re-index qmd.} New lineage pages are invisible to qmd until
+    \avo{know reindex} runs; the local fallback sees them at once.
+\end{enumerate}
+
+\subsection{Future work}
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Populations and archives.} Promote \avo{fan} from a local probe to a population:
+    keep promising refused candidates in an archive, in the spirit of MAP-Elites
+    \citep{mouret2015mapelites}, and let later turns branch from them.
+  \item \textbf{Non-monotone acceptance.} Allow bounded regressions on a side branch that must be
+    repaid within $k$ steps before the branch can merge into the lineage.
+  \item \textbf{Better noise handling.} Repeated sampling with a confidence bound, and re-measuring
+    the incumbent beside the candidate.
+  \item \textbf{Tuning the supervisor} on a target that plateaus, and an optional LLM supervisor for
+    comparison with the deterministic one.
+  \item \textbf{Harness-level scorer locking} and a cost cap.
+  \item \textbf{A GPU kernel target}, to test whether the harness can approach the paper's result
+    with public agents, and an ARC-AGI-3 agent run scored on the holdout.
+  \item \textbf{Ablations} of $\K$, memory, the supervisor and fan-out, with repeated runs.
+\end{itemize}

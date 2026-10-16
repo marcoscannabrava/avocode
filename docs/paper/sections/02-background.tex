@@ -1,0 +1,122 @@
+\section{Background and related work}
+\label{sec:background}
+
+\subsection{Classical evolutionary computation}
+
+Genetic algorithms \citep{holland1992adaptation} and genetic programming \citep{koza1992gp} keep a
+population, vary it with blind syntactic operators, and select by fitness. Genetic programming is
+the direct ancestor of ``evolve code against an executable fitness function''. Its long-standing
+problems include operator locality, where a small syntactic change causes a large semantic change,
+and poor scaling to large programs \citep{oneill2010openissues}. The AVO paper cites this survey to
+motivate operators that understand code.
+
+The closest classical model of avocode is the $(1+1)$ evolutionary algorithm
+\citep{back1997handbook,droste2002oneplusone}. It keeps one parent, mutates it, and keeps the child
+if it is at least as good. avocode differs in two ways. It accepts by dominance over a score vector
+rather than by a scalar $\geq$, and it refuses ties, so it allows no neutral drift. With \avo{fan},
+the scheme becomes $(1+\lambda)$: $\lambda$ probes run in parallel, and at most one is promoted. A
+single elitist lineage is a hill climber, and its known failure is stagnation at a local optimum
+\citep{russell2020aima}. Novelty search \citep{lehman2011novelty} and quality-diversity archives
+such as MAP-Elites \citep{mouret2015mapelites} answer this by keeping diverse stepping stones.
+AVO and avocode drop the archive on purpose and rely on the agent, which reads the whole lineage,
+to supply diversity. \Cref{sec:limits} returns to this cost.
+
+\subsection{LLMs as variation operators}
+
+ELM \citep{lehman2022elm} first used a code LLM as the mutation operator inside MAP-Elites.
+Language model crossover \citep{meyerson2024lmx} puts several parents in one prompt. EvoPrompting
+\citep{chen2023evoprompting}, EvoPrompt \citep{guo2023evoprompt} and Promptbreeder
+\citep{fernando2023promptbreeder} evolve architectures and prompts in the same way. OPRO
+\citep{yang2024opro} is the simplest ``lineage in context'' optimizer: past solutions and their
+scores go into the prompt. FunSearch \citep{romeraparedes2024funsearch} paired a code LLM with an
+evaluator and an island-based program database, and found new cap-set constructions. AlphaEvolve
+\citep{novikov2025alphaevolve} scaled this to whole files, an LLM ensemble and asynchronous
+evaluators, with results in matrix multiplication, scheduling and kernels
+\citep{georgiev2025mathexploration}. ReEvo \citep{ye2024reevo} adds a reflection stage, and
+LoongFlow \citep{wan2025loongflow} replaces random mutation with a plan--execute--summarize cycle.
+
+Open re-implementations exist. OpenEvolve \citep{sharma2025openevolve} rebuilds AlphaEvolve's
+pipeline. ShinkaEvolve \citep{lange2025shinkaevolve} adds novelty rejection and a bandit over
+models for sample efficiency, and CodeEvolve \citep{assumpcao2025codeevolve} uses island search
+over a CVT-MAP-Elites archive. These all implement the fixed $\Generate \circ \Sample$ pipeline that
+AVO removes. The avocode design notes reject them as a base for this reason. Another line changes
+the operator's weights rather than its context, through test-time reinforcement learning
+\citep{yuksekgonul2026ttdiscover,yan2026pacevolve}. avocode trains nothing; it only shapes the
+context through the lineage, memory and knowledge.
+
+\subsection{Coding agents and autonomous research loops}
+
+AVO depends on agents that can work at repository scale. ReAct \citep{yao2023react} interleaves
+reasoning and tool use. SWE-bench \citep{jimenez2024swebench} measures real issue resolution, and
+SWE-agent \citep{yang2024sweagent} shows that the agent--computer interface matters: a few
+well-designed commands raise scores a lot. avocode is an interface of this kind for evolution. It
+gives the agent a few commands with JSON output, and skills that say when to use each one. The
+operators it drives are pi \citep{zechner2025pi}, Claude Code \citep{anthropic2025claudecode} and
+Codex \citep{openai2025codexcli}; OpenHands \citep{wang2025openhands} could be added with one
+template.
+
+Reflexion \citep{shinn2023reflexion} stores verbal reflections after a failure, and Voyager
+\citep{wang2023voyager} keeps a library of executable skills. avocode makes both explicit and
+durable: dead ends and insights go to memory that a new session reads, and skills are files in the
+repository. AIDE \citep{jiang2025aide} searches a tree of scripts. The AI Scientist
+\citep{lu2024aiscientist,yamada2025aiscientistv2} automates a full research pipeline. The Darwin
+G\"odel Machine \citep{zhang2025dgm} evolves the agent itself, as do STOP, G\"odel Agent and ADAS
+\citep{zelikman2023stop,yin2024godelagent,hu2025adas}. These systems improve the operator; AVO and
+avocode improve a target with a fixed operator.
+
+The closest relatives of avocode appeared in 2026. Karpathy's \emph{autoresearch}
+\citep{karpathy2026autoresearch} is a minimal loop: an agent edits one training script, runs a
+five-minute job, and keeps the change only if validation loss improves. avocode generalizes it with
+a scorer contract, a score vector with a noise floor, recorded refusals, searchable memory, parallel
+probes and a supervisor. Bilevel Autoresearch \citep{qu2026bilevel} shows that improving the harness
+can matter as much as the model. Agora \citep{zhang2026agora} also uses git as the store of results,
+as a directed acyclic graph shared by many workers. SEDIMA \citep{abaskohi2026sedima} adds a memory of
+insights to evolutionary agents because memoryless search ``rediscovers the same improvements and
+re-encounters the same dead ends''. Chun et al.\ \citep{chun2026wastedcompute} list the failure
+modes of such agents: they fix the same bugs again and again and do not explore. avocode's dead-end
+memory, thrash detector and fan-out target exactly these modes.
+
+\subsection{LLMs for performance engineering}
+
+The FlashAttention series \citep{dao2022flashattention,dao2023flashattention2,shah2024flashattention3,zadouri2026flashattention4}
+and cuDNN \citep{chetlur2014cudnn} are AVO's baselines. KernelBench
+\citep{ouyang2025kernelbench} measures whether LLM kernels are both correct and fast, which has the
+same shape as avocode's $\f$: a correctness gate, then a metric. Kevin \citep{baronio2025kevin},
+CUDA-L1 \citep{li2025cudal1} and CUDA Agent \citep{dai2026cudaagent} train the refinement loop into
+the model; AVO and avocode put it into the harness. SOL-ExecBench \citep{lin2026solexecbench}
+scores against speed-of-light bounds, which a scorer could report as an absolute scale.
+
+\subsection{Evaluation integrity}
+
+An optimizer under strong pressure games its proxy
+\citep{manheim2018goodhart,amodei2016concrete,krakovna2020specgaming}. Evolutionary search has
+exploited bugs in fitness functions for decades \citep{lehman2020surprising}. With agents, the
+problem is faster and deliberate. METR reports frontier models that read the grader's answer or
+patch the timer \citep{metr2025rewardhacking}; in one case a model took the reference output from
+the call stack and disabled CUDA synchronization to fake a fast kernel. Sakana's AI CUDA Engineer
+\citep{lange2025aicudaengineer} withdrew speedups that came from an evaluation exploit, and
+robust-kbench \citep{lange2025robustkbench} closes such loopholes. ImpossibleBench
+\citep{zhong2025impossiblebench} measures how often agents exploit tests. The AVO paper does not
+discuss this threat in detail. avocode treats it as a first-class design concern
+(\cref{sec:gaming}).
+
+\Cref{tab:landscape} places avocode among these systems.
+
+\begin{table}[t]
+\centering\small
+\caption{Where avocode sits. ``Pipeline'' denotes FunSearch, AlphaEvolve, OpenEvolve and
+ShinkaEvolve.}
+\label{tab:landscape}
+\begin{tabularx}{\linewidth}{@{}l X X X@{}}
+\toprule
+Axis & Pipeline systems & AVO & avocode \\
+\midrule
+Operator & one LLM call in a fixed pipeline & one internal agent loop & any coding agent (pi, Claude Code, Codex) \\
+Selection & population, islands, MAP-Elites & single lineage, ``matches or improves'' & single lineage; vector dominance with a noise floor \\
+Diversity & archive, islands & agent reads the lineage & agent, \avo{fan} probes, supervisor \\
+Memory & program database & conversation history & git lineage, searchable $\K$, dead-end memory \\
+Integrity & sandboxed evaluator & not discussed & re-score at commit, no measuring less, hash gates, external audit \\
+Release & open (OpenEvolve, ShinkaEvolve) & none & open source \\
+\bottomrule
+\end{tabularx}
+\end{table}

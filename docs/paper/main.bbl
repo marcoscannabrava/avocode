@@ -1,0 +1,375 @@
+\begin{thebibliography}{69}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Abaskohi et~al.(2026)Abaskohi, Mostajabdaveh, and Zhou]{abaskohi2026sedima}
+Amirhossein Abaskohi, Mahdi Mostajabdaveh, and Zirui Zhou.
+\newblock {SEDIMA: Cross-Run Hierarchical Insight Memory for Evolutionary Search Agents}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2610.02361}.
+
+\bibitem[{Agent Skills}(2025)]{agentskills2025spec}
+{Agent Skills}.
+\newblock Agent skills specification.
+\newblock Web specification, 2025.
+\newblock URL \url{https://agentskills.io/specification}.
+
+\bibitem[Amodei et~al.(2016)Amodei, Olah, Steinhardt, Christiano, Schulman, and Mané]{amodei2016concrete}
+Dario Amodei, Chris Olah, Jacob Steinhardt, Paul Christiano, John Schulman, and Dan Mané.
+\newblock {Concrete Problems in AI Safety}, 2016.
+\newblock URL \url{https://arxiv.org/abs/1606.06565}.
+
+\bibitem[{Anthropic}(2025)]{anthropic2025claudecode}
+{Anthropic}.
+\newblock Claude code.
+\newblock Software and documentation, 2025.
+\newblock URL \url{https://code.claude.com/docs/en/overview}.
+
+\bibitem[{ARC Prize Foundation}(2026)]{arcprize2026arcagi3}
+{ARC Prize Foundation}.
+\newblock {ARC-AGI-3: A New Challenge for Frontier Agentic Intelligence}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2603.24621}.
+
+\bibitem[Assumpção et~al.(2025)Assumpção, Ferreira, Campos, and Murai]{assumpcao2025codeevolve}
+Henrique Assumpção, Diego Ferreira, Leandro Campos, and Fabricio Murai.
+\newblock {CodeEvolve: an open source evolutionary coding agent for algorithmic discovery and optimization}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2510.14150}.
+
+\bibitem[B{\"a}ck et~al.(1997)B{\"a}ck, Fogel, and Michalewicz]{back1997handbook}
+Thomas B{\"a}ck, David~B. Fogel, and Zbigniew Michalewicz, editors.
+\newblock \emph{Handbook of Evolutionary Computation}.
+\newblock IOP Publishing and Oxford University Press, 1997.
+\newblock \doi{10.1201/9781420050387}.
+
+\bibitem[Baronio et~al.(2025)Baronio, Marsella, Pan, Guo, and Alberti]{baronio2025kevin}
+Carlo Baronio, Pietro Marsella, Ben Pan, Simon Guo, and Silas Alberti.
+\newblock {Kevin: Multi-Turn RL for Generating CUDA Kernels}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2507.11948}.
+
+\bibitem[Chen et~al.(2023)Chen, Dohan, and So]{chen2023evoprompting}
+Angelica Chen, David~M. Dohan, and David~R. So.
+\newblock {EvoPrompting: Language Models for Code-Level Neural Architecture Search}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2302.14838}.
+
+\bibitem[Chen et~al.(2026)Chen, Ye, Xu, Ye, Liu, Hassani, Chen, Kerr, Wu, Xu, Chen, Chen, Kane, Krashinsky, Liu, Grover, Ceze, Bringmann, Tran, Liu, Xie, Lightstone, and Shi]{chen2026avo}
+Terry Chen, Zhifan Ye, Bing Xu, Zihao Ye, Timmy Liu, Ali Hassani, Tianqi Chen, Andrew Kerr, Haicheng Wu, Yang Xu, Yu-Jung Chen, Hanfeng Chen, Aditya Kane, Ronny Krashinsky, Ming-Yu Liu, Vinod Grover, Luis Ceze, Roger Bringmann, John Tran, Wei Liu, Fung Xie, Michael Lightstone, and Humphrey Shi.
+\newblock {AVO: Agentic Variation Operators for Autonomous Evolutionary Search}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2603.24517}.
+
+\bibitem[Chetlur et~al.(2014)Chetlur, Woolley, Vandermersch, Cohen, Tran, Catanzaro, and Shelhamer]{chetlur2014cudnn}
+Sharan Chetlur, Cliff Woolley, Philippe Vandermersch, Jonathan Cohen, John Tran, Bryan Catanzaro, and Evan Shelhamer.
+\newblock {cuDNN: Efficient Primitives for Deep Learning}, 2014.
+\newblock URL \url{https://arxiv.org/abs/1410.0759}.
+
+\bibitem[Chun et~al.(2026)Chun, Acherjee, Rao, Chen, Meidani, Bruss, and Goldblum]{chun2026wastedcompute}
+Au~Kwok Chun, Abhigyan Acherjee, Amrutha Rao, Zaiqian Chen, Kazem Meidani, C.~Bayan Bruss, and Micah Goldblum.
+\newblock {Recovering Wasted Compute in Autoresearch Agents}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2608.10424}.
+
+\bibitem[Dai et~al.(2026)Dai, Wu, Yu, ang Gao, Li, Jiang, Lou, Song, Yu, Chen, Ma, Zhang, Liu, Wang, Liu, and Zhou]{dai2026cudaagent}
+Weinan Dai, Hanlin Wu, Qiying Yu, Huan ang Gao, Jiahao Li, Chengquan Jiang, Weiqiang Lou, Yufan Song, Hongli Yu, Jiaze Chen, Wei-Ying Ma, Ya-Qin Zhang, Jingjing Liu, Mingxuan Wang, Xin Liu, and Hao Zhou.
+\newblock {CUDA Agent: Large-Scale Agentic RL for High-Performance CUDA Kernel Generation}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2602.24286}.
+
+\bibitem[Dao(2023)]{dao2023flashattention2}
+Tri Dao.
+\newblock {FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2307.08691}.
+
+\bibitem[Dao et~al.(2022)Dao, Fu, Ermon, Rudra, and Ré]{dao2022flashattention}
+Tri Dao, Daniel~Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré.
+\newblock {FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness}, 2022.
+\newblock URL \url{https://arxiv.org/abs/2205.14135}.
+
+\bibitem[Droste et~al.(2002)Droste, Jansen, and Wegener]{droste2002oneplusone}
+Stefan Droste, Thomas Jansen, and Ingo Wegener.
+\newblock On the analysis of the (1+1) evolutionary algorithm.
+\newblock \emph{Theoretical Computer Science}, 276\penalty0 (1--2):\penalty0 51--81, 2002.
+\newblock \doi{10.1016/S0304-3975(01)00182-7}.
+
+\bibitem[Fernando et~al.(2023)Fernando, Banarse, Michalewski, Osindero, and Rocktäschel]{fernando2023promptbreeder}
+Chrisantha Fernando, Dylan Banarse, Henryk Michalewski, Simon Osindero, and Tim Rocktäschel.
+\newblock {Promptbreeder: Self-Referential Self-Improvement Via Prompt Evolution}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2309.16797}.
+
+\bibitem[Georgiev et~al.(2025)Georgiev, Gómez-Serrano, Tao, and Wagner]{georgiev2025mathexploration}
+Bogdan Georgiev, Javier Gómez-Serrano, Terence Tao, and Adam~Zsolt Wagner.
+\newblock {Mathematical exploration and discovery at scale}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2511.02864}.
+
+\bibitem[Guo et~al.(2023)Guo, Wang, Guo, Li, Song, Tan, Liu, Bian, and Yang]{guo2023evoprompt}
+Qingyan Guo, Rui Wang, Junliang Guo, Bei Li, Kaitao Song, Xu~Tan, Guoqing Liu, Jiang Bian, and Yujiu Yang.
+\newblock {EvoPrompt: Connecting LLMs with Evolutionary Algorithms Yields Powerful Prompt Optimizers}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2309.08532}.
+
+\bibitem[Holland(1992)]{holland1992adaptation}
+John~H. Holland.
+\newblock \emph{Adaptation in Natural and Artificial Systems}.
+\newblock MIT Press, 1992.
+\newblock \doi{10.7551/mitpress/1090.001.0001}.
+\newblock First published 1975 by University of Michigan Press.
+
+\bibitem[Hu et~al.(2024)Hu, Lu, and Clune]{hu2025adas}
+Shengran Hu, Cong Lu, and Jeff Clune.
+\newblock {Automated Design of Agentic Systems}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2408.08435}.
+
+\bibitem[Jiang et~al.(2025)Jiang, Schmidt, Srikanth, Xu, Kaplan, Jacenko, and Wu]{jiang2025aide}
+Zhengyao Jiang, Dominik Schmidt, Dhruv Srikanth, Dixing Xu, Ian Kaplan, Deniss Jacenko, and Yuxiang Wu.
+\newblock {AIDE: AI-Driven Exploration in the Space of Code}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.13138}.
+
+\bibitem[Jimenez et~al.(2023)Jimenez, Yang, Wettig, Yao, Pei, Press, and Narasimhan]{jimenez2024swebench}
+Carlos~E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan.
+\newblock {SWE-bench: Can Language Models Resolve Real-World GitHub Issues?}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2310.06770}.
+
+\bibitem[Karpathy(2026)]{karpathy2026autoresearch}
+Andrej Karpathy.
+\newblock autoresearch: {AI} agents running research on single-{GPU} nanochat training automatically.
+\newblock GitHub repository, 2026.
+\newblock URL \url{https://github.com/karpathy/autoresearch}.
+
+\bibitem[Koza(1992)]{koza1992gp}
+John~R. Koza.
+\newblock \emph{Genetic Programming: On the Programming of Computers by Means of Natural Selection}.
+\newblock MIT Press, Cambridge, MA, 1992.
+\newblock ISBN 978-0-262-11170-6.
+
+\bibitem[Krakovna et~al.(2020)Krakovna, Uesato, Mikulik, Rahtz, Everitt, Kumar, Kenton, Leike, and Legg]{krakovna2020specgaming}
+Victoria Krakovna, Jonathan Uesato, Vladimir Mikulik, Matthew Rahtz, Tom Everitt, Ramana Kumar, Zac Kenton, Jan Leike, and Shane Legg.
+\newblock Specification gaming: the flip side of {AI} ingenuity.
+\newblock Google DeepMind blog, 2020.
+\newblock URL \url{https://deepmind.google/discover/blog/specification-gaming-the-flip-side-of-ai-ingenuity/}.
+
+\bibitem[Lange et~al.(2025{\natexlab{a}})Lange, Imajuku, and Cetin]{lange2025shinkaevolve}
+Robert~Tjarko Lange, Yuki Imajuku, and Edoardo Cetin.
+\newblock {ShinkaEvolve: Towards Open-Ended And Sample-Efficient Program Evolution}, 2025{\natexlab{a}}.
+\newblock URL \url{https://arxiv.org/abs/2509.19349}.
+
+\bibitem[Lange et~al.(2025{\natexlab{b}})Lange, Prasad, Sun, Faldor, Tang, and Ha]{lange2025aicudaengineer}
+Robert~Tjarko Lange, Aaditya Prasad, Qi~Sun, Maxence Faldor, Yujin Tang, and David Ha.
+\newblock The {AI} {CUDA} engineer: Agentic {CUDA} kernel discovery, optimization and composition.
+\newblock Sakana AI technical report, 2025{\natexlab{b}}.
+\newblock URL \url{https://pub.sakana.ai/ai-cuda-engineer}.
+
+\bibitem[Lange et~al.(2025{\natexlab{c}})Lange, Sun, Prasad, Faldor, Tang, and Ha]{lange2025robustkbench}
+Robert~Tjarko Lange, Qi~Sun, Aaditya Prasad, Maxence Faldor, Yujin Tang, and David Ha.
+\newblock {Towards Robust Agentic CUDA Kernel Benchmarking, Verification, and Optimization}, 2025{\natexlab{c}}.
+\newblock URL \url{https://arxiv.org/abs/2509.14279}.
+
+\bibitem[Lehman and Stanley(2011)]{lehman2011novelty}
+Joel Lehman and Kenneth~O. Stanley.
+\newblock Abandoning objectives: Evolution through the search for novelty alone.
+\newblock \emph{Evolutionary Computation}, 19\penalty0 (2):\penalty0 189--223, 2011.
+\newblock \doi{10.1162/EVCO_a_00025}.
+
+\bibitem[Lehman et~al.(2018)Lehman, Clune, Misevic, Adami, Altenberg, Beaulieu, Bentley, Bernard, Beslon, Bryson, et~al.]{lehman2020surprising}
+Joel Lehman, Jeff Clune, Dusan Misevic, Christoph Adami, Lee Altenberg, Julie Beaulieu, Peter~J. Bentley, Samuel Bernard, Guillaume Beslon, David~M. Bryson, et~al.
+\newblock {The Surprising Creativity of Digital Evolution: A Collection of Anecdotes from the Evolutionary Computation and Artificial Life Research Communities}, 2018.
+\newblock URL \url{https://arxiv.org/abs/1803.03453}.
+
+\bibitem[Lehman et~al.(2022)Lehman, Gordon, Jain, Ndousse, Yeh, and Stanley]{lehman2022elm}
+Joel Lehman, Jonathan Gordon, Shawn Jain, Kamal Ndousse, Cathy Yeh, and Kenneth~O. Stanley.
+\newblock {Evolution through Large Models}, 2022.
+\newblock URL \url{https://arxiv.org/abs/2206.08896}.
+
+\bibitem[Li et~al.(2025)Li, Wang, Wang, Li, and Shum]{li2025cudal1}
+Xiaoya Li, Albert Wang, Guoyin Wang, Jiwei Li, and Chris Shum.
+\newblock {CUDA-L1: Improving CUDA Optimization via Contrastive Reinforcement Learning}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2507.14111}.
+
+\bibitem[Lin et~al.(2026)Lin, Modi, Hari, Huang, Ye, Qin, Zhou, Zhang, Wang, Damani, et~al.]{lin2026solexecbench}
+Edward Lin, Sahil Modi, Siva Kumar~Sastry Hari, Qijing Huang, Zhifan Ye, Nestor Qin, Fengzhe Zhou, Yuan Zhang, Jingquan Wang, Sana Damani, et~al.
+\newblock {SOL-ExecBench: Speed-of-Light Benchmarking for Real-World GPU Kernels Against Hardware Limits}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2603.19173}.
+
+\bibitem[Lu et~al.(2024)Lu, Lu, Lange, Foerster, Clune, and Ha]{lu2024aiscientist}
+Chris Lu, Cong Lu, Robert~Tjarko Lange, Jakob Foerster, Jeff Clune, and David Ha.
+\newblock {The AI Scientist: Towards Fully Automated Open-Ended Scientific Discovery}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2408.06292}.
+
+\bibitem[L{\"u}tke(2025)]{lutke2025qmd}
+Tobi L{\"u}tke.
+\newblock qmd: mini {CLI} search engine for your docs, knowledge bases, meeting notes, whatever.
+\newblock GitHub repository, 2025.
+\newblock URL \url{https://github.com/tobi/qmd}.
+
+\bibitem[Manheim and Garrabrant(2018)]{manheim2018goodhart}
+David Manheim and Scott Garrabrant.
+\newblock {Categorizing Variants of Goodhart's Law}, 2018.
+\newblock URL \url{https://arxiv.org/abs/1803.04585}.
+
+\bibitem[{METR}(2025)]{metr2025rewardhacking}
+{METR}.
+\newblock Recent frontier models are reward hacking.
+\newblock METR blog, June 2025.
+\newblock URL \url{https://metr.org/blog/2025-06-05-recent-reward-hacking}.
+
+\bibitem[Meyerson et~al.(2024)Meyerson, Nelson, Bradley, Gaier, Moradi, Hoover, and Lehman]{meyerson2024lmx}
+Elliot Meyerson, Mark~J. Nelson, Herbie Bradley, Adam Gaier, Arash Moradi, Amy~K. Hoover, and Joel Lehman.
+\newblock Language model crossover: Variation through few-shot prompting.
+\newblock \emph{ACM Transactions on Evolutionary Learning and Optimization}, 4\penalty0 (4):\penalty0 1--40, 2024.
+\newblock \doi{10.1145/3694791}.
+
+\bibitem[Mouret and Clune(2015)]{mouret2015mapelites}
+Jean-Baptiste Mouret and Jeff Clune.
+\newblock {Illuminating search spaces by mapping elites}, 2015.
+\newblock URL \url{https://arxiv.org/abs/1504.04909}.
+
+\bibitem[Novikov et~al.(2025)Novikov, Vũ, Eisenberger, Dupont, Huang, Wagner, Shirobokov, Kozlovskii, Ruiz, Mehrabian, Kumar, See, Chaudhuri, Holland, Davies, Nowozin, Kohli, and Balog]{novikov2025alphaevolve}
+Alexander Novikov, Ngân Vũ, Marvin Eisenberger, Emilien Dupont, Po-Sen Huang, Adam~Zsolt Wagner, Sergey Shirobokov, Borislav Kozlovskii, Francisco J.~R. Ruiz, Abbas Mehrabian, M.~Pawan Kumar, Abigail See, Swarat Chaudhuri, George Holland, Alex Davies, Sebastian Nowozin, Pushmeet Kohli, and Matej Balog.
+\newblock {AlphaEvolve: A coding agent for scientific and algorithmic discovery}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2506.13131}.
+
+\bibitem[O'Neill et~al.(2010)O'Neill, Vanneschi, Gustafson, and Banzhaf]{oneill2010openissues}
+Michael O'Neill, Leonardo Vanneschi, Steven Gustafson, and Wolfgang Banzhaf.
+\newblock Open issues in genetic programming.
+\newblock \emph{Genetic Programming and Evolvable Machines}, 11\penalty0 (3--4):\penalty0 339--363, 2010.
+\newblock \doi{10.1007/s10710-010-9113-2}.
+
+\bibitem[{OpenAI}(2025{\natexlab{a}})]{openai2025codex}
+{OpenAI}.
+\newblock Introducing {Codex}.
+\newblock OpenAI announcement, 2025{\natexlab{a}}.
+\newblock URL \url{https://openai.com/index/introducing-codex/}.
+
+\bibitem[{OpenAI}(2025{\natexlab{b}})]{openai2025codexcli}
+{OpenAI}.
+\newblock Codex {CLI}: a lightweight coding agent that runs in your terminal.
+\newblock GitHub repository, 2025{\natexlab{b}}.
+\newblock URL \url{https://github.com/openai/codex}.
+
+\bibitem[Ouyang et~al.(2025)Ouyang, Guo, Arora, Zhang, Hu, Ré, and Mirhoseini]{ouyang2025kernelbench}
+Anne Ouyang, Simon Guo, Simran Arora, Alex~L. Zhang, William Hu, Christopher Ré, and Azalia Mirhoseini.
+\newblock {KernelBench: Can LLMs Write Efficient GPU Kernels?}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.10517}.
+
+\bibitem[Qu and Lu(2026)]{qu2026bilevel}
+Yaonan Qu and Meng Lu.
+\newblock {Bilevel Autoresearch: Meta-Autoresearching Itself}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2603.23420}.
+
+\bibitem[Romera-Paredes et~al.(2024)Romera-Paredes, Barekatain, Novikov, Balog, Kumar, Dupont, Ruiz, Ellenberg, Wang, Fawzi, Kohli, and Fawzi]{romeraparedes2024funsearch}
+Bernardino Romera-Paredes, Mohammadamin Barekatain, Alexander Novikov, Matej Balog, M.~Pawan Kumar, Emilien Dupont, Francisco J.~R. Ruiz, Jordan~S. Ellenberg, Pengming Wang, Omar Fawzi, Pushmeet Kohli, and Alhussein Fawzi.
+\newblock Mathematical discoveries from program search with large language models.
+\newblock \emph{Nature}, 625\penalty0 (7995):\penalty0 468--475, 2024.
+\newblock \doi{10.1038/s41586-023-06924-6}.
+
+\bibitem[Russell and Norvig(2020)]{russell2020aima}
+Stuart Russell and Peter Norvig.
+\newblock \emph{Artificial Intelligence: A Modern Approach}.
+\newblock Pearson, 4th edition, 2020.
+\newblock ISBN 978-0-13-461099-3.
+
+\bibitem[Shah et~al.(2024)Shah, Bikshandi, Zhang, Thakkar, Ramani, and Dao]{shah2024flashattention3}
+Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao.
+\newblock {FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2407.08608}.
+
+\bibitem[Sharma(2025)]{sharma2025openevolve}
+Asankhaya Sharma.
+\newblock {OpenEvolve}: an open-source evolutionary coding agent.
+\newblock GitHub repository, 2025.
+\newblock URL \url{https://github.com/algorithmicsuperintelligence/openevolve}.
+
+\bibitem[Shinn et~al.(2023)Shinn, Cassano, Berman, Gopinath, Narasimhan, and Yao]{shinn2023reflexion}
+Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao.
+\newblock {Reflexion: Language Agents with Verbal Reinforcement Learning}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2303.11366}.
+
+\bibitem[Wan et~al.(2025)Wan, Dai, Wang, Li, Wang, Mao, Lan, and Xiao]{wan2025loongflow}
+Chunhui Wan, Xunan Dai, Zhuo Wang, Minglei Li, Yanpeng Wang, Yinan Mao, Yu~Lan, and Zhiwen Xiao.
+\newblock {LoongFlow: Directed Evolutionary Search via a Cognitive Plan-Execute-Summarize Paradigm}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2512.24077}.
+
+\bibitem[Wang et~al.(2023)Wang, Xie, Jiang, Mandlekar, Xiao, Zhu, Fan, and Anandkumar]{wang2023voyager}
+Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar.
+\newblock {Voyager: An Open-Ended Embodied Agent with Large Language Models}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2305.16291}.
+
+\bibitem[Wang et~al.(2024)Wang, Li, Song, Xu, Tang, Zhuge, Pan, Song, Li, Singh, Tran, Li, Ma, Zheng, Qian, Shao, Muennighoff, Zhang, Hui, Lin, Brennan, Peng, Ji, and Neubig]{wang2025openhands}
+Xingyao Wang, Boxuan Li, Yufan Song, Frank~F. Xu, Xiangru Tang, Mingchen Zhuge, Jiayi Pan, Yueqi Song, Bowen Li, Jaskirat Singh, Hoang~H. Tran, Fuqiang Li, Ren Ma, Mingzhang Zheng, Bill Qian, Yanjun Shao, Niklas Muennighoff, Yizhe Zhang, Binyuan Hui, Junyang Lin, Robert Brennan, Hao Peng, Heng Ji, and Graham Neubig.
+\newblock {OpenHands: An Open Platform for AI Software Developers as Generalist Agents}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2407.16741}.
+
+\bibitem[Yamada et~al.(2025)Yamada, Lange, Lu, Hu, Lu, Foerster, Clune, and Ha]{yamada2025aiscientistv2}
+Yutaro Yamada, Robert~Tjarko Lange, Cong Lu, Shengran Hu, Chris Lu, Jakob Foerster, Jeff Clune, and David Ha.
+\newblock {The AI Scientist-v2: Workshop-Level Automated Scientific Discovery via Agentic Tree Search}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2504.08066}.
+
+\bibitem[Yan et~al.(2026)Yan, Peng, Coleman, Chen, Xie, Chen, He, Sachdeva, Wang, Chi, Venkataraman, Kang, Cheng, and Wang]{yan2026pacevolve}
+Minghao Yan, Bo~Peng, Benjamin Coleman, Ziqi Chen, Zhouhang Xie, Shuo Chen, Zhankui He, Noveen Sachdeva, Weili Wang, Ed~H. Chi, Shivaram Venkataraman, Wang-Cheng Kang, Derek~Zhiyuan Cheng, and Beidou Wang.
+\newblock {PACEvolve++: Improving Test-time Learning for Evolutionary Search Agents}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2605.07039}.
+
+\bibitem[Yang et~al.(2023)Yang, Wang, Lu, Liu, Le, Zhou, and Chen]{yang2024opro}
+Chengrun Yang, Xuezhi Wang, Yifeng Lu, Hanxiao Liu, Quoc~V. Le, Denny Zhou, and Xinyun Chen.
+\newblock {Large Language Models as Optimizers}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2309.03409}.
+
+\bibitem[Yang et~al.(2024)Yang, Jimenez, Wettig, Lieret, Yao, Narasimhan, and Press]{yang2024sweagent}
+John Yang, Carlos~E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press.
+\newblock {SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2405.15793}.
+
+\bibitem[Yao et~al.(2022)Yao, Zhao, Yu, Du, Shafran, Narasimhan, and Cao]{yao2023react}
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao.
+\newblock {ReAct: Synergizing Reasoning and Acting in Language Models}, 2022.
+\newblock URL \url{https://arxiv.org/abs/2210.03629}.
+
+\bibitem[Ye et~al.(2024)Ye, Wang, Cao, Berto, Hua, Kim, Park, and Song]{ye2024reevo}
+Haoran Ye, Jiarui Wang, Zhiguang Cao, Federico Berto, Chuanbo Hua, Haeyeon Kim, Jinkyoo Park, and Guojie Song.
+\newblock {ReEvo: Large Language Models as Hyper-Heuristics with Reflective Evolution}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2402.01145}.
+
+\bibitem[Yegge(2025)]{yegge2025beads}
+Steve Yegge.
+\newblock Beads: a memory upgrade for your coding agent.
+\newblock GitHub repository, 2025.
+\newblock URL \url{https://github.com/gastownhall/beads}.
+
+\bibitem[Yin et~al.(2024)Yin, Wang, Pan, Lin, Wan, and Wang]{yin2024godelagent}
+Xunjian Yin, Xinyi Wang, Liangming Pan, Li~Lin, Xiaojun Wan, and William~Yang Wang.
+\newblock {Gödel Agent: A Self-Referential Agent Framework for Recursive Self-Improvement}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2410.04444}.
+
+\bibitem[Yuksekgonul et~al.(2026)Yuksekgonul, Koceja, Li, Bianchi, McCaleb, Wang, Kautz, Choi, Zou, Guestrin, and Sun]{yuksekgonul2026ttdiscover}
+Mert Yuksekgonul, Daniel Koceja, Xinhao Li, Federico Bianchi, Jed McCaleb, Xiaolong Wang, Jan Kautz, Yejin Choi, James Zou, Carlos Guestrin, and Yu~Sun.
+\newblock {Learning to Discover at Test Time}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2601.16175}.
+
+\bibitem[Zadouri et~al.(2026)Zadouri, Hoehnerbach, Shah, Liu, Thakkar, and Dao]{zadouri2026flashattention4}
+Ted Zadouri, Markus Hoehnerbach, Jay Shah, Timmy Liu, Vijay Thakkar, and Tri Dao.
+\newblock {FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2603.05451}.
+
+\bibitem[Zechner(2025)]{zechner2025pi}
+Mario Zechner.
+\newblock pi: {AI} agent toolkit: unified {LLM} {API}, agent loop, {TUI}, coding agent {CLI}.
+\newblock GitHub repository and \url{https://pi.dev}, 2025.
+\newblock URL \url{https://github.com/earendil-works/pi}.
+
+\bibitem[Zelikman et~al.(2023)Zelikman, Lorch, Mackey, and Kalai]{zelikman2023stop}
+Eric Zelikman, Eliana Lorch, Lester Mackey, and Adam~Tauman Kalai.
+\newblock {Self-Taught Optimizer (STOP): Recursively Self-Improving Code Generation}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2310.02304}.
+
+\bibitem[Zhang et~al.(2025)Zhang, Hu, Lu, Lange, and Clune]{zhang2025dgm}
+Jenny Zhang, Shengran Hu, Cong Lu, Robert Lange, and Jeff Clune.
+\newblock {Darwin Godel Machine: Open-Ended Evolution of Self-Improving Agents}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.22954}.
+
+\bibitem[Zhang et~al.(2026)Zhang, Zou, Zhang, Hu, Zhang, Xu, Kautz, and Dong]{zhang2026agora}
+Yifan Zhang, Yunheng Zou, Shaokun Zhang, Jian Hu, Hao Zhang, Binfeng Xu, Jan Kautz, and Yi~Dong.
+\newblock {Agora: Git as Shared Memory for Collective AutoResearch}, 2026.
+\newblock URL \url{https://arxiv.org/abs/2609.18094}.
+
+\bibitem[Zhong et~al.(2025)Zhong, Raghunathan, and Carlini]{zhong2025impossiblebench}
+Ziqian Zhong, Aditi Raghunathan, and Nicholas Carlini.
+\newblock {ImpossibleBench: Measuring LLMs' Propensity of Exploiting Test Cases}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2510.20270}.
+
+\end{thebibliography}

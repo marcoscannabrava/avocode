@@ -1,0 +1,114 @@
+\section{AVO in brief}
+\label{sec:avo}
+
+This section summarizes the AVO paper \citep{chen2026avo} (arXiv v1, March 2026). We keep its
+notation. Where the paper is silent, we say so, because those gaps are where an implementation must
+make choices.
+
+\subsection{Formulation}
+
+Generic evolutionary search keeps a population $\Pop = \{(x_i, \f(x_i))\}$ of solutions and their
+scores, and repeats
+\begin{equation}
+  \Pop_{t+1} = \Update\big(\Pt, (x_{t+1}, \f(x_{t+1}))\big), \qquad x_{t+1} = \Vary(\Pt).
+  \label{eq:evo}
+\end{equation}
+Prior LLM methods split $\Vary$ into $\Generate \circ \Sample$ (\cref{eq:intro-generate}). The paper
+notes that ``the LLM only participates in Generate: the sampling strategy, evaluation protocol,
+population management, and the order of operations are all determined by the framework''
+\citep[\S2.1]{chen2026avo}. AVO replaces the whole operator with one agent run
+(\cref{eq:intro-agent}). The agent ``subsumes Sample, Generate, and evaluation into a single
+autonomous loop''.
+
+The objects are:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+  \item $\Pt = \{(x_1, \f(x_1)), \ldots, (x_t, \f(x_t))\}$, ``the full lineage of solutions and their
+    scores''. In the experiments, each $x_i$ is a CUDA kernel with inline PTX.
+  \item $\f(x_i) = (f_1(x_i), \ldots, f_n(x_i))$, a vector with one component per test
+    configuration. A candidate that fails the correctness check gets $f_j(x_i) = 0$ for all $j$,
+    ``regardless of throughput''.
+  \item $\K$, a knowledge base: CUDA guides, the PTX ISA, Blackwell specifications, and existing
+    kernels including the FlashAttention-4 source.
+\end{itemize}
+
+\subsection{One variation step}
+
+A step that produces $x_{t+1}$ is an autonomous agent loop with ``numerous internal actions''. The
+agent often reads several prior versions in $\Pt$, compares their profiles, and consults $\K$ before
+it edits. It then calls $\f$. If the candidate fails or does not improve, the agent diagnoses and
+revises. The paper calls this the \emph{edit--evaluate--diagnose} cycle. The rule for keeping a
+result is stated once:
+\begin{quote}\small
+``we persist a new committed version only when it passes correctness checks and matches or improves
+the benchmark score relative to the best committed version so far; unsuccessful intermediate
+attempts remain part of the agent's internal search trajectory but are not added to the committed
+lineage.'' \citep[\S3.2]{chen2026avo}
+\end{quote}
+Read literally, this is an elitist, monotone update: $\Pop_{t+1} = \Pt \cup \{(x', \f(x'))\}$ if
+$x'$ is correct and scores at least as well as the best, and $\Pop_{t+1} = \Pt$ otherwise. Nothing is
+pruned. The paper does not say how ``matches or improves'' applies to a \emph{vector}, or what
+tolerance counts as a match. Its trajectory plots use the geometric mean across configurations,
+which suggests a scalar reduction, but the text does not commit to one.
+
+\subsection{Continuous evolution and the supervisor}
+
+The paper runs AVO as a single lineage from a seed $x_0$, ``leaving population-level branching and
+archive management to future extensions'' \citep[\S3.3]{chen2026avo}. Each committed version is a
+git commit with its score. Two failure modes appear in long runs: the agent can \emph{stall} when it
+exhausts a line of exploration, or it can enter ``unproductive cycles of edits that repeatedly fail
+to improve scores''. A self-supervision mechanism detects both. When triggered, it ``reviews the
+overall evolutionary trajectory and steers the search toward several candidate optimization
+directions''. Figure~2 of the paper draws this as a separate \emph{AVO Supervisor Agent}. The paper
+gives no thresholds, no trigger counts, and no mechanism for how the directions reach the main
+agent.
+
+The agent itself is ``an internally-developed general-purpose coding agent powered by frontier
+LLMs'' with code editing, shell, file navigation and documentation retrieval. Its memory is its
+conversation history. The models are not named, and no token or cost figures are given.
+
+\subsection{Reported results}
+
+\Cref{tab:avo-results} summarizes the results on B200 (forward prefill, head dimension 128, BF16,
+sequence lengths 4K--32K at a fixed 32K total tokens). The seven-day run produced 40 versions and
+explored ``over 500 candidate optimization directions''. Gains came in discrete jumps, for example
+branchless accumulator rescaling ($+8.1\%$ non-causal at v20) and register rebalancing across warp
+groups ($+2.1\%$ at v33). The paper uses these to argue that the agent performs ``genuine
+hardware-level reasoning rather than superficial code transformations''. Adapting the final kernel
+to grouped-query attention (GQA) took 30 more minutes of autonomous work.
+
+\begin{table}[t]
+\centering\small
+\caption{Headline results of the AVO paper \citep[\S4]{chen2026avo}. Ranges are over the four
+sequence lengths. TFLOPS values are the paper's bar labels.}
+\label{tab:avo-results}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Workload & Peak AVO TFLOPS & vs.\ cuDNN & vs.\ FlashAttention-4 \\
+\midrule
+MHA, causal      & 1637 & $+0.4\%$ to $+3.5\%$ & $+5.0\%$ to $+10.5\%$ \\
+MHA, non-causal  & 1668 & $+1.8\%$ to $+2.4\%$ (16K, 32K) & within noise at 4K, 8K \\
+GQA, causal      & 1647 & up to $+7.0\%$ & up to $+9.3\%$ \\
+GQA, non-causal  & 1679 & up to $+6.0\%$ & up to $+4.5\%$ \\
+\midrule
+\multicolumn{4}{@{}l}{Run: 7 days, 40 committed versions, $>$500 directions explored, 1 lineage.}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{What the paper leaves open}
+\label{sec:avo-open}
+
+For an implementer, the important gaps are:
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+  \item \textbf{No code or harness.} No repository, prompts, or agent configuration.
+  \item \textbf{An underspecified acceptance rule.} ``Matches or improves'' on a vector, with no
+    noise band, although the authors measured each benchmark 10 times for mean and deviation.
+  \item \textbf{An unspecified supervisor.} No detection rule, threshold, or delivery mechanism.
+  \item \textbf{Trajectory is lost.} Failed attempts live only in the agent's context, so a new
+    session cannot learn from them.
+  \item \textbf{No population.} Branching and archives are future work.
+  \item \textbf{No ablations of the harness.} Neither $\K$ nor the supervisor is ablated, and AVO is
+    not compared with a $\Generate \circ \Sample$ baseline on the same budget.
+\end{enumerate}
+avocode gives a concrete answer to items 1--4 and a partial answer to item 5. It does not address
+item 6. \Cref{sec:discussion} returns to each.

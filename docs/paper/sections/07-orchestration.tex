@@ -1,0 +1,290 @@
+\section{Orchestration}
+\label{sec:orchestration}
+
+\subsection{The variation step as a skill}
+
+The \cmd{avo-vary} skill tells the agent: ``You are the variation operator \ldots\ You do
+\emph{not} decide what gets kept --- \avo{commit} does.'' It prescribes one step in a fixed order:
+\begin{lstlisting}
+avo mem prime                 # 1. what past turns learned, incl. dead ends
+avo best; avo lineage         # 2. the version to beat, and the whole population
+avo know query "<the idea>"   # 3. K: docs and prior lineage entries
+# 4. make ONE coherent change
+avo score --json              # 5. measure it
+avo commit --why "<what changed and why it should help>"
+\end{lstlisting}
+Steps 1--3 are the agent's reading of $\Pt$ and $\K$ in \cref{eq:intro-agent}. The rule ``one idea
+per candidate'' makes a refusal attributable to one change. Inside this step the agent is free: it
+can profile, read code, search the web, or call \avo{fan} (\cref{sec:fan}). This is the paper's
+edit--evaluate--diagnose cycle, written as instructions rather than code.
+
+\subsection{\texorpdfstring{\avo{run}}{avo run}: the continuous loop}
+\label{sec:run}
+
+\avo{run} automates the cycle of \cref{fig:loop}. Its central choice differs from the paper:
+\emph{each turn is a fresh agent process}. The paper's agent keeps one conversation for seven days.
+In avocode, ``every iteration is a fresh process, so the turn prompt is the only continuity''. All
+other state lives in the repository: the lineage in git, the trajectory in the attempt log, and
+memory in beads or JSONL. \Cref{alg:run} gives the loop.
+
+\begin{algorithm}[t]
+\caption{\avo{run}: the outer loop}
+\label{alg:run}
+\begin{algorithmic}[1]
+\Require repo with seed commit $x_0$; prompt $\pi$; agent $\alpha$; budget $T$; turn timeout $\tau$;
+  thresholds $N$ (stall), $R$ (thrash)
+\State \Call{CheckGuards}{$\pi$} \Comment{depth $<$ cap, $\mathrm{sha}(\pi) \notin$ chain}
+\State $d \gets \bot$;\ $\mathit{prev} \gets \bot$;\ $\mathit{idle} \gets 0$
+\For{$t = 1, \ldots, T$}
+  \If{\file{.avo/STOP} exists} \Return \textsc{stop-file} \EndIf
+  \State $h_0 \gets \texttt{HEAD}$
+  \State $p \gets \Call{TurnPrompt}{\pi, t, \mathit{prev}, d}$ \Comment{$\pi$ verbatim at $t=1$}
+  \State $(\mathit{ok}, \mathit{summary}) \gets \Call{DriveAgent}{\alpha, p, \tau}$
+    \Comment{fresh process: $\Vary(\Pt)$}
+  \If{spawn failed} \Return \textsc{agent-unavailable} \EndIf
+  \State $\mathit{dec} \gets \Call{Commit}{\mathit{summary}}$ \Comment{\cref{alg:commit}; summary becomes \emph{why}}
+  \State $h_1 \gets \texttt{HEAD}$;\ credit versions in $h_0..h_1$ \Comment{agent may commit itself}
+  \State $\mathit{idle} \gets (\mathit{dec} = \textsc{noop} \wedge h_1 = h_0)\ ?\ \mathit{idle}+1 : 0$
+  \State $(\mathit{sig}, d) \gets \Call{Supervise}{N, R}$ \Comment{\cref{alg:supervise}}
+  \If{$\mathit{sig} \neq \emptyset$} record an \cmd{intervention} memory \EndIf
+  \State write manifest \Comment{after every iteration}
+  \State $\mathit{prev} \gets (\mathit{dec}, \mathit{sig})$
+  \If{$\mathit{idle} \geq 3$} \Return \textsc{no-progress} \EndIf
+\EndFor
+\State \Return \textsc{max-iters}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{\textsc{Commit}($\mathit{why}$): the only writer of $\Pt$}
+\label{alg:commit}
+\begin{algorithmic}[1]
+\If{tree is clean, ignoring harness paths} \Return \textsc{noop} \EndIf
+\State $a \gets \f(\text{working tree})$;\ append $a$ to the attempt log
+\State $b \gets$ newest version in $\Pt$ \Comment{best, by \cref{prop:monotone}}
+\If{$a$ has harness errors} \Return \textsc{error} \EndIf
+\If{$\neg\pass(a)$ \textbf{or} ($b \neq \bot$ \textbf{and not} \Call{Accept}{$a, b$})} \Comment{\cref{def:commit}}
+  \State record dead end, key $= \mathrm{sha256}(\mathit{reason}\,\|\,\mathit{vector})$
+  \State \Return \textsc{refused}
+\EndIf
+\State commit with trailers; add git note; write \file{lineage/vNNN.md}; record version memory
+\State \Return \textsc{committed}
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{The turn prompt.} The first turn gets the operator's prompt verbatim. Later turns get the
+prompt plus a footer: the turn number, a one-line outcome of the previous turn (for example
+\emph{``committed v3 at 0.408 ms''} or \emph{``refused at 0.42 ms --- \ldots''}), the number of
+attempts since the best version, a reminder that the agent is a fresh process that should read
+\avo{lineage}, \avo{best} and \avo{mem prime}, and the supervisor's directive if one fired. The
+directive is \emph{appended} to the task, never substituted for it.
+
+\paragraph{Committing.} The agent's final message, capped at 2{,}000 characters, becomes the
+\emph{why} of the commit. The skill also allows the agent to call \avo{commit} itself during the
+turn. The harness therefore reads the trailers in $h_0..h_1$ and credits those versions too. Before
+this fix, a run that grew four versions reported that it had committed none.
+
+\paragraph{Termination.} The loop stops on the iteration budget, on a \file{.avo/STOP} file, after
+three consecutive idle turns, or when the agent binary cannot start. The stop file needs no process
+to find, and the agent can create it when the task is done. The idle rule exists because ``an
+unchanged tree records no attempt, so the stall detector cannot see it''. A timed-out turn does not
+stop the loop; its process group is killed and the next turn starts. The supervisor never stops the
+loop. It only steers.
+
+\paragraph{Crash safety.} The run manifest is the same object as the \cmd{--json} report, and it is
+rewritten after every iteration: ``a days-long loop gets killed eventually, and per-iteration versus
+at-exit is a recoverable record versus nothing''. There is no \cmd{--resume}. Recovery is structural:
+each version is committed before the next turn, so a new \avo{run} with the same prompt continues
+from \cmd{HEAD}. The second benchmark run in \cref{sec:eval} did exactly this.
+
+\paragraph{Budgets.} \avo{run} has an iteration budget and a per-turn timeout (default 900\,s). It
+has no wall-clock budget and no cost budget. Cost is recorded but not enforced.
+
+\subsection{\texorpdfstring{\avo{supervise}}{avo supervise}: stagnation detection}
+\label{sec:supervise}
+
+The paper's supervisor is an agent. avocode's supervisor is a pure function of what the harness
+already records, plus a text template. It makes no LLM call. The design reason is in the source:
+\begin{quote}\small
+``The output is a directive that \textbf{cites}. `Try something else' is worthless --- the agent
+already believes it is.''
+\end{quote}
+It detects two signals. Let $A = (a_1, \ldots, a_m)$ be the last 1{,}000 attempts, newest last, and
+$b$ the best version.
+
+\begin{definition}[Stall]
+Let $s = |\{a \in A : \mathrm{head}(a) = \mathrm{sha}(b) \vee \mathrm{ts}(a) \geq \mathrm{date}(b) +
+1\,\mathrm{s}\}|$, or $s = m$ if no version exists. Stall fires when $s \geq N$ and $s > 0$, with
+$N = 5$ by default.
+\end{definition}
+\noindent Attempts are matched to $b$ by git \cmd{HEAD} first, not by clock: the attempt that
+\emph{became} $b$ was scored before the commit and carries the parent's SHA, and git truncates
+commit dates to the second. An attempt that passed $\f$ but did not beat $b$ still counts.
+
+\begin{definition}[Thrash]
+Let $\mathrm{sig}(a)$ be the failure signature of $a$, or $\bot$ for a passing attempt. Let $r$ be the
+length of the longest suffix of $A$ whose signatures all equal $\mathrm{sig}(a_m) \neq \bot$. Thrash
+fires when $r \geq R$, with $R = 3$ by default.
+\end{definition}
+\noindent The signature is the first harness error, else the scorer's first log line, normalized so
+that noise does not split one failure into many: lowercase; temporary paths, hex SHAs and numbers
+replaced by placeholders; whitespace folded; truncated to 200 characters. A pass breaks the streak.
+Thrash ``usually means the diagnosis is wrong rather than the edit''.
+
+There is no test for a score plateau, for repeated ideas, or for similarity between a candidate and
+prior versions. The harness ranks measurements, not ideas. Novelty is left to the agent, which the
+directive gives the evidence to judge.
+
+\paragraph{The directive.} Only when a signal fires does the supervisor read memory and $\K$, so the
+common case stays cheap. The directive cites:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+  \item up to three recent versions, with score, rationale and lineage file (``a variation that only
+    re-derives one of these is not progress'');
+  \item up to five memories, dead ends before insights;
+  \item up to three documents in $\K$ that no version or memory has mentioned.
+\end{itemize}
+A document $d$ with significant title terms $T(d)$ counts as \emph{unexplored} against the corpus
+$C$ of all version rationales and memories when
+\begin{equation}
+  2\,\big|\{u \in T(d) : u \in C\}\big| < |T(d)|.
+\end{equation}
+The bar is low on purpose: a document wrongly marked explored costs one citation, while one wrongly
+marked unexplored ``sends the agent back down a road it already travelled''. Interventions are never
+cited. Citing them would nest old directives inside new ones, and would put every recommended
+document name into the corpus, so ``it would erase its own best advice''. \Cref{fig:directive} shows
+a real directive from a test fixture.
+
+\begin{figure}[t]
+\begin{lstlisting}
+STEERING (avo supervise)
+
+- stall: 5 attempt(s) since v1 (16 bytes) with no committed improvement; the threshold is 5
+
+Already committed (a variation that only re-derives one of these is not progress):
+  - v1 - 16 bytes - shrink the kernel by removing five redundant bytes (lineage/v001.md)
+
+In K and never mentioned by any version - unexplored:
+  - knowledge/loop-tiling.md - Loop tiling and cache blocking
+  - knowledge/register-pressure.md - Register pressure on Blackwell
+
+Do this next:
+  1. Name the direction you are about to take, and say how it differs from every line
+     above. If you cannot, you do not have a new idea yet.
+  2. Change one thing, then `avo score` before you change a second.
+  3. `avo commit --why "<the direction>"` when it measures better. A refusal is a
+     measurement: record it with `avo mem add`, do not retry it.
+  4. If every direction you can name is already above, do not guess: `avo fan --n 4`
+     explores four at once and lets f choose.
+\end{lstlisting}
+\caption{A stall directive (abridged), generated in a fixture repository with one version, five
+attempts that did not beat it, and two documents in $\K$. When thrash fires, step 1 instead says
+that ``the same error $N$ times means the \emph{diagnosis} is wrong, not the edit''.}
+\label{fig:directive}
+\end{figure}
+
+\begin{algorithm}[t]
+\caption{\textsc{Supervise}($N, R$)}
+\label{alg:supervise}
+\begin{algorithmic}[1]
+\State $A \gets$ last 1000 attempts;\ $b \gets$ newest version
+\State $s \gets |\{a \in A : \mathrm{head}(a) = \mathrm{sha}(b) \vee \mathrm{ts}(a) \geq \mathrm{date}(b) + 1\mathrm{s}\}|$
+\State $r \gets$ longest suffix of $A$ with one non-null signature
+\State $\mathit{sig} \gets \{\textsc{stall} \mid s \geq N \wedge s > 0\} \cup \{\textsc{thrash} \mid r \geq R\}$
+\If{$\mathit{sig} = \emptyset$} \Return $(\emptyset, \bot)$ \EndIf
+\State $V \gets$ newest 3 versions;\ $F \gets$ up to 5 memories (dead ends first, no interventions)
+\State $U \gets$ up to 3 documents in $\K$ that are unexplored
+\State \Return $(\mathit{sig}, \Call{Render}{\mathit{sig}, V, F, U})$ \Comment{$\leq 4000$ characters}
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Two delivery paths.} In \avo{run}, the directive enters the \emph{next} turn's prompt and
+is recorded as an \cmd{intervention} memory. In the pi agent, an extension runs the same detector
+after every \cmd{avo\_score} or \cmd{avo\_commit} tool result and injects the directive into the
+\emph{current} session as a steering message. It sends one directive per episode: an episode key
+built from the best version's SHA and the start of the streak makes ``5 since best'' and ``6 since
+best'' the same episode. Its state is rebuilt from the session branch, so a branched session that
+never saw a directive gets one. Both paths count the attempt log, not the session: ``two drifting
+counters would steer one stall twice''.
+
+\subsection{\texorpdfstring{\avo{fan}}{avo fan}: parallel probes}
+\label{sec:fan}
+
+\avo{fan} explores $N$ directions at once. Each probe gets its own detached git worktree at
+\cmd{HEAD} and its own headless agent process. The probes run on a small model (set by
+\cmd{AVO\_PROBE\_MODEL}), because ``exploration is a small-model job, exploitation is a big-model
+job''. \avo{run} uses the agent's default model. All probes get the \emph{same} prompt; diversity
+comes from sampling. The skill therefore asks for a prompt that names the problem, not the edit:
+``delete the bounds check'' gives $N$ identical diffs.
+
+Each probe is scored in its worktree without writing to the root attempt log, so probes never
+trigger the supervisor. A probe is scored even if its agent failed, since ``a half-finished edit
+passing $\f$ is a real result''. Worktrees with no changes are removed. The manifest is written after
+every probe, so \cmd{--resume} reruns only unfinished probes after a crash.
+
+\paragraph{Selection.} Let $\nu(x) = \mathrm{primary}(x)$ if higher is better and $-\mathrm{primary}(x)$
+otherwise. The harness computes
+\begin{equation}
+  \hat{\imath} = \operatorname*{arg\,max}_{i\,:\,\pass(x_i)} \nu(x_i),
+  \qquad \hat{\imath} = \bot \text{ if no probe passes},
+\end{equation}
+with ties going to the smallest index. This is ``a hint, never a decision''. Promotion is manual:
+\avo{fan --promote} $j$ saves and applies probe $j$'s diff to the root tree and stops. The candidate
+must then go through \avo{score} and \avo{commit}, which re-measures it in the real tree:
+\begin{equation}
+  x_{t+1} =
+  \begin{cases}
+    \mathrm{promote}(x_j) & \text{if the commit rule accepts it against } x_t,\\
+    x_t & \text{otherwise.}
+  \end{cases}
+\end{equation}
+The skill allows at most one promotion per step, because ``two probes' diffs stacked together is a
+candidate neither of them measured''.
+
+\paragraph{Recursion guards.} A probe is an agent with the same skills, so it can call \avo{fan}
+itself, and a turn of \avo{run} can call \avo{run}. Four guards bound this, carried in environment
+variables, ``the only channel surviving \cmd{spawn} into an arbitrary agent binary'':
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+  \item \textbf{Depth}: refuse when the level reaches the cap (default 3); a child gets level $+1$.
+  \item \textbf{Cycle}: refuse when the prompt's hash is already in the chain of ancestors.
+  \item \textbf{Concurrency}: at most $\min(8, \mathit{cpus} - 2)$ probes at once.
+  \item \textbf{Timeout}: 900\,s per probe, after which the whole process group is killed.
+\end{enumerate}
+A guard refusal is exit 1, not 2: ``a guard is a refusal, not a harness failure''. avocode uses OS
+processes and worktrees, not in-process sub-agents, because the design notes judge that sub-agent
+extensions ``do not work well enough''.
+
+\subsection{Agent adapters}
+\label{sec:adapters}
+
+One function, \cmd{driveAgent}, runs one headless turn for both \avo{run} and \avo{fan}.
+\Cref{tab:adapters} lists the templates. Every flag was read off the real binaries, because ``a
+wrong flag fails silently''. The prompt follows \cmd{--}, so a prompt that starts with a dash is not
+read as a flag. Token counts are normalized to four disjoint fields: uncached input, output, cache
+read and cache write. Codex reports cached input as a subset of input, so it is subtracted.
+
+\begin{table}[t]
+\centering\small
+\caption{Headless agent templates. A custom template can be set in \file{.avo/config.json}.}
+\label{tab:adapters}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+Agent & Command & Skill discovery \\
+\midrule
+pi \citep{zechner2025pi} & \cmd{pi --mode json --print --approve -- <prompt>} & native \file{.agents/skills/}; six native tools; in-session supervisor \\
+Claude Code \citep{anthropic2025claudecode} & \cmd{claude --print --output-format stream-json --verbose --permission-mode bypassPermissions -- <prompt>} & \file{.claude/skills} $\to$ \file{.agents/skills} symlink \\
+Codex \citep{openai2025codex} & \cmd{codex exec --json --skip-git-repo-check --sandbox workspace-write -- <prompt>} & skills index in \file{AGENTS.md} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\avo{install} wires the skills into a target repository by \emph{linking}, never copying: ``a copy is
+a fork that stops receiving fixes''. It validates each skill against the Agent Skills
+specification first, because pi is lenient, Claude Code is strict, and a skill must load everywhere.
+It also writes a managed block into \file{AGENTS.md} with the rules and a skills index, and leaves
+text outside the markers alone.
+
+For pi, an extension adds six native tools (\cmd{avo\_score}, \cmd{avo\_commit},
+\cmd{avo\_lineage}, \cmd{avo\_know\_query}, \cmd{avo\_know\_add}, \cmd{avo\_fan}). They are thin
+wrappers over the same functions as the CLI. A refusal is a normal result, not an error. No tool
+takes a working directory, because ``an agent that can retarget the repo can write a version into a
+repo nobody is watching''.

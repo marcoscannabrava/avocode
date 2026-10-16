@@ -1,0 +1,86 @@
+\section{Command reference}
+\label{app:cli}
+
+Every command accepts \cmd{--json}. Exit codes are 0 for success, 1 for a refusal or a run that
+failed, and 2 for a harness or usage error.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+Command & Purpose & Key flags \\
+\midrule
+\avo{init} & scaffold \file{.avo/}, \file{knowledge/}, \file{lineage/}, qmd, beads & \cmd{--scorer}, \cmd{--prefix} \\
+\avo{install} & wire skills and \file{AGENTS.md} for agents & \cmd{--agent pi|claude|codex|all}, \cmd{--force} \\
+\avo{doctor} & report dependencies and key presence & -- \\
+\avo{score} & run $\f$, validate, record the attempt & \cmd{--parallel}, \cmd{--timeout}, \cmd{--init}, \cmd{--no-record} \\
+\avo{commit} & score, compare, persist only if better & \cmd{--why}, \cmd{--dry-run}, \cmd{--parallel} \\
+\avo{lineage} & list $\Pt$; \cmd{show <n>}; \cmd{diff <a> <b>} & -- \\
+\avo{best} & the incumbent & -- \\
+\avo{mem} & list; \cmd{add "<insight>"}; \cmd{prime} & \cmd{--key} \\
+\avo{know} & \cmd{init}, \cmd{query}, \cmd{add}, \cmd{search}, \cmd{reindex} & \cmd{--lexical}, \cmd{-n}, \cmd{--ingest}, \cmd{--backend} \\
+\avo{fan} & $N$ worktree probes, scored & \cmd{--n}, \cmd{--prompt-file}, \cmd{--model}, \cmd{--promote}, \cmd{--resume}, \cmd{--clean} \\
+\avo{run} & the continuous loop & \cmd{--prompt-file}, \cmd{--max-iters}, \cmd{--agent}, \cmd{--timeout}, \cmd{--stall}, \cmd{--thrash}, \cmd{--dry-run} \\
+\avo{supervise} & stall/thrash detection and directive & \cmd{--stall}, \cmd{--thrash} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Configuration}
+\label{app:config}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l l l X@{}}
+\toprule
+Field & Type & Default & Meaning \\
+\midrule
+\cmd{reduce} & \cmd{dominate} $|$ \cmd{mean} & \cmd{dominate} & how the vector becomes a decision \\
+\cmd{floor} & number $\geq 0$ & 0 & symmetric relative noise band $\varphi$ \\
+\cmd{weights} & map of numbers $\geq 0$ & each 1 & weights for \cmd{mean} \\
+\cmd{configs} & list of names & probe & declared configs; skips the \cmd{--configs} probe \\
+\cmd{supervise.stall} & integer $\geq 1$ & 5 & attempts since the best before a directive \\
+\cmd{supervise.thrash} & integer $\geq 2$ & 3 & same-signature failures before a directive \\
+\cmd{agent} & object & none & custom headless agent template \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent A malformed file falls back to \emph{all} defaults with a warning that names the field, so
+a typo can never disable the gate.
+
+\section{A minimal session}
+\label{app:session}
+
+\begin{lstlisting}
+git clone https://github.com/marcoscannabrava/avocode && cd avocode && ./install.sh
+avo doctor                      # what is missing?
+
+cd /your/repo
+avo init                        # .avo/, lineage/, knowledge/
+avo install                     # wire your agent to the skills
+avo score --init hyperfine      # or pytest, vitest; then edit .avo/score
+avo score --json                # check the contract by hand
+avo run --prompt-file task.md --max-iters 20 --dry-run
+avo run --prompt-file task.md --max-iters 20
+avo lineage                     # what survived
+\end{lstlisting}
+
+\section{Excerpt of the \texorpdfstring{\cmd{avo-vary}}{avo-vary} skill}
+\label{app:skill}
+
+\begin{lstlisting}
+# avo vary - one variation step
+
+You are the variation operator. In the AVO formulation Vary(P_t) = Agent(P_t, K, f):
+you read the population P_t (the committed lineage), consult knowledge K, propose a
+change, and the fitness function f (.avo/score) judges it. You do not decide what gets
+kept - avo commit does, and it only keeps a candidate that beats the current best. Your
+job is to generate variation, not grade it.
+
+## Rules that matter
+- One idea per candidate. Two changes in one commit and a refusal tells you nothing
+  about which one cost you.
+- Never edit .avo/score to make a candidate pass. That is gaming f, and it invalidates
+  every earlier version in the lineage.
+\end{lstlisting}

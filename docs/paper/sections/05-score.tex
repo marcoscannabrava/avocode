@@ -1,0 +1,80 @@
+\section{The scoring function \texorpdfstring{$\f$}{f}}
+\label{sec:score}
+
+In AVO, $\f$ checks correctness against a reference and measures throughput per configuration. In
+avocode, $\f$ is any executable at \file{.avo/score}, run from the repository root. This keeps the
+harness domain-free: a benchmark, a test suite, or a game simulator can all be a scorer.
+
+\subsection{The contract}
+
+The scorer has three call forms:
+\begin{lstlisting}
+.avo/score                   # score everything; print one JSON line
+.avo/score --configs         # optional: list config names, one per line
+.avo/score --config <name>   # score one config; print one JSON line
+\end{lstlisting}
+It must print one JSON object and should always exit 0. A typical line is:
+\begin{lstlisting}
+{"ok":true,"correct":true,"primary":0.231,"unit":"ms","higher_is_better":false,
+ "scores":{"small":0.158,"large":0.304}}
+\end{lstlisting}
+The fields \cmd{ok}, \cmd{correct}, \cmd{primary} (a number or \cmd{null}), \cmd{unit} and
+\cmd{higher\_is\_better} are required. The fields \cmd{scores} (the vector), \cmd{log} and
+\cmd{duration\_s} are optional. Unknown keys are allowed, but each one produces a warning, so a typo
+such as \cmd{higherIsBetter} reports both a missing and an unknown field.
+
+The two booleans have different meanings. \cmd{ok} says that \emph{the scorer} worked; it is not a
+verdict on the candidate. \cmd{correct} is \emph{the gate}. avocode defines
+\begin{equation}
+  \pass(x) = \mathrm{ok}(x) \wedge \mathrm{correct}(x).
+\end{equation}
+If $\neg\pass(x)$, avocode sets \cmd{primary} to \cmd{null}, whatever the scorer measured. This
+generalizes the paper's ``assign zero score''. Zero is the \emph{best} possible value of a
+lower-is-better metric such as latency, so it cannot mean failure in a domain-free harness.
+
+\subsection{Harness errors and results}
+
+avocode separates a candidate that fails from a scorer that fails. A spawn failure, a timeout, or
+output that does not parse is a \emph{harness error} (exit 2). A valid JSON line with
+$\neg\pass$ is a \emph{result} (exit 1). Only results teach anything about the candidate, so only
+results feed memory and the supervisor (\cref{sec:refusal}). The parser scans standard output
+backwards for the last line that parses as a JSON object, so build noise before the payload is
+harmless.
+
+Each scorer run is spawned as the leader of its own process group. On timeout avocode sends
+\cmd{SIGKILL} to the whole group, which also kills benchmark processes that the scorer started.
+Output is capped at 200{,}000 characters per stream as a 150{,}000-character head plus a rolling
+50{,}000-character tail. The tail exists because the payload comes \emph{last}. An earlier
+head-only cap dropped the final event of agent logs and recorded 44 input tokens for a run that sent
+985{,}039 (\cref{sec:eval-cost}).
+
+\subsection{Configurations and the score vector}
+
+A scorer may report a vector in \cmd{scores}, one entry per configuration, which matches the
+paper's $\f = (f_1, \ldots, f_n)$. With \cmd{--parallel}, avocode asks the scorer for its config
+names and runs \cmd{.avo/score --config <name>} for each, with at most
+$\max(1, \min(8, \mathit{cpus} - 2))$ in parallel. One failing config fails the whole attempt.
+\cmd{primary} is the arithmetic mean of the per-config primaries; it is a headline only. The commit
+rule uses the vector (\cref{sec:commit-rule}).
+
+\subsection{The attempt log}
+
+Every scorer run appends one record to \file{.avo/attempts.jsonl}, including the git
+\cmd{HEAD} and a dirty flag. This is the \emph{trajectory}: the attempts that the paper leaves
+inside the agent's context. In avocode it is a file on disk. It is never committed, but the
+supervisor reads it (\cref{sec:supervise}).
+
+\subsection{Templates and scorer design}
+
+\avo{score --init} copies one of three templates: \cmd{hyperfine} (mean seconds per config, lower is
+better, \cmd{correct} = a test command passes), \cmd{pytest} and \cmd{vitest} (pass rate, higher is
+better). The documentation gives four rules for writing a scorer, and they matter more than any
+code in the harness:
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+  \item Make \cmd{correct} strict and cheap. It is the only thing that rejects a fast wrong answer.
+  \item Make the benchmark deterministic, or set a noise floor (\cref{sec:commit-rule}).
+  \item Keep it fast. A one-hour scorer allows 24 attempts a day.
+  \item Measure what you want improved, because that is what the agent will optimize.
+\end{enumerate}
+\Cref{sec:eval-bench} shows two scorers built on these rules, with hash gates over protected files
+and a full-scale differential check against an independent reference.
