@@ -122,8 +122,6 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
-    let stdout = "";
-    let stderr = "";
     let timedOut = false;
     let spawnError: string | null = null;
     const timer =
@@ -198,6 +196,11 @@ export function isParseFailure(r: ParseSuccess | ParseFailure): r is ParseFailur
   return "errors" in r;
 }
 
+/** JSON.stringify(Infinity) is "null"; say Infinity. */
+function shown(v: unknown): string {
+  return typeof v === "number" && !Number.isFinite(v) ? String(v) : JSON.stringify(v);
+}
+
 /**
  * Validates one line of scorer output. The contract says stdout is one JSON line, but a scorer that
  * also echoes build noise is too common to reject: take the last line that parses, warn about the
@@ -240,7 +243,7 @@ export function parseScoreOutput(stdout: string): ParseSuccess | ParseFailure {
 
   const errors: string[] = [];
   for (const e of Value.Errors(ScoreOutputSchema, parsed)) {
-    errors.push(`field '${fieldName(e.path)}': ${e.message.toLowerCase()} (got ${JSON.stringify(e.value)})`);
+    errors.push(`field '${fieldName(e.path)}': ${e.message.toLowerCase()} (got ${shown(e.value)})`);
   }
   if (errors.length > 0) return { errors };
 
@@ -252,11 +255,11 @@ export function parseScoreOutput(stdout: string): ParseSuccess | ParseFailure {
   // Semantics the schema cannot express.
   if (output.ok && output.correct && !Number.isFinite(output.primary)) {
     errors.push(
-      `field 'primary': must be a finite number when ok and correct are true (got ${JSON.stringify(output.primary)})`,
+      `field 'primary': must be a finite number when ok and correct are true (got ${shown(output.primary)})`,
     );
   }
   for (const [cfg, v] of Object.entries(output.scores ?? {})) {
-    if (!Number.isFinite(v)) errors.push(`field 'scores.${cfg}': must be a finite number (got ${JSON.stringify(v)})`);
+    if (!Number.isFinite(v)) errors.push(`field 'scores.${cfg}': must be a finite number (got ${shown(v)})`);
   }
   if (errors.length > 0) return { errors };
 
@@ -275,7 +278,7 @@ export function parseConfigList(stdout: string): string[] | null {
 
 /** Runs `tasks` with at most `limit` in flight, preserving input order. */
 export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
+  const results: R[] = [];
   let next = 0;
   const worker = async (): Promise<void> => {
     for (;;) {
