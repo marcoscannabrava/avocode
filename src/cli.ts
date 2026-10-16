@@ -64,7 +64,7 @@ avo know:
   -n <N>            max hits (default 5); -c <name> one collection; --min-score <s>
   add <url|path>    write knowledge/<slug>.md with provenance frontmatter, then qmd embed
   --name <slug>     name the doc; --force replace a differing one; --no-embed skip qmd embed
-  reindex           re-scan the collections into qmd; needed after files land in lineage/
+  reindex           re-scan the collections into qmd (avo commit does it for lineage/)
   search "<q>"      web search; --ingest also writes the pages into K (firecrawl only)
   --backend <b>     firecrawl (FIRECRAWL_API_KEY) | searxng (SEARXNG_URL) | ddgs (keyless)
   --json --cwd <dir> --timeout <s>

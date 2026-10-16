@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import { LINEAGE_DIR } from "./config.ts";
 import type { Io } from "./io.ts";
-import { LINEAGE_DIR } from "./lineage.ts";
 import { spawnRunner, type RunResult, type Runner } from "./score.ts";
 import type { InitStep } from "./steps.ts";
 import {

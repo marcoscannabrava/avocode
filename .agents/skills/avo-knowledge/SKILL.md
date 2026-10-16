@@ -60,12 +60,13 @@ re-fetch look like a conflict.
 ## Keep the index current
 
 ```bash
-avo know reindex          # re-scan the collections; needed after files land in lineage/
+avo know reindex          # re-scan the collections; avo commit does it for lineage/
 avo know init             # create the collections (folded into `avo init`)
 ```
 
-`avo commit` writes `lineage/vNNN.md` directly, so run `avo know reindex` before searching the lineage
-for something committed in this session.
+`avo commit` reindexes `lineage/` after it writes a new version, so a version you just committed is
+searchable at once. Run `avo know reindex` only after you add files to `knowledge/` or `lineage/` by
+hand, or when a commit warns that the reindex failed.
 
 ## Judgement
 
