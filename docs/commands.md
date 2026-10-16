@@ -157,7 +157,7 @@ avo know add ./notes/tuning.md         # -> knowledge/notes-tuning.md, with prov
 avo know add https://example.com/doc   # needs FIRECRAWL_API_KEY (free tier: 1000 credits/month)
 avo know query "register pressure"     # hybrid BM25 + vector + local rerank
 avo know query "..." --lexical         # BM25 only: no LLM expansion, no rerank, instant
-avo know reindex                       # after avo commit writes a new lineage/vNNN.md
+avo know reindex                       # re-scan both collections; avo commit does it for lineage/
 avo know search "blackwell occupancy"  # the web; --ingest pipes the pages straight into K
 ```
 
@@ -172,8 +172,10 @@ files and returns identical JSON — same keys, same `Hit` shape, and a `score` 
 Two qmd facts, verified against 2.8.3 rather than assumed:
 
 - `qmd embed` only vectorizes documents the index already knows about, so `avo know add` runs
-  `qmd update` first. A doc written straight into `lineage/` — what `avo commit` does — needs
-  `avo know reindex` before qmd can see it.
+  `qmd update` first. `avo commit` (and each commit in `avo run`) does the same for `lineage/` after
+  it writes a new version. This step is skipped when qmd is not available, and on `--dry-run` or
+  `--no-record`. A failed reindex is a warning; the commit stays. A file you put in `lineage/` by
+  hand still needs `avo know reindex`.
 - `.qmd/` is gitignored. `index.yml` records collection paths as *absolute* paths, so a committed
   index is wrong on every other machine, and `index.sqlite` is a multi-megabyte binary.
 

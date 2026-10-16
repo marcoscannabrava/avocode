@@ -33,6 +33,7 @@ import {
   decideCommit,
   ensureTrajectoryIgnored,
   git,
+  indexNewVersion,
   isGitRepo,
   readLineage,
   recordDecisionMemory,
@@ -735,6 +736,7 @@ async function iterate(
     };
     const decision = await decideCommit(commitOpts, runner, now);
     it.warnings.push(...(await recordDecisionMemory(commitOpts, decision, runner, now)));
+    it.warnings.push(...(await indexNewVersion(commitOpts, decision, runner)));
     it.decision = compact(decision);
     it.head_after = await head(runner, opts.cwd);
     report.head = it.head_after;
