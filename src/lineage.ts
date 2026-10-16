@@ -4,7 +4,17 @@ import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, t
 import { loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
 import { MEMORY_PATH, remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
-import { runScore, spawnRunner, type Attempt, type RunResult, type Runner, type ScoreOptions } from "./score.ts";
+import {
+  parsePins,
+  runScore,
+  SCORER_ENV,
+  scorerChanges,
+  spawnRunner,
+  type Attempt,
+  type RunResult,
+  type Runner,
+  type ScoreOptions,
+} from "./score.ts";
 
 /** Rendered, human- and qmd-readable record of each committed version. */
 export const LINEAGE_DIR = "lineage";
@@ -327,9 +337,14 @@ export function renderDecision(d: CommitDecision): string {
 export interface CommitOptions extends ScoreOptions {
   why: string | null;
   dryRun: boolean;
+  /** `f`'s hashes pinned by `avo run`, if any. */
+  pins?: Record<string, string | null> | null;
 }
 
-export function parseCommitArgs(argv: readonly string[]): CommitOptions | { error: string } {
+export function parseCommitArgs(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): CommitOptions | { error: string } {
   const opts: CommitOptions = {
     json: false,
     parallel: false,
@@ -340,6 +355,7 @@ export function parseCommitArgs(argv: readonly string[]): CommitOptions | { erro
     cwd: process.cwd(),
     why: null,
     dryRun: false,
+    pins: parsePins(env[SCORER_ENV]),
   };
   const need = (i: number, flag: string): string | { error: string } => {
     const v = argv[i + 1];
@@ -437,6 +453,10 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
       action: "noop",
     };
   }
+
+  // An edited `f` must not judge (#38).
+  const moved = opts.pins ? scorerChanges(opts.cwd, opts.pins) : [];
+  if (moved.length > 0) return refusal(`f changed since avo run started: ${moved.join(", ")}`);
 
   const { config, warnings: configWarnings } = loadConfig(opts.cwd);
   const { attempt, error } = await runScore(opts, runner, now);

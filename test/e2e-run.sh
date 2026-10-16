@@ -539,6 +539,24 @@ STUB
 json="$(avo run --cwd "$tamper" --agent stub --prompt "make kernel.txt longer" --max-iters 5 --json 2>/dev/null)"
 printf '%s' "$json" | jq -e '.stopped == "scorer-changed" and (.stop_reason | test("bench.txt")) and .committed == []' >/dev/null
 yes_no $? "a turn that edits a protected path stops the run too" "a protected path edit went unseen"
+
+# The agent's own avo commit checks f too.
+git -C "$tamper" checkout -q -- bench.txt kernel.txt
+cat > "$tamper/stub.sh" <<STUB
+#!/usr/bin/env bash
+echo "line" >> kernel.txt
+echo "# tuned" >> .avo/score
+"$root/bin/avo" commit --why "scored by my scorer" > .git/avo-commit.out 2>&1
+git checkout -q -- .avo/score
+echo "I committed with my scorer, then put it back"
+STUB
+before="$(git -C "$tamper" rev-parse HEAD)"
+json="$(avo run --cwd "$tamper" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --json 2>/dev/null)"
+grep -q 'refused — f changed since avo run started: .avo/score' "$tamper/.git/avo-commit.out"
+yes_no $? "the agent's own avo commit refuses an edited f" "avo commit inside a turn scored with an edited f"
+printf '%s' "$json" | jq -e '.iterations[0].agent_versions == [] and .iterations[0].decision.action == "committed"' >/dev/null
+yes_no $? "only the real f judged the turn's change" "a version came from the edited f"
+if ! git -C "$tamper" log --format=%B "$before..HEAD" | grep -q 'scored by my scorer'; then ok "no commit carries the edited f's --why"; else bad "the edited f's version landed"; fi
 say ""
 
 say "## summary"

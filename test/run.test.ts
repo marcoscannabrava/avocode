@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { CHAIN_ENV, DEFAULT_TIMEOUT_S, DEPTH_ENV, LEVEL_ENV, promptSha } from "../src/fan.ts";
 import { bufferIo } from "../src/io.ts";
-import { ensureTrajectoryIgnored, TRAJECTORY_PATHS } from "../src/lineage.ts";
+import { commitCommand, ensureTrajectoryIgnored, parseCommitArgs, TRAJECTORY_PATHS } from "../src/lineage.ts";
+import { hashFiles, parsePins, SCORER_ENV, scorerChanges, scorerPaths } from "../src/score.ts";
 import {
   DEFAULT_MAX_ITERS,
   MAX_CONSECUTIVE_NOOPS,
@@ -15,14 +16,11 @@ import {
   RUN_MANIFEST,
   STOP_FILE,
   describeOutcome,
-  hashFiles,
   listRuns,
   parseRunArgs,
   readRunManifest,
   renderRun,
   runCommand,
-  scorerChanges,
-  scorerPaths,
   turnPrompt,
   type Iteration,
   type RunReport,
@@ -258,6 +256,26 @@ case "$prompt" in
     echo "edited" >> bench.txt
     echo "I edited a protected file"
     exit 0 ;;
+  # Edits f, commits, then hides the edit.
+  *cheatrestore*)
+    echo "line" >> kernel.txt
+    echo "# tuned" >> .avo/score
+    "{{AVO}}" commit --why "scored by my scorer" > .git/avo-commit.out 2>&1
+    git checkout -q -- .avo/score
+    echo "I committed with my scorer, then put it back"
+    exit 0 ;;
+  *cheat*)
+    echo "line" >> kernel.txt
+    echo "# tuned" >> .avo/score
+    "{{AVO}}" commit --why "scored by my scorer" > .git/avo-commit.out 2>&1
+    echo "I committed with my scorer"
+    exit 0 ;;
+  *commitfirst*)
+    echo "line" >> kernel.txt
+    "{{AVO}}" commit --why "an honest version" >/dev/null 2>&1
+    echo "# tuned" >> .avo/score
+    echo "I committed, then edited the scorer"
+    exit 0 ;;
   *selfcommit*)
     echo "own commit" >> kernel.txt
     git add -A >/dev/null 2>&1
@@ -303,7 +321,7 @@ function fixture(name: string, opts: { scorer?: string | false } = {}): Fixture 
   mkdirSync(join(dir, ".avo"), { recursive: true });
   writeFileSync(join(dir, ".gitignore"), ".avo/runs/\n.avo/worktrees/\n.avo/attempts.jsonl\nlast-prompt.txt\nall-prompts.txt\n");
   writeFileSync(join(dir, "kernel.txt"), "baseline\n");
-  writeFileSync(join(dir, "stub.sh"), STUB.replace("{{AVO}}", AVO_BIN), { mode: 0o755 });
+  writeFileSync(join(dir, "stub.sh"), STUB.replaceAll("{{AVO}}", AVO_BIN), { mode: 0o755 });
   if (opts.scorer !== false) writeFileSync(join(dir, ".avo/score"), opts.scorer ?? SCORER, { mode: 0o755 });
   writeFileSync(
     join(dir, ".avo/config.json"),
@@ -576,6 +594,62 @@ test("a turn that edits a protected file stops the run too", async () => {
   assert.equal(json.stopped, "scorer-changed");
   assert.match(json.stop_reason, /bench\.txt/);
   assert.deepEqual(json.committed, []);
+});
+
+test("avo commit inside a turn refuses an edited scorer", async () => {
+  const f = fixture("runcheat");
+  const { code, json } = await run(f, ["--prompt", "cheat", "--max-iters", "3"]);
+  assert.equal(code, 1);
+  assert.equal(json.stopped, "scorer-changed");
+  assert.deepEqual(json.committed, []);
+  assert.deepEqual(json.iterations[0]?.agent_versions, []);
+  assert.equal(f.git("log", "--format=%s").trim(), "baseline", "the agent's own avo commit wrote nothing");
+  assert.match(readFileSync(join(f.dir, ".git/avo-commit.out"), "utf8"), /refused — f changed since avo run started: \.avo\/score/);
+});
+
+test("an edit undone before the turn ends still never commits", async () => {
+  const f = fixture("runcheatrestore");
+  const { json } = await run(f, ["--prompt", "cheatrestore", "--max-iters", "1"]);
+  // f is back, so the run goes on and scores with the real f.
+  assert.equal(json.stopped, "max-iters");
+  assert.deepEqual(json.iterations[0]?.agent_versions, [], "no version came from the edited f");
+  assert.match(readFileSync(join(f.dir, ".git/avo-commit.out"), "utf8"), /refused — f changed/);
+  assert.equal(json.iterations[0]?.decision?.action, "committed", "the real f judged the same change");
+  assert.deepEqual(json.committed, [1]);
+});
+
+test("a version committed before the scorer edit is still listed", async () => {
+  const f = fixture("runcommitfirst");
+  const { json } = await run(f, ["--prompt", "commitfirst", "--max-iters", "3"]);
+  assert.equal(json.stopped, "scorer-changed");
+  assert.deepEqual(json.committed, [1], "the honest v1 is the run's output");
+  assert.equal(json.iterations[0]?.agent_versions[0]?.version, 1);
+  assert.match(json.stop_reason, /avo run committed nothing/);
+});
+
+test("avo commit reads the pins avo run hands its turns", () => {
+  const pins = { ".avo/score": "a".repeat(64), "bench.txt": null };
+  const o = parseCommitArgs([], { [SCORER_ENV]: JSON.stringify(pins) });
+  assert.ok(!("error" in o));
+  assert.deepEqual(o.pins, pins);
+  const none = parseCommitArgs([], {});
+  assert.ok(!("error" in none));
+  assert.equal(none.pins, null, "outside avo run, nothing is pinned");
+  for (const bad of ["", "not json", "[]", "{}", '{"x":1}']) assert.equal(parsePins(bad), null, bad);
+});
+
+test("avo commit with no pins keeps today's behavior", async () => {
+  const f = fixture("commitnopins");
+  writeFileSync(join(f.dir, "kernel.txt"), "a\nb\nc\nd\n");
+  writeFileSync(join(f.dir, ".avo/score"), `${readFileSync(join(f.dir, ".avo/score"), "utf8")}# tuned\n`);
+  const prev = process.env[SCORER_ENV];
+  delete process.env[SCORER_ENV];
+  try {
+    const code = await commitCommand(["--cwd", f.dir, "--json", "--no-record"], bufferIo());
+    assert.equal(code, 0, "a human may change f outside a run");
+  } finally {
+    if (prev !== undefined) process.env[SCORER_ENV] = prev;
+  }
 });
 
 test("a turn that exceeds its timeout is killed and the loop carries on", async () => {

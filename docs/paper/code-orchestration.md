@@ -219,7 +219,7 @@ export type StopReason =
 | `stop-file` | `.avo/STOP` exists before a turn | `run.ts:586-590` |
 | `no-progress` | 3 consecutive idle turns (no-op **and** HEAD unmoved) | `run.ts:690-696` |
 | `agent-unavailable` | the agent binary cannot spawn | `run.ts:633-639` |
-| `scorer-changed` | a turn changed `.avo/score` or a path in `.avo/protected.txt`; nothing is committed (#38) | `run.ts:694-704` |
+| `scorer-changed` | a turn changed `.avo/score` or a path in `.avo/protected.txt`; avo run commits nothing, and the turn's own `avo commit` refuses (#38) | `run.ts:656-671` |
 | `dry-run` | `--dry-run` | `run.ts:555-560` |
 
 The supervisor never stops the loop. It only steers. The no-progress stop exists because the

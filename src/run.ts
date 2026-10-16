@@ -8,7 +8,6 @@
  * *between*: every iteration is a fresh process, so the turn prompt is the only continuity.
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -41,7 +40,7 @@ import {
   type CommitOptions,
 } from "./lineage.ts";
 import { remember, resolveBackend, shortHash, type Backend } from "./mem.ts";
-import { SCORER_PATH, spawnRunner, type Runner } from "./score.ts";
+import { hashFiles, parsePins, SCORER_ENV, SCORER_PATH, scorerChanges, scorerPaths, spawnRunner, type Runner } from "./score.ts";
 import { supervise, type Signal, type SignalKind } from "./supervise.ts";
 
 /** Every run lives here. In TRAJECTORY_PATHS and gitignored: trajectory, not lineage. */
@@ -50,8 +49,6 @@ export const RUN_MANIFEST = "manifest.json";
 /** Stops the loop from outside — no process to find, and an agent can reach it. */
 export const STOP_FILE = ".avo/STOP";
 export const DEFAULT_MAX_ITERS = 10;
-/** Optional list of `f`'s files, one per line. */
-export const PROTECTED_LIST = ".avo/protected.txt";
 /**
  * Idle iterations before giving up. An unchanged tree records no attempt, so the stall detector
  * cannot see it — the one stop condition the supervisor cannot express.
@@ -345,47 +342,6 @@ export function turnPrompt(
 }
 
 // ---------------------------------------------------------------------------
-// the scorer's own files
-// ---------------------------------------------------------------------------
-
-/** `.avo/score`, plus the protected list and its paths. */
-export function scorerPaths(cwd: string): string[] {
-  const paths = [SCORER_PATH];
-  let list: string;
-  try {
-    list = readFileSync(join(cwd, PROTECTED_LIST), "utf8");
-  } catch {
-    return paths;
-  }
-  paths.push(PROTECTED_LIST);
-  for (const raw of list.split("\n")) {
-    const line = raw.trim();
-    if (line !== "" && !line.startsWith("#")) paths.push(line);
-  }
-  return [...new Set(paths)];
-}
-
-/** sha256 per path; `null` when absent. */
-export function hashFiles(cwd: string, paths: readonly string[]): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
-  for (const p of paths) {
-    try {
-      out[p] = createHash("sha256").update(readFileSync(join(cwd, p))).digest("hex");
-    } catch {
-      out[p] = null;
-    }
-  }
-  return out;
-}
-
-/** Start-time paths whose hash moved since. */
-export function scorerChanges(cwd: string, start: Record<string, string | null>): string[] {
-  // Start-time list: an edit cannot shrink it.
-  const now = hashFiles(cwd, Object.keys(start));
-  return Object.keys(start).filter((p) => now[p] !== start[p]);
-}
-
-// ---------------------------------------------------------------------------
 // the manifest
 // ---------------------------------------------------------------------------
 
@@ -629,7 +585,13 @@ async function iterate(
 ): Promise<RunReport> {
   const { runner, now } = deps;
   const guards = checkGuards(deps.env, report.prompt_sha);
-  const childEnv = guards.ok ? probeEnv(guards, report.prompt_sha, report.run_id, 0) : {};
+  // The outer run's pins win when nested.
+  const outer = parsePins(deps.env[SCORER_ENV]);
+  const pins = JSON.stringify(outer ?? report.scorer_hashes);
+  const childEnv = {
+    ...(guards.ok ? probeEnv(guards, report.prompt_sha, report.run_id, 0) : {}),
+    [SCORER_ENV]: pins,
+  };
 
   let directive: string | null = null;
   let prev: Iteration | null = null;
@@ -696,8 +658,13 @@ async function iterate(
     if (changed.length > 0) {
       it.head_after = await head(runner, opts.cwd);
       report.head = it.head_after;
+      // Versions from before the edit still count.
+      const own = await agentVersions(runner, opts.cwd, it.head_before, it.head_after, null);
+      it.agent_versions = own.versions;
+      it.warnings.push(...own.warnings);
+      for (const v of own.versions) report.committed.push(v.version);
       report.stopped = "scorer-changed";
-      report.stop_reason = `iteration ${iter} changed ${changed.join(", ")}; nothing was committed`;
+      report.stop_reason = `iteration ${iter} changed ${changed.join(", ")}; avo run committed nothing`;
       report.errors.push(report.stop_reason);
       writeRunManifest(opts.cwd, report);
       break;
@@ -719,6 +686,7 @@ async function iterate(
       cwd: opts.cwd,
       why: why === "" ? null : why,
       dryRun: false,
+      pins: outer,
     };
     const decision = await decideCommit(commitOpts, runner, now);
     it.warnings.push(...(await recordDecisionMemory(commitOpts, decision, runner, now)));
