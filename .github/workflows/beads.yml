@@ -28,7 +28,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - run: npm install -g "@beads/bd@$BD_VERSION"
+      # Its postinstall skips the binary when CI is set.
+      - run: env -u CI npm install -g "@beads/bd@$BD_VERSION"
       - run: bd --version
       - run: ./test/e2e-mem.sh
       # A SKIP here means bd was not used: fail.
