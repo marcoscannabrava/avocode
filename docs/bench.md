@@ -21,13 +21,17 @@ nobody has solved, where the candidate is a policy rather than a pure function �
 **Prerequisites.** `git`, `jq`, Node ≥ 22, and — for `arcagi3` only — Python ≥ 3.12. Plus a coding
 agent (`claude`, `pi` or `codex`) for step 4. `avo doctor` tells you what is missing.
 
-**`avo` must resolve as `avo`, not `./bin/avo`** — every wired skill calls it by bare name (#41).
-From an uninstalled checkout, export it once per shell:
+**Every wired skill calls `avo` by its bare name.** `avo run` and `avo fan` put their own `bin/`
+first on the agent's `PATH`, so an agent they start always finds `avo` (#41). You start these
+commands yourself, so they must also resolve. From an uninstalled checkout, use `./bin/avo`, or
+export it once per shell:
 
 ```sh
 cd /path/to/avocode
 export PATH="$PWD/bin:$PATH"      # or run ./install.sh once, which links it into ~/.local/bin
 ```
+
+You need the export for an agent that you start by hand in the target.
 
 ## fuzzysearch — the fast one (no setup, seconds per score)
 
@@ -105,7 +109,7 @@ during a turn.
 | `ok:false`, `jq not found` | install `jq`; the scorers pipe through it |
 | `correct:false`, `a protected file changed` | something edited `f`. `git checkout -- <the named path>` |
 | `correct:false`, `the game corpus does not match` | `bench/setup.sh --games-only` restores it |
-| `avo: command not found` inside an agent turn | the `PATH` export above, or `./install.sh` |
+| `avo: command not found` inside an agent turn | you started the agent by hand. Use the `PATH` export above, or `./install.sh` |
 | `avo run` exits having done nothing | no agent on `PATH`, or one that asks for permission — `avo doctor` |
 | the curve is flat | that is the agent, not `f`: both targets ship a measured ladder proving headroom |
 

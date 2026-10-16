@@ -522,6 +522,47 @@ avo run --cwd "$repo" --agent stub --prompt "go" --max-cost 5 --max-wall 600 --d
 yes_no $? "--dry-run shows the budget" "the plan does not show the budget"
 say ""
 
+# ------------------------------------------------- 14. #41: avo on the child PATH
+say "## 14. #41: an agent finds avo with no install step"
+# Node only, so no operator avo.
+bare="$(dirname "$(command -v node)"):/usr/bin:/bin"
+if PATH="$bare" bash -c "command -v avo" >/dev/null 2>&1; then
+  bad "avo is already on the stripped PATH, so this proves nothing"
+else
+  ok "the stripped PATH has no avo"
+fi
+onpath="$work/onpath"
+make_repo "$onpath"
+cat > "$onpath/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+# What every skill does first.
+{ command -v avo || echo missing; avo best --json >/dev/null 2>&1; echo "exit $?"; } > "$AVO_OUT"
+echo "line" >> kernel.txt
+echo "asked avo best, then appended a line"
+STUB
+git -C "$onpath" commit -qam "a stub that asks avo"
+PATH="$bare" AVO_OUT="$work/run-avo.txt" "$root/bin/avo" run --cwd "$onpath" --agent stub --prompt "go" --max-iters 2 >/dev/null 2>&1
+if [[ "$(head -1 "$work/run-avo.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo run puts its own bin/avo first on the agent's PATH"
+else
+  bad "the agent resolved avo as '$(head -1 "$work/run-avo.txt" 2>/dev/null)'"
+fi
+if [[ "$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)" == "exit 0" ]]; then
+  ok "the agent's 'avo best --json' ran"
+else
+  bad "the agent's 'avo best' said '$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)'"
+fi
+# Like install.sh: avo through a link.
+mkdir -p "$work/linkbin"
+ln -s "$root/bin/avo" "$work/linkbin/avo"
+PATH="$work/linkbin:$bare" AVO_OUT="$work/run-link.txt" "$work/linkbin/avo" run --cwd "$onpath" --agent stub --prompt "go" --max-iters 1 >/dev/null 2>&1
+if [[ "$(head -1 "$work/run-link.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo started through a symlink puts the checkout's bin/ first"
+else
+  bad "through a symlink, the agent resolved avo as '$(head -1 "$work/run-link.txt" 2>/dev/null)'"
+fi
+say ""
+
 say "## summary"
 if [[ $fails == 0 ]]; then
   say "all checks passed ($(grep -c '^PASS' "$evidence") of them)"
