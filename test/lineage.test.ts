@@ -428,3 +428,33 @@ test("readLineage lets git filter yet reads only real trailers (#8)", async (t) 
   assert.equal(warnings.length, 1);
   assert.match(warnings[0] as string, /unreadable Avo-Version trailer \('is the trailer key'\)/);
 });
+
+test("readLineage keeps last-wins and ranges under the grep (#8)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  const score = (p: number) => JSON.stringify({ primary: p, unit: "s", higher_is_better: false, scores: {} });
+
+  git("commit", "-q", "--allow-empty", "-m", `v1\n\nAvo-Version: 1\nAvo-Score: ${score(3)}`);
+  const before = git("rev-parse", "HEAD").trim();
+  git("commit", "-q", "--allow-empty", "-m", "plain work");
+  // a squash puts an old body first
+  const squashed = `v2\n\nold body\nAvo-Version: 1\nAvo-Score: ${score(3)}\n\nAvo-Version: 2\nAvo-Score: ${score(2)}`;
+  git("commit", "-q", "--allow-empty", "-m", squashed);
+
+  const seen: string[][] = [];
+  const all = await readLineage(async (cmd, args, o) => (seen.push([...args]), await spawnRunner(cmd, args, o)), dir);
+  assert.ok(seen[0]?.some((a) => a.startsWith("--grep=")), "git does the filtering");
+  assert.deepEqual(
+    all.versions.map((v) => [v.version, v.score.primary]),
+    [
+      [1, 3],
+      [2, 2],
+    ],
+  );
+  const span = await readLineage(spawnRunner, dir, `${before}..HEAD`);
+  assert.deepEqual(
+    span.versions.map((v) => v.version),
+    [2],
+  );
+});
