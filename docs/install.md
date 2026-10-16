@@ -106,3 +106,6 @@ rm -rf /path/to/avocode     # the checkout itself
 A repo you ran `avo init`/`avo install` in keeps its `.avo/`, `lineage/`, `knowledge/` and the
 managed block in its `AGENTS.md`. None of it depends on avocode staying installed — the lineage is
 just git commits.
+
+To remove avo's links and the `AGENTS.md` block from such a repo, run `avo install --uninstall` in
+it before you delete the checkout. See [agents.md](agents.md).
