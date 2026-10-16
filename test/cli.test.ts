@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { main, USAGE } from "../src/cli.ts";
+import { asksHelp, commandUsage, main, USAGE } from "../src/cli.ts";
 import { bufferIo } from "../src/io.ts";
 import { VERSION } from "../src/version.ts";
 
 test("no args and help flags print usage and exit 0", async () => {
-  for (const argv of [[], ["help"], ["-h"], ["--help"]]) {
+  for (const argv of [[], ["help"], ["-h"], ["--help"], ["help", "--help"], ["help", "-h"]]) {
     const io = bufferIo();
     assert.equal(await main(argv, io), 0, `argv=${JSON.stringify(argv)}`);
     assert.equal(io.stdout, USAGE);
@@ -77,4 +77,80 @@ test("every subcommand in the usage text is actually dispatched", async () => {
     assert.doesNotMatch(io.stderr, /unknown command/, `'${cmd}' is documented but not dispatched`);
   }
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("every subcommand answers --help and -h with its own stanza (#50)", async () => {
+  const block = USAGE.split("commands:\n")[1]?.split("\n\n")[0] ?? "";
+  const documented = [...block.matchAll(/^ {2}([a-z]+)/gm)].map((m) => m[1] as string);
+  const commands = documented.filter((c) => c !== "version" && c !== "help");
+  assert.ok(commands.length >= 12, `parsed ${commands.length} commands`);
+  for (const cmd of commands) {
+    for (const argv of [[cmd, "--help"], [cmd, "-h"], [cmd, "--json", "--help"], ["help", cmd]]) {
+      const io = bufferIo();
+      assert.equal(await main(argv, io), 0, `${argv.join(" ")} exit code; stderr=${io.stderr}`);
+      assert.ok(io.stdout.startsWith(`avo ${cmd}:\n`), `${argv.join(" ")} printed no '${cmd}:' stanza`);
+      assert.equal(io.stdout, commandUsage(cmd));
+      assert.equal(io.stderr, "");
+    }
+  }
+});
+
+test("sub-commands and modes answer --help and touch nothing", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-help-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const cases = [
+    ["know", "query", "x", "--help"],
+    ["know", "add", "notes.md", "-h"],
+    ["know", "init", "--help"],
+    ["know", "reindex", "--help"],
+    ["know", "search", "x", "--help"],
+    ["lineage", "show", "1", "--help"],
+    ["lineage", "diff", "1", "2", "-h"],
+    ["mem", "add", "an insight", "--help"],
+    ["mem", "prime", "-h"],
+    ["fan", "--promote", "2", "--help"],
+    ["fan", "--list", "--help"],
+    ["run", "--prompt", "go", "--help"],
+    ["score", "--init", "x", "--help"],
+    ["init", "--help"],
+    ["install", "--agent", "pi", "--help"],
+  ];
+  for (const [cmd, ...rest] of cases) {
+    const io = bufferIo();
+    const argv = [cmd as string, "--cwd", dir, ...rest];
+    assert.equal(await main(argv, io), 0, argv.join(" "));
+    assert.equal(io.stdout, commandUsage(cmd as string), argv.join(" "));
+  }
+  assert.deepEqual(readdirSync(dir), [], "help wrote nothing");
+});
+
+test("-h passed as a flag value is not a help request", async (t) => {
+  const stanza = commandUsage("commit") as string;
+  assert.equal(asksHelp(stanza, ["--why", "-h"]), false);
+  assert.equal(asksHelp(stanza, ["--timeout", "5", "-h"]), true);
+  assert.equal(asksHelp(commandUsage("run") as string, ["--prompt", "--help"]), false);
+  assert.equal(asksHelp(commandUsage("mem") as string, ["add", "x", "--", "--help"]), false);
+
+  // So `avo commit --why -h` runs the command.
+  const dir = mkdtempSync(join(tmpdir(), "avo-help-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const io = bufferIo();
+  assert.equal(await main(["commit", "--cwd", dir, "--why", "-h", "--json"], io), 2);
+  assert.match(io.stdout, /not a git repository/);
+});
+
+test("avo run --help names every flag it parses", () => {
+  const src = readFileSync(new URL("../src/run.ts", import.meta.url), "utf8");
+  const from = src.indexOf("export function parseRunArgs");
+  const body = src.slice(from, src.indexOf("return opts;", from));
+  const flags = new Set([...body.matchAll(/"(--[a-z-]+)"/g)].map((m) => m[1] as string));
+  assert.ok(flags.has("--max-wall"), `parsed ${[...flags].join(" ")}`);
+  const stanza = commandUsage("run") ?? "";
+  for (const f of flags) assert.ok(stanza.includes(f), `avo run --help omits ${f}`);
+});
+
+test("avo help names an unknown topic and exits 2", async () => {
+  const io = bufferIo();
+  assert.equal(await main(["help", "frobnicate"], io), 2);
+  assert.match(io.stderr, /no help for 'frobnicate'/);
 });

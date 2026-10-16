@@ -79,11 +79,22 @@ than naming its own — findings are not stable across versions. A runner at the
 and still runs; refusing to lint would be a worse failure than the drift. `SHELLCHECK=<path>` pins a
 runner and disables the fallback.
 
+No step of the gate can block forever
+([#53](https://github.com/marcoscannabrava/avocode/issues/53)). Each shellcheck probe and the run
+itself have a time limit of `SC_TIMEOUT` seconds (default 60). A probe that does not answer in time
+counts as "no runner". A run that does not finish in time makes lint red. `just e2e` also gives each
+suite a limit of `AVO_E2E_TIMEOUT` seconds (default 1800), so a stuck suite fails instead of
+waiting forever. In CI, the e2e job also stops after 45 minutes.
+
 ## CI
 
 `.github/workflows/ci.yml` runs two jobs on every push to `main` and every PR: `check` (lint +
 typecheck + test) and `e2e`, which uploads `evidence/` as an artifact. Both install the shellcheck
 version read out of `test/lint-sh.sh`'s own pin.
+
+`.github/workflows/beads.yml` installs a pinned `bd` and runs `e2e-mem.sh` on the beads path. The
+`bd` install is large, so this job does not run on every PR. It runs each night, on demand, and on a
+PR that changes the memory code. A `SKIP` in its evidence makes the job fail.
 
 The e2e job runs **without any agent CLI installed** — deliberately, because the S0 acceptance case is
 `avo doctor` behaving correctly when the tools it drives are missing.
