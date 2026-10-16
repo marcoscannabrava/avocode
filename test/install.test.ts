@@ -540,6 +540,40 @@ test("runInstall warns about a link the lineage already tracks", () => {
   }
 });
 
+test("runInstall in a subdirectory anchors entries at the repo root", () => {
+  const top = gitRepo();
+  try {
+    const cwd = join(top, "pkg");
+    mkdirSync(cwd);
+    const r = runInstall(opts(cwd, { agents: ["pi"] }));
+    assert.ok(r.ok, r.errors.join("; "));
+    const listed = excludedLinks(readFileSync(gitExcludePath(cwd) as string, "utf8"));
+    assert.ok(listed.includes(join("pkg", PI_EXTENSION)), listed.join(", "));
+    gitOut(top, "add", "-A");
+    const staged = gitOut(top, "diff", "--cached", "--name-only").split("\n");
+    assert.ok(!staged.includes(join("pkg", PI_EXTENSION)), "the subdirectory link must not be staged");
+    assert.ok(staged.includes(join("pkg", AGENTS_FILE)));
+  } finally {
+    rmSync(top, { recursive: true, force: true });
+  }
+});
+
+test("runInstall in a second worktree keeps the first one's entries", () => {
+  const cwd = gitRepo();
+  try {
+    runInstall(opts(cwd, { agents: ["pi"] }));
+    const wt = join(cwd, ".wt");
+    gitOut(cwd, "worktree", "add", "-q", "--detach", wt, "HEAD");
+    const r = runInstall(opts(wt, { agents: ["claude"] }));
+    assert.ok(r.ok, r.errors.join("; "));
+    const listed = excludedLinks(readFileSync(gitExcludePath(cwd) as string, "utf8"));
+    for (const name of PI_EXTENSION_NAMES) assert.ok(listed.includes(piExtension(name)), name);
+    assert.equal(gitOut(cwd, "status", "--porcelain", "--", ".pi/extensions"), "", "the pi links stay ignored");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("runInstall outside git writes no exclude step", () => {
   const cwd = repo();
   try {

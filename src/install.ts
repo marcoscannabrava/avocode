@@ -169,11 +169,17 @@ function noteLocal(cwd: string, linkPath: string, want: string, action: InitStep
 // .git/info/exclude: local links, not lineage (#32)
 // ---------------------------------------------------------------------------
 
+/** Repo root and its local ignore file. */
+function gitExclude(cwd: string): { top: string; file: string } | null {
+  const r = spawnSync("git", ["rev-parse", "--show-toplevel", "--git-path", "info/exclude"], { cwd, encoding: "utf8" });
+  const [top, file] = typeof r.stdout === "string" ? r.stdout.trim().split("\n") : [];
+  if (r.status !== 0 || !top || !file) return null;
+  return { top, file: resolve(cwd, file) };
+}
+
 /** Local ignore file, shared by every worktree. */
 export function gitExcludePath(cwd: string): string | null {
-  const r = spawnSync("git", ["rev-parse", "--git-path", "info/exclude"], { cwd, encoding: "utf8" });
-  if (r.status !== 0 || typeof r.stdout !== "string" || r.stdout.trim() === "") return null;
-  return resolve(cwd, r.stdout.trim());
+  return gitExclude(cwd)?.file ?? null;
 }
 
 /** The paths inside avo's exclude block. */
@@ -210,14 +216,18 @@ function isLink(path: string): boolean {
 
 /** Keeps absolute links out of `avo commit`. */
 function excludeLocalLinks(cwd: string, local: readonly string[], steps: InitStep[], warnings: string[]): void {
-  const path = gitExcludePath(cwd);
-  if (path === null) return;
+  const git = gitExclude(cwd);
+  if (git === null) return;
+  const { top, file: path } = git;
   const name = relative(cwd, path);
   try {
     const existing = existsSync(path) ? readFileSync(path, "utf8") : null;
     const before = excludedLinks(existing);
-    // Other agents' links stay listed.
-    const keep = [...new Set([...before, ...local])].filter((p) => isLink(join(cwd, p)));
+    // Entries are anchored at the repo root.
+    const real = realpathSync(cwd);
+    const mine = local.map((p) => relative(top, join(real, p)));
+    // Keep old entries: other worktrees share them.
+    const keep = [...new Set([...before, ...mine])].filter((p) => isLink(join(top, p)) || !existsSync(join(top, p)));
     if (keep.length === 0 && before.length === 0) return;
     const text = spliceExclude(existing, keep);
     if (text === existing) {
@@ -227,7 +237,7 @@ function excludeLocalLinks(cwd: string, local: readonly string[], steps: InitSte
       writeFileSync(path, text);
       steps.push({ name, action: "created", detail: `${keep.length} absolute link(s) kept out of the lineage` });
     }
-    const tracked = keep.length === 0 ? "" : (spawnSync("git", ["ls-files", "--", ...keep], { cwd, encoding: "utf8" }).stdout ?? "");
+    const tracked = keep.length === 0 ? "" : (spawnSync("git", ["ls-files", "--", ...keep], { cwd: top, encoding: "utf8" }).stdout ?? "");
     for (const t of tracked.split("\n").filter((l) => l.trim() !== "")) warnings.push(`${t} is already tracked; run 'git rm --cached ${t}'`);
   } catch (e) {
     steps.push({ name, action: "failed", detail: (e as Error).message });
@@ -237,11 +247,11 @@ function excludeLocalLinks(cwd: string, local: readonly string[], steps: InitSte
 
 /** Copies excluded links into a worktree. */
 export function mirrorLinks(from: string, to: string): string[] {
-  const path = gitExcludePath(from);
-  if (path === null || !existsSync(path)) return [];
+  const git = gitExclude(from);
+  if (git === null || !existsSync(git.file)) return [];
   const failed: string[] = [];
-  for (const p of excludedLinks(readFileSync(path, "utf8"))) {
-    const src = join(from, p);
+  for (const p of excludedLinks(readFileSync(git.file, "utf8"))) {
+    const src = join(git.top, p);
     if (!isLink(src)) continue;
     const want = readlinkSync(src);
     // Relative text resolves against the worktree.
