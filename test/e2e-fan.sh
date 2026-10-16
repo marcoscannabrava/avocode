@@ -215,5 +215,19 @@ echo "$out" | jq -e '.error | test("no run")' >/dev/null
 yes_no $? "promoting from a run that does not exist says so" "the error was: $out"
 say ""
 
+# ------------------------------------------------- 9. install links reach probes, not the lineage
+say "## 9. install links in a probe worktree (#32)"
+avo install --cwd "$repo" --agent pi --json >/dev/null
+git -C "$repo" add -A
+git -C "$repo" commit -qm wired
+if git -C "$repo" ls-files --error-unmatch .pi/extensions/avo >/dev/null 2>&1; then bad "the install link entered the lineage"; else ok "the install link stays out of the lineage"; fi
+out="$(avo fan --n 1 --prompt 'vary it' --json --cwd "$repo")"
+wt="$repo/$(echo "$out" | jq -r '.results[0].worktree')"
+if [[ -f $wt/.pi/extensions/avo/index.ts ]]; then ok "the probe worktree reads the extension through its link"; else bad "the probe worktree has no extension link"; fi
+echo "$out" | jq -e '.results[0].diffstat.changed == ["kernel.txt"]' >/dev/null
+yes_no $? "the mirrored link is not part of the probe's diff" "diffstat was $(echo "$out" | jq -c '.results[0].diffstat.changed')"
+avo fan --clean all --json --cwd "$repo" >/dev/null
+say ""
+
 say "# $(grep -c '^PASS' "$evidence") checks passed, $fails failed"
 exit $((fails > 0 ? 1 : 0))

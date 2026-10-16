@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Io } from "./io.ts";
 import { avocodeRoot, bundledSkillsDir, readSkills, SKILL_FILE, SKILLS_DIR, type Skill } from "./skills.ts";
 import type { InitStep } from "./steps.ts";
@@ -28,6 +29,9 @@ export const PI_EXTENSION_SRC = piExtensionSrc("avo");
 /** Delimits the block `avo install` owns, so re-running rewrites it instead of appending again. */
 export const BEGIN_MARKER = "<!-- BEGIN avo: managed by `avo install`, edits inside are overwritten -->";
 export const END_MARKER = "<!-- END avo -->";
+/** Delimits avo's block in `.git/info/exclude`. */
+export const EXCLUDE_BEGIN = "# BEGIN avo install: local links, not lineage";
+export const EXCLUDE_END = "# END avo install";
 
 /**
  * Pi's built-ins plus `grep`/`find`/`ls`. `bash` is the one that matters: avo, `bd` and `qmd` are
@@ -146,12 +150,106 @@ export function linkTargetFor(cwd: string, fromDir: string, to: string): string 
 }
 
 /** Per-skill links into an existing real directory — the shape `qmd skill install` also uses. */
-function linkEachSkill(cwd: string, intoDir: string, sourceDir: string, skills: readonly Skill[], force: boolean, steps: InitStep[]): void {
+function linkEachSkill(cwd: string, intoDir: string, sourceDir: string, skills: readonly Skill[], force: boolean, steps: InitStep[], local: string[]): void {
   for (const s of skills) {
     const linkPath = join(intoDir, s.dir);
-    const r = ensureLink(linkPath, linkTargetFor(cwd, intoDir, join(sourceDir, s.dir)), force);
+    const want = linkTargetFor(cwd, intoDir, join(sourceDir, s.dir));
+    const r = ensureLink(linkPath, want, force);
     steps.push({ name: relative(cwd, linkPath), action: r.action, detail: r.detail });
+    noteLocal(cwd, linkPath, want, r.action, local);
   }
+}
+
+/** Records a link that names this machine. */
+function noteLocal(cwd: string, linkPath: string, want: string, action: InitStep["action"], local: string[]): void {
+  if (isAbsolute(want) && (action === "created" || action === "unchanged")) local.push(relative(cwd, linkPath));
+}
+
+// ---------------------------------------------------------------------------
+// .git/info/exclude: local links, not lineage (#32)
+// ---------------------------------------------------------------------------
+
+/** Local ignore file, shared by every worktree. */
+export function gitExcludePath(cwd: string): string | null {
+  const r = spawnSync("git", ["rev-parse", "--git-path", "info/exclude"], { cwd, encoding: "utf8" });
+  if (r.status !== 0 || typeof r.stdout !== "string" || r.stdout.trim() === "") return null;
+  return resolve(cwd, r.stdout.trim());
+}
+
+/** The paths inside avo's exclude block. */
+export function excludedLinks(text: string | null): string[] {
+  if (text === null) return [];
+  const lines = text.split("\n");
+  const begin = lines.indexOf(EXCLUDE_BEGIN);
+  const end = lines.indexOf(EXCLUDE_END, begin);
+  if (begin === -1 || end === -1) return [];
+  return lines.slice(begin + 1, end).filter((l) => l.startsWith("/")).map((l) => l.slice(1));
+}
+
+/** Rewrites avo's exclude block; other lines stay. */
+export function spliceExclude(existing: string | null, paths: readonly string[]): string {
+  const block = [EXCLUDE_BEGIN, ...[...new Set(paths)].sort().map((p) => `/${p}`), EXCLUDE_END].join("\n");
+  const text = existing ?? "";
+  const lines = text.split("\n");
+  const begin = lines.indexOf(EXCLUDE_BEGIN);
+  const end = lines.indexOf(EXCLUDE_END, begin);
+  if (begin === -1 || end === -1) {
+    const sep = text === "" || text.endsWith("\n") ? "" : "\n";
+    return `${text}${sep}${block}\n`;
+  }
+  return [...lines.slice(0, begin), block, ...lines.slice(end + 1)].join("\n");
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** Keeps absolute links out of `avo commit`. */
+function excludeLocalLinks(cwd: string, local: readonly string[], steps: InitStep[], warnings: string[]): void {
+  const path = gitExcludePath(cwd);
+  if (path === null) return;
+  const name = relative(cwd, path);
+  try {
+    const existing = existsSync(path) ? readFileSync(path, "utf8") : null;
+    const before = excludedLinks(existing);
+    // Other agents' links stay listed.
+    const keep = [...new Set([...before, ...local])].filter((p) => isLink(join(cwd, p)));
+    if (keep.length === 0 && before.length === 0) return;
+    const text = spliceExclude(existing, keep);
+    if (text === existing) {
+      steps.push({ name, action: "unchanged", detail: `${keep.length} absolute link(s) already kept out of the lineage` });
+    } else {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+      steps.push({ name, action: "created", detail: `${keep.length} absolute link(s) kept out of the lineage` });
+    }
+    const tracked = keep.length === 0 ? "" : (spawnSync("git", ["ls-files", "--", ...keep], { cwd, encoding: "utf8" }).stdout ?? "");
+    for (const t of tracked.split("\n").filter((l) => l.trim() !== "")) warnings.push(`${t} is already tracked; run 'git rm --cached ${t}'`);
+  } catch (e) {
+    steps.push({ name, action: "failed", detail: (e as Error).message });
+    warnings.push(`could not write ${name} — ${(e as Error).message}`);
+  }
+}
+
+/** Copies excluded links into a worktree. */
+export function mirrorLinks(from: string, to: string): string[] {
+  const path = gitExcludePath(from);
+  if (path === null || !existsSync(path)) return [];
+  const failed: string[] = [];
+  for (const p of excludedLinks(readFileSync(path, "utf8"))) {
+    const src = join(from, p);
+    if (!isLink(src)) continue;
+    const want = readlinkSync(src);
+    // Relative text resolves against the worktree.
+    if (!isAbsolute(want)) continue;
+    const r = ensureLink(join(to, p), want, false);
+    if (r.action === "failed" || r.action === "skipped") failed.push(`${p}: ${r.detail}`);
+  }
+  return failed;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,13 +382,14 @@ export function runInstall(opts: InstallOptions): InstallResult {
   }
 
   const target = join(cwd, SKILLS_DIR);
+  const local: string[] = [];
   const ownRepo = existsSync(target) && sameDir(target, source);
   if (ownRepo) {
     steps.push({ name: SKILLS_DIR, action: "unchanged", detail: `${skills.length} skill(s) already live here; this repo owns them` });
   } else {
     try {
       mkdirSync(target, { recursive: true });
-      linkEachSkill(cwd, target, source, skills, opts.force, steps);
+      linkEachSkill(cwd, target, source, skills, opts.force, steps, local);
     } catch (e) {
       errors.push(`could not create ${SKILLS_DIR} in ${cwd} — ${(e as Error).message}`);
       steps.push({ name: SKILLS_DIR, action: "failed", detail: (e as Error).message });
@@ -320,10 +419,11 @@ export function runInstall(opts: InstallOptions): InstallResult {
   }
 
   for (const agent of opts.agents) {
-    if (agent === "pi") installPi(cwd, steps, warnings, opts.force);
-    else if (agent === "claude") installClaude(cwd, ownRepo ? source : target, skills, opts.force, steps);
+    if (agent === "pi") installPi(cwd, steps, warnings, opts.force, local);
+    else if (agent === "claude") installClaude(cwd, ownRepo ? source : target, skills, opts.force, steps, local);
     else steps.push({ name: "codex", action: "unchanged", detail: `discovers skills through the ${AGENTS_FILE} index; it has no skills mechanism of its own` });
   }
+  excludeLocalLinks(cwd, local, steps, warnings);
 
   return result();
 }
@@ -344,7 +444,7 @@ function sameDir(a: string, b: string): boolean {
  * Pi only. The extension binds capabilities every agent already reaches through `bash avo ...`
  * (invariant 8), so an agent without it loses speed, not ability.
  */
-function linkPiExtension(cwd: string, name: string, steps: InitStep[], warnings: string[], force: boolean): void {
+function linkPiExtension(cwd: string, name: string, steps: InitStep[], warnings: string[], force: boolean, local: string[]): void {
   const rel = piExtension(name);
   const relSrc = piExtensionSrc(name);
   const source = join(avocodeRoot(), relSrc);
@@ -361,14 +461,16 @@ function linkPiExtension(cwd: string, name: string, steps: InitStep[], warnings:
     return;
   }
   const linkPath = join(cwd, rel);
-  const r = ensureLink(linkPath, linkTargetFor(cwd, dirname(linkPath), source), force);
+  const want = linkTargetFor(cwd, dirname(linkPath), source);
+  const r = ensureLink(linkPath, want, force);
   steps.push({ name: rel, action: r.action, detail: r.detail });
+  noteLocal(cwd, linkPath, want, r.action, local);
   if (r.action === "failed") warnings.push(`could not link ${rel} — ${r.detail}`);
 }
 
-function installPi(cwd: string, steps: InitStep[], warnings: string[], force: boolean): void {
+function installPi(cwd: string, steps: InitStep[], warnings: string[], force: boolean, local: string[]): void {
   steps.push({ name: "pi", action: "unchanged", detail: `discovers project ${SKILLS_DIR}/ natively — no copying, no config` });
-  for (const name of PI_EXTENSION_NAMES) linkPiExtension(cwd, name, steps, warnings, force);
+  for (const name of PI_EXTENSION_NAMES) linkPiExtension(cwd, name, steps, warnings, force, local);
   const path = join(cwd, PI_SETTINGS);
   let existing: unknown = null;
   if (existsSync(path)) {
@@ -402,13 +504,13 @@ function installPi(cwd: string, steps: InitStep[], warnings: string[], force: bo
   );
 }
 
-function installClaude(cwd: string, skillsDir: string, skills: readonly Skill[], force: boolean, steps: InitStep[]): void {
+function installClaude(cwd: string, skillsDir: string, skills: readonly Skill[], force: boolean, steps: InitStep[], local: string[]): void {
   const linkPath = join(cwd, CLAUDE_SKILLS);
   const want = linkTargetFor(cwd, join(cwd, dirname(CLAUDE_SKILLS)), join(cwd, SKILLS_DIR));
   if (linkState(linkPath, want) === "directory") {
     // A real .claude/skills holds the repo's own skills. Link ours inside rather than replace it.
     steps.push({ name: CLAUDE_SKILLS, action: "unchanged", detail: "already a real directory with its own skills; linking avo's inside it instead" });
-    linkEachSkill(cwd, linkPath, skillsDir, skills, force, steps);
+    linkEachSkill(cwd, linkPath, skillsDir, skills, force, steps, local);
     return;
   }
   const r = ensureLink(linkPath, want, force);

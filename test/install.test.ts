@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,10 +9,15 @@ import {
   BEGIN_MARKER,
   CLAUDE_SKILLS,
   END_MARKER,
+  EXCLUDE_BEGIN,
+  EXCLUDE_END,
+  excludedLinks,
+  gitExcludePath,
   installCommand,
   linkState,
   linkTargetFor,
   mergePiSettings,
+  mirrorLinks,
   parseInstallArgs,
   PI_DEFAULT_TOOLS,
   PI_EXTENSION,
@@ -24,6 +30,7 @@ import {
   renderInstall,
   runInstall,
   spliceBlock,
+  spliceExclude,
   type InstallOptions,
   type InstallResult,
 } from "../src/install.ts";
@@ -443,6 +450,121 @@ test("runInstall always warns that headless pi ignores project skills until the 
   try {
     const r = runInstall(opts(cwd, { agents: ["pi"] }));
     assert.ok(r.warnings.some((w) => /--approve|defaultProjectTrust/.test(w)), r.warnings.join("; "));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// install links stay out of the lineage (#32)
+// ---------------------------------------------------------------------------
+
+function gitRepo(): string {
+  const cwd = repo();
+  for (const args of [["init", "-q"], ["config", "user.email", "avo@example.com"], ["config", "user.name", "avo"], ["commit", "-q", "--allow-empty", "-m", "base"]]) {
+    execFileSync("git", args, { cwd });
+  }
+  return cwd;
+}
+
+const gitOut = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf8" });
+
+test("spliceExclude writes one sorted block and keeps every other line", () => {
+  const text = spliceExclude("*.log\n", ["b", "a", "a"]);
+  assert.equal(text, `*.log\n${EXCLUDE_BEGIN}\n/a\n/b\n${EXCLUDE_END}\n`);
+  assert.deepEqual(excludedLinks(text), ["a", "b"]);
+  assert.equal(spliceExclude(text, ["a", "b"]), text, "a re-run is byte-identical");
+  const grown = spliceExclude(`${text}tail\n`, ["c"]);
+  assert.equal(grown, `*.log\n${EXCLUDE_BEGIN}\n/c\n${EXCLUDE_END}\ntail\n`);
+  assert.deepEqual(excludedLinks(null), []);
+  assert.deepEqual(excludedLinks("no block\n"), []);
+});
+
+test("runInstall keeps its absolute links out of git add -A", () => {
+  const cwd = gitRepo();
+  try {
+    const r = runInstall(opts(cwd));
+    assert.ok(r.ok, r.errors.join("; "));
+    const exclude = gitExcludePath(cwd);
+    assert.ok(exclude !== null);
+    const listed = excludedLinks(readFileSync(exclude, "utf8"));
+    for (const s of r.skills) assert.ok(listed.includes(join(SKILLS_DIR, s.dir)), s.dir);
+    for (const name of PI_EXTENSION_NAMES) assert.ok(listed.includes(piExtension(name)), name);
+    assert.equal(step(r, ".git/info/exclude")?.action, "created");
+    gitOut(cwd, "add", "-A");
+    const staged = gitOut(cwd, "diff", "--cached", "--name-only").split("\n");
+    for (const p of listed) assert.ok(!staged.includes(p), `${p} must not be staged`);
+    // The in-repo relative link is portable, so it still enters the lineage.
+    assert.ok(staged.includes(CLAUDE_SKILLS));
+    assert.ok(staged.includes(AGENTS_FILE));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a re-run leaves the exclude block byte-identical", () => {
+  const cwd = gitRepo();
+  try {
+    runInstall(opts(cwd));
+    const exclude = gitExcludePath(cwd) as string;
+    const before = readFileSync(exclude, "utf8");
+    const second = runInstall(opts(cwd));
+    assert.equal(readFileSync(exclude, "utf8"), before);
+    assert.deepEqual(second.steps.filter((s) => s.action !== "unchanged"), []);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("installing one agent keeps the links another agent got", () => {
+  const cwd = gitRepo();
+  try {
+    runInstall(opts(cwd, { agents: ["pi"] }));
+    runInstall(opts(cwd, { agents: ["claude"] }));
+    const listed = excludedLinks(readFileSync(gitExcludePath(cwd) as string, "utf8"));
+    for (const name of PI_EXTENSION_NAMES) assert.ok(listed.includes(piExtension(name)), name);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runInstall warns about a link the lineage already tracks", () => {
+  const cwd = gitRepo();
+  try {
+    runInstall(opts(cwd, { agents: ["pi"] }));
+    gitOut(cwd, "add", "-f", PI_EXTENSION);
+    const r = runInstall(opts(cwd, { agents: ["pi"] }));
+    assert.ok(r.warnings.some((w) => w.includes(`git rm --cached ${PI_EXTENSION}`)), r.warnings.join("; "));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runInstall outside git writes no exclude step", () => {
+  const cwd = repo();
+  try {
+    const r = runInstall(opts(cwd));
+    assert.ok(r.ok, r.errors.join("; "));
+    assert.ok(!r.steps.some((s) => s.name.endsWith("info/exclude")));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("mirrorLinks gives a worktree the links, still ignored there", () => {
+  const cwd = gitRepo();
+  try {
+    runInstall(opts(cwd));
+    gitOut(cwd, "add", "-A");
+    gitOut(cwd, "commit", "-q", "-m", "wired");
+    const wt = join(cwd, ".wt");
+    gitOut(cwd, "worktree", "add", "-q", "--detach", wt, "HEAD");
+    assert.ok(!existsSync(join(wt, PI_EXTENSION)), "the lineage does not hold the link");
+    assert.deepEqual(mirrorLinks(cwd, wt), []);
+    assert.equal(readlinkSync(join(wt, PI_EXTENSION)), join(avocodeRoot(), PI_EXTENSION_SRC));
+    assert.match(readFileSync(join(wt, CLAUDE_SKILLS, "avo-vary", "SKILL.md"), "utf8"), /^---\n/);
+    assert.equal(gitOut(wt, "status", "--porcelain"), "", "the worktree stays clean");
+    assert.deepEqual(mirrorLinks(cwd, wt), [], "a second mirror is a no-op");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
