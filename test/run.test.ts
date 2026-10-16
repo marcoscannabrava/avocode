@@ -272,7 +272,7 @@ case "$prompt" in
     echo "I ran avo commit myself"
     exit 0 ;;
 esac
-# What the avo-vary skill tells a stuck agent to do.
+# As the avo-vary skill tells it.
 case "$prompt" in
   *selfsup*) "{{AVO}}" supervise --stall 1 >> "$PWD/selfsup.txt" 2>&1 ;;
 esac
