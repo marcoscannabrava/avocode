@@ -706,8 +706,10 @@ when they reach out of it, so they survive clones and `avo fan` worktrees (`:143
 
 Removal (#18): `ownedLink` reads a link's raw target, so a dangling link into avocode's checkout
 is still known as avo's. `avo install` removes such dangling skill links. `avo install
---uninstall` (`runUninstall`) removes avo's links, the marked `AGENTS.md` block (`removeBlock`), and
-the `.pi/settings.json` keys that still have avo's values (`unmergePiSettings`).
+--uninstall` (`runUninstall`) removes avo's links and the marked `AGENTS.md` block (`removeBlock`).
+It deletes `.pi/settings.json` only when the file holds nothing but avo's keys with avo's values
+(`unmergePiSettings`); otherwise the keys stay, because avo cannot prove it wrote them. In a repo
+with a real copy of avo's skills (avocode itself), it removes nothing.
 
 **The five skills** (`.agents/skills/`): `avo-vary` (one variation step: prime → best → know query →
 one change → score → commit), `avo-score` (the `f` contract and authoring rules), `avo-lineage`

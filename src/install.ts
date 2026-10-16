@@ -278,8 +278,8 @@ export function spliceBlock(existing: string | null, block: string): { text: str
 /** Inverse of `spliceBlock`; null without markers. */
 export function removeBlock(existing: string): string | null {
   const begin = existing.indexOf(BEGIN_MARKER);
-  const end = existing.indexOf(END_MARKER);
-  if (begin === -1 || end === -1 || end < begin) return null;
+  const end = begin === -1 ? -1 : existing.indexOf(END_MARKER, begin);
+  if (begin === -1 || end === -1) return null;
   const head = existing.slice(0, begin).replace(/\n+$/, "");
   const tail = existing.slice(end + END_MARKER.length).replace(/^\n+/, "");
   if (head === "") return tail;
@@ -423,12 +423,13 @@ export function runUninstall(opts: InstallOptions): InstallResult {
   const result = (): InstallResult => ({ ok: errors.length === 0, cwd, agents: [...AGENT_NAMES], skills: [], steps, warnings, errors });
 
   const target = join(cwd, SKILLS_DIR);
-  if (existsSync(target) && sameDir(target, source)) {
-    steps.push({ name: SKILLS_DIR, action: "skipped", detail: "this repo owns the skills; nothing to unlink" });
-  } else {
-    removeOwnedLinks(cwd, target, rootsOf(source), false, steps);
-    removeEmptyDirs(cwd, target);
+  // An avocode checkout tracks its wiring.
+  if ((existsSync(target) && sameDir(target, source)) || holdsOwnSkills(target, source)) {
+    steps.push({ name: SKILLS_DIR, action: "skipped", detail: "this repo holds avo's skills; nothing removed" });
+    return result();
   }
+  removeOwnedLinks(cwd, target, rootsOf(source), false, steps);
+  removeEmptyDirs(cwd, target);
 
   // One link, or a real directory.
   const claude = join(cwd, CLAUDE_SKILLS);
@@ -474,6 +475,21 @@ export function runUninstall(opts: InstallOptions): InstallResult {
   return result();
 }
 
+/** A real copy of an avo skill. */
+function holdsOwnSkills(target: string, source: string): boolean {
+  try {
+    return readdirSync(source).some((n) => {
+      try {
+        return lstatSync(join(target, n)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 function uninstallPiSettings(cwd: string, steps: InitStep[], warnings: string[]): void {
   const path = join(cwd, PI_SETTINGS);
   if (!existsSync(path)) return;
@@ -490,12 +506,15 @@ function uninstallPiSettings(cwd: string, steps: InitStep[], warnings: string[])
     steps.push({ name: PI_SETTINGS, action: "unchanged", detail: "no keys with avo's values" });
     return;
   }
+  // Other keys: avo may not own these.
+  if (Object.keys(settings).length > 0) {
+    steps.push({ name: PI_SETTINGS, action: "skipped", detail: `kept ${removed.join(", ")}; you may have set them` });
+    return;
+  }
   try {
-    if (Object.keys(settings).length === 0) {
-      rmSync(path);
-      removeEmptyDirs(cwd, dirname(path));
-    } else writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
-    steps.push({ name: PI_SETTINGS, action: "removed", detail: removed.join(", ") });
+    rmSync(path);
+    removeEmptyDirs(cwd, dirname(path));
+    steps.push({ name: PI_SETTINGS, action: "removed", detail: "it held only avo's settings" });
   } catch (e) {
     steps.push({ name: PI_SETTINGS, action: "failed", detail: (e as Error).message });
     warnings.push(`could not write ${PI_SETTINGS} — ${(e as Error).message}`);

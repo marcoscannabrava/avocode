@@ -1,4 +1,4 @@
-# avo S5 e2e — 2026-10-16T22:02:40Z
+# avo S5 e2e — 2026-10-16T23:32:02Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 # pi on PATH: yes
 # claude on PATH: yes
@@ -109,7 +109,7 @@ $ avo install --uninstall -> exit 0
       removed    .claude/skills         avo's link to .agents/skills
       removed    .pi/extensions/avo     avo's link
       removed    .pi/extensions/avo-supervisor avo's link
-      removed    .pi/settings.json      defaultTools, enableSkillCommands
+      removed    .pi/settings.json      it held only avo's settings
       removed    AGENTS.md              the avo block; your own content stays
     
     avo wiring removed

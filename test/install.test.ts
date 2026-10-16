@@ -563,11 +563,17 @@ test("install then --uninstall leaves the repo as it was", () => {
     writeFileSync(join(cwd, PI_SETTINGS), `${JSON.stringify({ theme: "dark" }, null, 2)}\n`);
     const before = { top: readdirSync(cwd).sort(), files: snapshot(cwd) };
     assert.ok(runInstall(opts(cwd)).ok);
+    const merged = readFileSync(join(cwd, PI_SETTINGS), "utf8");
 
     const io = bufferIo();
     assert.equal(installCommand(["--uninstall", "--cwd", cwd], io), 0, io.stderr);
     assert.match(io.stdout, /avo wiring removed/);
-    assert.deepEqual({ top: readdirSync(cwd).sort(), files: snapshot(cwd) }, before);
+    // avo cannot tell who set the keys, so they stay.
+    assert.equal(readFileSync(join(cwd, PI_SETTINGS), "utf8"), merged);
+    assert.match(io.stdout, /kept defaultTools, enableSkillCommands/);
+    const after = snapshot(cwd);
+    after[PI_SETTINGS] = before.files[PI_SETTINGS] as string;
+    assert.deepEqual({ top: readdirSync(cwd).sort(), files: after }, before);
     assert.ok(existsSync(join(avocodeRoot(), SKILLS_DIR)), "never touches avocode's checkout");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -584,6 +590,31 @@ test("--uninstall removes a fresh install completely, AGENTS.md included", () =>
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("--uninstall in an avocode checkout removes nothing", () => {
+  const cwd = repo();
+  try {
+    // A real copy of avo's skills, as in avocode.
+    mkdirSync(join(cwd, SKILLS_DIR, "avo-vary"), { recursive: true });
+    const block = `${BEGIN_MARKER}\nrules\n${END_MARKER}\n`;
+    writeFileSync(join(cwd, AGENTS_FILE), block);
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    const settings = `${JSON.stringify(mergePiSettings(null).settings, null, 2)}\n`;
+    writeFileSync(join(cwd, PI_SETTINGS), settings);
+    const r = runUninstall(opts(cwd, { uninstall: true }));
+    assert.ok(r.ok);
+    assert.deepEqual(r.steps.map((s) => s.action), ["skipped"]);
+    assert.equal(readFileSync(join(cwd, AGENTS_FILE), "utf8"), block);
+    assert.equal(readFileSync(join(cwd, PI_SETTINGS), "utf8"), settings);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("removeBlock finds the end marker after the begin marker", () => {
+  const text = `${END_MARKER}\n\n${BEGIN_MARKER}\nx\n${END_MARKER}\n`;
+  assert.equal(removeBlock(text), `${END_MARKER}\n`);
 });
 
 test("--uninstall keeps the repo's own skills and the link that serves them", () => {

@@ -61,10 +61,12 @@ removes that dangling link.
 - each link that points into avocode's checkout (skills and pi extensions),
 - the `.claude/skills` link, but only when `.agents/skills` is gone after that,
 - the block between the `AGENTS.md` markers (the file is deleted if nothing else is in it),
-- the `.pi/settings.json` keys that still have the values avo wrote.
+- `.pi/settings.json`, but only when it holds avo's two keys with avo's values and nothing else.
 
-It keeps your own skills, your own text in `AGENTS.md`, and settings you changed. It does not take
-`--agent` or `--force`.
+It keeps your own skills and your own text in `AGENTS.md`. If `.pi/settings.json` has other keys,
+it keeps the file as it is. avo cannot tell if you set `defaultTools` or `enableSkillCommands`, so
+the step names them and you can remove them yourself. In a repo that holds a real copy of avo's
+skills, such as avocode's own checkout, it removes nothing. It does not take `--agent` or `--force`.
 
 ## The native `pi` extensions — the same commands, one process closer
 
