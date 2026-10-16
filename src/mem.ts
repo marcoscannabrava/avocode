@@ -277,7 +277,7 @@ export async function remember(
   return { ok: error === null, backend: "file", key, bead: null, parent: record.parent, warnings, error };
 }
 
-/** One `bd --json memories` read; null when it failed or did not parse. */
+/** One bd read; null on failure. */
 async function readBdMemories(runner: Runner, cwd: string): Promise<{ r: RunResult; memories: Memory[] | null }> {
   const r = await bd(runner, cwd, ["--json", "memories"]);
   if (r.code !== 0 || r.spawnError !== null) return { r, memories: null };
@@ -294,12 +294,7 @@ async function readBdMemories(runner: Runner, cwd: string): Promise<{ r: RunResu
   return { r, memories };
 }
 
-/**
- * Everything remembered, newest last. Beads memories carry no timestamp, so theirs stays empty.
- *
- * A read that fails or comes back empty is retried once: a cold bd start can answer a successful
- * empty `{}`, which would otherwise tell the agent it remembers nothing (#10).
- */
+/** Everything remembered, newest last. Beads memories carry no timestamp, so theirs stays empty. */
 export async function listMemories(
   runner: Runner,
   cwd: string,
@@ -307,7 +302,7 @@ export async function listMemories(
 ): Promise<{ memories: Memory[]; warnings: string[] }> {
   if (backend.kind === "beads") {
     let read = await readBdMemories(runner, cwd);
-    // Cold bd can read empty once (#10).
+    // Cold bd can read empty; retry once.
     const retried = read.memories === null || read.memories.length === 0;
     if (retried) read = await readBdMemories(runner, cwd);
     const { r, memories } = read;
