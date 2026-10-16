@@ -85,29 +85,32 @@ long as `Policy` keeps its constructor (`action_space`, `rng`, both by keyword) 
 
 **What the policy is given:** the action space, a seeded `random.Random`, and per step a frame with
 `frame` (a list of numpy `(64, 64)` `int8` grids), `state`, `levels_completed`, `win_levels`,
-`available_actions`.
+`available_actions`. Nothing else: the policy runs in its own process (`bench/child.py`), so the
+engine is not in its memory. `gc`, `sys._getframe` and `inspect` find no game there.
 
 **What it is not given: the game's identity.** ARC-AGI-3 is a benchmark about games you have not seen.
 A policy keyed on the game id is a lookup table, so `bench/run.py` does not pass one. You may of course
 *recognise* a game from its frames — that is perception, and it is the job.
 
-**Three things will fail you outright**, all enforced while `act` runs:
+**Four things will fail you outright**, all enforced in the policy's process:
 
 | | |
 | --- | --- |
 | reading a game's source under `bench/games/` | you are meant to perceive the game, not read it |
 | any network access | there is nothing out there you are allowed to ask |
+| starting or signalling a process | a new process has no sandbox |
 | an illegal action, or a click with no `x`/`y` | the contract |
 
-The sandbox raises a `BaseException`, not an `Exception`, and also records a flag the harness checks
-after `act` returns — an earlier version raised a plain `Exception` and a policy wrapping its body in
+The sandbox raises a `BaseException`, not an `Exception`, and also records a flag the child checks
+after each call — an earlier version raised a plain `Exception` and a policy wrapping its body in
 `except Exception: pass` swallowed the violation and scored a clean 0.26.
 
 **Everything else is `f` and is off limits:**
 
 | Path | What it is |
 | --- | --- |
-| `bench/run.py` | the episode harness, the metric, and the sandbox |
+| `bench/run.py` | the episode harness and the metric |
+| `bench/child.py` | the policy's process, and the sandbox |
 | `bench/games/` | the ten pinned games (hash-locked, not templated) |
 | `bench/games.lock` | what those games must hash to |
 | `bench/setup.sh` | the venv and the corpus fetch |

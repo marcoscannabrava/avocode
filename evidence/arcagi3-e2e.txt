@@ -1,4 +1,4 @@
-# avo arcagi3 e2e -- 2026-08-26T07:52:44Z
+# avo arcagi3 e2e -- 2026-10-16T22:18:02Z
 # git version 2.55.0, jq jq-1.8.2
 # target: bench/arcagi3 -- ARC-AGI-3 levels completed, higher is better, 10 games
 
@@ -7,9 +7,9 @@ $ bench/init.sh $scratch/arcagi3 --target arcagi3 -> exit 0
 PASS  materializes into a fresh git repo
 PASS  .avo/score is executable
 PASS  bench/setup.sh is executable
-PASS  the gate covers exactly the 7 path(s) in avo/protected.txt
+PASS  the gate covers exactly the 8 path(s) in avo/protected.txt
 PASS  the manifest protects itself (a candidate that may edit the list has no list)
-PASS  the baseline is one commit: b41dfba arcagi3 v0: blind
+PASS  the baseline is one commit: e8c4ef3 arcagi3 v0: blind
 PASS  the baseline commit message came from the template
 PASS  the template's own .gitignore was kept (.venv/, not node_modules/)
 PASS  no holdout game leaked into the target
@@ -35,6 +35,7 @@ PASS  higher_is_better is true (this is a capability, not a latency)
 
 ## 5. f measures the candidate, not itself
 PASS  editing bench/run.py fails f AND bench/init.sh --verify
+PASS  editing bench/child.py fails f AND bench/init.sh --verify
 PASS  editing test/test_policy.py fails f AND bench/init.sh --verify
 PASS  editing bench/games.lock fails f AND bench/init.sh --verify
 PASS  editing .avo/protected.txt fails f AND bench/init.sh --verify
@@ -49,4 +50,4 @@ SKIP  no set-up arcagi3 target: the ARC-AGI-3 toolkit and the pinned corpus are 
 # evidence/ is committed to git (invariant 6)
 PASS  ARC_API_KEY does not appear in the evidence file
 
-e2e-arcagi3: all checks passed (23 of them, 1 skipped)
+e2e-arcagi3: all checks passed (24 of them, 1 skipped)
