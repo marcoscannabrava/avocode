@@ -93,12 +93,14 @@ avo run:
                     (default: $AVO_AGENT, the config, then the first on PATH)
   --model <m>       the model each turn runs on (default: the agent's own)
   --timeout <s>     kill a turn's process group after s seconds (default 900, 0 = no limit)
+  --max-cost <usd> --max-tokens <n> --max-wall <s>
+                    run budgets, checked before each turn (default: none)
   --stall <n> --thrash <k>   the supervisor's thresholds, as for avo supervise
   --dry-run         print the resolved plan and the first turn prompt; spawn nothing
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
-  stops on          --max-iters, an .avo/STOP file, 3 unchanged iterations in a row, or an agent
-                    binary that cannot be started
+  stops on          --max-iters, a crossed budget, an .avo/STOP file, 3 unchanged iterations in
+                    a row, or an agent binary that cannot be started
 
 avo supervise:
   --stall <n>       attempts with no committed improvement before it steers
