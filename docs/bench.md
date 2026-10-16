@@ -253,7 +253,11 @@ A policy has cheaper routes to a high score than playing well, so:
    source out of `bench/games/`, touches the network, or starts or signals a process. It raises a
    `BaseException` *and* sets a flag the child checks after each call — an earlier version raised a
    plain `Exception`, and a policy wrapping its body in `except Exception: pass` swallowed the
-   violation and scored a clean 0.26;
+   violation and scored a clean 0.26. It also refuses reads under `/proc/<parent>/`, because the
+   parent's command line names the game. The child gets an allow-listed environment, so it does not
+   see `ARC_API_KEY` or other secrets. The hook is a tripwire, not a wall: policy code in the same
+   process can turn it off. It then cannot get to the engine's state, but it can read the game
+   sources. An OS-level wall (Landlock, seccomp, a user namespace) is follow-up work;
 4. **the game's identity is withheld.** ARC-AGI-3 is about games you have not seen, so `bench/run.py`
    never tells the policy which game it is playing. Recognising one from its frames is fair; keying on
    an id is a lookup table. The engine's frame object has a `game_id` field, so `act` gets a plain

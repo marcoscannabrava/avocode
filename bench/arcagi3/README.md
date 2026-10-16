@@ -92,18 +92,34 @@ engine is not in its memory. `gc`, `sys._getframe` and `inspect` find no game th
 A policy keyed on the game id is a lookup table, so `bench/run.py` does not pass one. You may of course
 *recognise* a game from its frames — that is perception, and it is the job.
 
-**Four things will fail you outright**, all enforced in the policy's process:
+**Five things will fail you outright**, all enforced in the policy's process:
 
 | | |
 | --- | --- |
 | reading a game's source under `bench/games/` | you are meant to perceive the game, not read it |
 | any network access | there is nothing out there you are allowed to ask |
 | starting or signalling a process | a new process has no sandbox |
+| reading `/proc/<parent>/` | the harness's command line names the game |
 | an illegal action, or a click with no `x`/`y` | the contract |
 
 The sandbox raises a `BaseException`, not an `Exception`, and also records a flag the child checks
 after each call — an earlier version raised a plain `Exception` and a policy wrapping its body in
 `except Exception: pass` swallowed the violation and scored a clean 0.26.
+
+**The policy process gets no secrets.** Its environment holds only `PATH`, `HOME`, `LANG`, `LC_ALL`,
+`LC_CTYPE`, `TMPDIR` and `PYTHONHASHSEED` (`0` if the parent has none). `ARC_API_KEY` and all other
+variables stay in the parent. The contract suite also runs with a clean environment. The process
+stops when the harness stops, also when the harness is killed.
+
+**The sandbox is a tripwire, not a wall.** It is a Python audit hook in the same process as the
+policy. Policy code that sets out to defeat it can do so. For example, it can change the hook's
+module globals through `sys.modules` or `gc`, or call the C library through `ctypes`. After that, it
+can read `bench/games/` and any other file your user can read, such as a key in a dotfile or the
+environment of a shell above the harness (`/proc/<pid>/environ`). The hook does not police file
+writes. It cannot get to the engine's state: that is in a different process, which the policy cannot
+trace or read (`PR_SET_DUMPABLE` is 0). A real wall needs the operating system, for example Landlock,
+seccomp or a user namespace (`unshare`). That is follow-up work. Until then, the hook catches
+mistakes and lazy cheats, and the review of a version's diff catches the rest.
 
 **Everything else is `f` and is off limits:**
 
