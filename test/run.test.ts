@@ -272,6 +272,10 @@ case "$prompt" in
     echo "I ran avo commit myself"
     exit 0 ;;
 esac
+# What the avo-vary skill tells a stuck agent to do.
+case "$prompt" in
+  *selfsup*) "{{AVO}}" supervise --stall 1 >> "$PWD/selfsup.txt" 2>&1 ;;
+esac
 echo "line at iteration \${AVO_FAN_PROBE:-?}" >> kernel.txt
 echo "appended one line at depth \${AVO_FAN_LEVEL:-?}"
 `;
@@ -301,9 +305,9 @@ function fixture(name: string, opts: { scorer?: string | false } = {}): Fixture 
   git("config", "user.email", "avo@example.com");
   git("config", "user.name", "avo");
   mkdirSync(join(dir, ".avo"), { recursive: true });
-  writeFileSync(join(dir, ".gitignore"), ".avo/runs/\n.avo/worktrees/\n.avo/attempts.jsonl\nlast-prompt.txt\nall-prompts.txt\n");
+  writeFileSync(join(dir, ".gitignore"), ".avo/runs/\n.avo/worktrees/\n.avo/attempts.jsonl\nlast-prompt.txt\nall-prompts.txt\nselfsup.txt\n");
   writeFileSync(join(dir, "kernel.txt"), "baseline\n");
-  writeFileSync(join(dir, "stub.sh"), STUB.replace("{{AVO}}", AVO_BIN), { mode: 0o755 });
+  writeFileSync(join(dir, "stub.sh"), STUB.replaceAll("{{AVO}}", AVO_BIN), { mode: 0o755 });
   if (opts.scorer !== false) writeFileSync(join(dir, ".avo/score"), opts.scorer ?? SCORER, { mode: 0o755 });
   writeFileSync(
     join(dir, ".avo/config.json"),
@@ -476,7 +480,7 @@ test("--supervise off never calls the supervisor and never steers", async () => 
 
 test("--supervise detect records what would have fired, and injects nothing", async () => {
   const f = fixture("rundetect", { scorer: FAILING_SCORER });
-  const { json } = await run(f, ["--prompt", "fix it", "--max-iters", "3", "--stall", "2", "--thrash", "2", "--supervise", "detect"]);
+  const { json } = await run(f, ["--prompt", "fix it selfsup", "--max-iters", "3", "--stall", "2", "--thrash", "2", "--supervise", "detect"]);
   assert.equal(json.supervise, "detect");
   assert.equal(json.interventions, 0, "nothing was injected, so nothing intervened");
   assert.ok((json.detections ?? 0) >= 1, "the stall is still visible in an unsteered arm");
@@ -491,6 +495,9 @@ test("--supervise detect records what would have fired, and injects nothing", as
   assert.doesNotMatch(prompts, /STEERING/);
   assert.doesNotMatch(prompts, /since the best version/);
   assert.equal(interventionsIn(f.dir), 0, "no memory: the agent reads memory, so a record would leak");
+  const own = readFileSync(join(f.dir, "selfsup.txt"), "utf8");
+  assert.match(own, /off in this run \(--supervise detect\)/, "the agent's own avo supervise is off too");
+  assert.doesNotMatch(own, /STEERING/);
   assert.match(renderRun(json), /detected only; nothing injected/);
   assert.match(renderRun(json), /detections\s+\d+/);
 });

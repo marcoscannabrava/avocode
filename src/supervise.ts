@@ -538,11 +538,26 @@ export function renderSupervision(s: Supervision): string {
 }
 
 /** 0 = no intervention needed, 1 = a signal fired and a directive was emitted, 2 = harness error. */
-export async function superviseCommand(argv: readonly string[], io: Io, runner: Runner = spawnRunner): Promise<number> {
+/** Set by `avo run` on each turn. */
+export const SUPERVISE_ENV = "AVO_SUPERVISE";
+
+export async function superviseCommand(
+  argv: readonly string[],
+  io: Io,
+  runner: Runner = spawnRunner,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
   const opts = parseSuperviseArgs(argv);
   if ("error" in opts) {
     io.err(`${opts.error}\n`);
     return 2;
+  }
+  // An ablation arm must not steer itself.
+  const mode = env[SUPERVISE_ENV];
+  if (mode === "off" || mode === "detect") {
+    const note = `avo supervise: off in this run (--supervise ${mode})`;
+    io.out(opts.json ? `${JSON.stringify({ triggered: false, directive: null, signals: [], disabled: mode })}\n` : `${note}\n`);
+    return 0;
   }
   const result = await supervise(opts, { runner });
   io.out(opts.json ? `${JSON.stringify(result)}\n` : renderSupervision(result));

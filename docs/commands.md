@@ -311,7 +311,9 @@ the directive that would have fired goes into `withheld`. The run counts these i
 `interventions` stays at 0. So the control arm still shows its stalls. `detect` writes no memory
 record, because the agent reads memory (`avo mem`). A record would steer the agent, and the control
 arm would not be a control. In `off` and `detect`, the turn prompt also omits the "attempts since the
-best version" line. The agent sees the same prompt in both modes.
+best version" line. The agent sees the same prompt in both modes. Each turn also gets
+`AVO_SUPERVISE=<mode>`. In `off` and `detect`, an `avo supervise` that the agent runs prints one line
+and exits 0, so the agent cannot steer itself.
 
 | It stops when | Because |
 | --- | --- |

@@ -23,6 +23,7 @@ import {
   renderDirective,
   supervise,
   superviseCommand,
+  SUPERVISE_ENV,
   unexplored,
 } from "../src/supervise.ts";
 
@@ -412,6 +413,30 @@ test("no lineage and no attempts exits 0 with nothing to steer", async () => {
     assert.equal(await superviseCommand(["--cwd", cwd], io, noTools), 0);
     assert.match(io.stdout, /no intervention/);
     assert.match(io.stdout, /not a git repository/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("avo supervise stays quiet inside an ablation arm", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "avo-sup-"));
+  try {
+    mkdirSync(join(cwd, ".avo"), { recursive: true });
+    const lines = Array.from({ length: 3 }, (_, i) =>
+      JSON.stringify(failed(`2026-08-24T10:0${i}:00.000Z`, { errors: ["undefined symbol foo"] })),
+    );
+    writeFileSync(join(cwd, ATTEMPTS_PATH), `${lines.join("\n")}\n`);
+    const args = ["--cwd", cwd, "--stall", "3", "--thrash", "3"];
+    for (const mode of ["off", "detect"]) {
+      const io = bufferIo();
+      assert.equal(await superviseCommand(args, io, noTools, { [SUPERVISE_ENV]: mode }), 0);
+      assert.doesNotMatch(io.stdout, /STEERING/);
+      assert.match(io.stdout, new RegExp(`--supervise ${mode}`));
+      const js = bufferIo();
+      assert.equal(await superviseCommand([...args, "--json"], js, noTools, { [SUPERVISE_ENV]: mode }), 0);
+      assert.equal((JSON.parse(js.stdout) as { triggered: boolean }).triggered, false);
+    }
+    assert.equal(await superviseCommand(args, bufferIo(), noTools, { [SUPERVISE_ENV]: "on" }), 1, "on still steers");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

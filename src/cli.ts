@@ -109,6 +109,7 @@ avo supervise:
   --json --cwd <dir>
   exit codes        0 = no intervention needed, 1 = a signal fired and a directive was emitted,
                     2 = harness error
+  AVO_SUPERVISE     off or detect (set by avo run --supervise): print one line, exit 0
 
 avo commit:
   --why <text>      the agent's rationale; lands in the commit body and lineage/vNNN.md

@@ -41,7 +41,7 @@ import {
 } from "./lineage.ts";
 import { remember, resolveBackend, shortHash, type Backend } from "./mem.ts";
 import { SCORER_PATH, spawnRunner, type Runner } from "./score.ts";
-import { supervise, type Signal, type SignalKind } from "./supervise.ts";
+import { supervise, SUPERVISE_ENV, type Signal, type SignalKind } from "./supervise.ts";
 
 /** Every run lives here. In TRAJECTORY_PATHS and gitignored: trajectory, not lineage. */
 export const RUNS_DIR = ".avo/runs";
@@ -160,7 +160,7 @@ export interface RunReport {
   /** Version numbers this run committed, in order. The run's actual output. */
   committed: number[];
   interventions: number;
-  /** `detect` only: iterations that would have steered. */
+  /** Iterations that would steer; non-zero only in `detect`. */
   detections?: number;
   /** Summed over every iteration. Disjoint by construction — see `AgentTokens`. */
   tokens: AgentTokens;
@@ -626,7 +626,7 @@ async function iterate(
         logPath,
         logFile: join(opts.cwd, logPath),
         timeoutS: opts.timeoutS,
-        env: { ...childEnv, AVO_FAN_PROBE: String(iter) },
+        env: { ...childEnv, AVO_FAN_PROBE: String(iter), [SUPERVISE_ENV]: mode },
       },
       now,
     );
