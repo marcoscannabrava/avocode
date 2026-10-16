@@ -22,12 +22,13 @@ yes_no() { if [[ $1 == 0 ]]; then ok "$2"; else bad "$3"; fi; }
 # An untracked-but-not-ignored script: it doubles as the probe for "a finding turns the gate red"
 # and for "a script is checked before anyone remembers to `git add` it".
 probe="$root/test/tmp-lint-probe.sh"
+tsprobe="$root/test/tmp-lint-probe.ts"
 work="$(mktemp -d)"
-trap 'rm -f "$probe"; rm -rf "$work"' EXIT
-rm -f "$probe"
+trap 'rm -f "$probe" "$tsprobe"; rm -rf "$work"' EXIT
+rm -f "$probe" "$tsprobe"
 
 say "# avo lint-gate e2e — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-say "# $(npm exec --yes -- shellcheck --version 2>/dev/null | grep ^version || echo 'version: unknown')"
+say "# $(timeout -k 5 60 npm exec --yes -- shellcheck --version 2>/dev/null | grep ^version || echo 'version: unknown')"
 say ""
 
 say "## 1. the gate is green on this repo, and says nothing about skipping"
@@ -65,6 +66,35 @@ printf '%s' "$missing_out" | grep -qF 'refusing to pass a gate that did not run'
 yes_no $? "it says why it failed" "the message was: $missing_out"
 printf '%s' "$missing_out" | grep -qiE 'install it|npm fallback'
 yes_no $? "it says how to fix it" "no install hint in: $missing_out"
+say ""
+
+say "## 3b. a hung shellcheck is a FAIL, not a wait (#53)"
+hang="$work/hang"
+printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$hang"
+chmod +x "$hang"
+t0=$SECONDS
+hang_out="$(SC_TIMEOUT=2 SHELLCHECK="$hang" ./test/lint-sh.sh 2>&1)"; hang_code=$?
+took=$((SECONDS - t0))
+if [[ $hang_code -ne 0 && $took -lt 30 ]]; then ok "a probe that hangs answers no (exit $hang_code in ${took}s)"
+else bad "a hung probe took ${took}s and exited $hang_code"; fi
+printf '%s' "$hang_out" | grep -qF 'refusing to pass a gate that did not run'
+yes_no $? "it fails as no runner" "the message was: $hang_out"
+# Version answers, run hangs.
+cat > "$hang" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then printf 'version: 0.11.0\n'; exit 0; fi
+exec sleep 600
+STUB
+t0=$SECONDS
+hang_out="$(SC_TIMEOUT=2 SHELLCHECK="$hang" ./test/lint-sh.sh 2>&1)"; hang_code=$?
+took=$((SECONDS - t0))
+if [[ $hang_code -ne 0 && $took -lt 30 ]]; then ok "a run that hangs is red (exit $hang_code in ${took}s)"
+else bad "a hung run took ${took}s and exited $hang_code"; fi
+printf '%s' "$hang_out" | grep -qF 'did not finish'
+yes_no $? "it says the run timed out" "the message was: $hang_out"
+suites="$(sed -n '/^e2e:/,/^$/p' justfile | grep -F './test/')"
+if [[ -n "$suites" ]] && ! printf '%s\n' "$suites" | grep -qv 'timeout'; then ok "just e2e bounds every suite"
+else bad "a suite in just e2e has no timeout: $suites"; fi
 say ""
 
 say "## 4. just lint propagates the gate rather than swallowing it"
@@ -123,6 +153,21 @@ if grep -qE 'shellcheck-v[0-9]+\.[0-9]+' .github/workflows/ci.yml; then
   bad "CI hardcodes a shellcheck version alongside SC_PIN"
 else
   ok "CI names no shellcheck version of its own"
+fi
+say ""
+
+say "## 6. an oxlint warning turns the gate RED (#48)"
+oxout="$(node_modules/.bin/oxlint --deny-warnings src test pi bench 2>&1)"; oxcode=$?
+yes_no "$oxcode" "oxlint has no warnings on this repo" "oxlint is not clean: $oxout"
+printf '%s' "$recipe" | grep -qF -- 'oxlint --deny-warnings'
+yes_no $? "the lint recipe denies oxlint warnings" "lint: runs oxlint without --deny-warnings"
+printf 'export function probe(): void {\n  const unused = 1;\n}\n' > "$tsprobe"
+oxout="$(node_modules/.bin/oxlint --deny-warnings src test pi bench 2>&1)"; oxcode=$?
+rm -f "$tsprobe"
+if [[ $oxcode -ne 0 ]] && printf '%s' "$oxout" | grep -qF 'no-unused-vars'; then
+  ok "a single warning fails oxlint (exit $oxcode)"
+else
+  bad "oxlint exited $oxcode with a warning present"
 fi
 say ""
 

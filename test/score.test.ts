@@ -86,8 +86,11 @@ test("a nested bad score names the config that broke", () => {
 });
 
 test("non-finite numbers are rejected even though JSON accepts 1e999", () => {
-  assert.match(bad(parseScoreOutput(line({ ...GOOD, scores: { b1: 1e999 } }))).errors[0] ?? "", /scores\.b1/);
-  assert.match(bad(parseScoreOutput(line({ ...GOOD, primary: 1e999 }))).errors[0] ?? "", /field 'primary'/);
+  // JSON.stringify writes Infinity as null.
+  const inf = (o: unknown) => line(o).replace('"INF"', "1e999");
+  assert.equal(JSON.parse(inf({ primary: "INF" })).primary, Infinity);
+  assert.match(bad(parseScoreOutput(inf({ ...GOOD, scores: { b1: "INF" } }))).errors[0] ?? "", /scores\.b1.*got Infinity/);
+  assert.match(bad(parseScoreOutput(inf({ ...GOOD, primary: "INF" }))).errors[0] ?? "", /field 'primary'.*got Infinity/);
 });
 
 test("primary may be null only when the candidate is not passing", () => {
@@ -182,6 +185,22 @@ test("one failing config fails the whole attempt", () => {
   assert.equal(a.correct, false);
   assert.equal(a.pass, false);
   assert.equal(a.primary, null);
+});
+
+test("configs that disagree on direction are a harness error naming them", () => {
+  const low = { ...GOOD, higher_is_better: false };
+  const a = normalize([part("b1", GOOD), part("b2", low), part("b3", low)], META);
+  assert.equal(a.pass, false);
+  assert.equal(a.primary, null);
+  assert.equal(a.errors.length, 1);
+  assert.match(a.errors[0] ?? "", /disagree on higher_is_better: true for b1; false for b2, b3/);
+});
+
+test("configs that agree on direction raise no error", () => {
+  const low = { ...GOOD, higher_is_better: false };
+  const a = normalize([part("b1", low), part("b2", low)], META);
+  assert.deepEqual(a.errors, []);
+  assert.equal(a.higher_is_better, false);
 });
 
 test("a single scorer's self-reported duration is preferred over our wall clock", () => {

@@ -494,8 +494,77 @@ else
 fi
 say ""
 
-# ------------------------------------------------- 13. the ablation switch (AVO-4)
-say "## 13. --supervise on|off|detect"
+# ------------------------------------------------- 13. run budgets (#28)
+say "## 13. #28: cost, token and wall budgets"
+# The section 11 stub: $0.25 and 55,924 tokens a turn.
+json="$(avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 10 --max-cost 0.5 --json 2>/dev/null)"; code=$?
+yes_no "$code" "a budget stop exits 0" "a budget stop exit $code"
+printf '%s' "$json" | jq -e '.stopped == "budget" and (.iterations | length) == 2' >/dev/null
+yes_no $? "--max-cost 0.5 stops after two \$0.25 turns" "--max-cost did not stop the loop"
+printf '%s' "$json" | jq -e '.stop_reason | test("before iteration 3")' >/dev/null
+yes_no $? "it stops before the next turn, and says which" "the stop reason does not name the turn"
+json="$(avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 10 --max-tokens 100000 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.stopped == "budget" and (.iterations | length) == 2 and .budget.unenforced == []' >/dev/null
+yes_no $? "--max-tokens 100000 stops after two 55,924-token turns" "--max-tokens did not stop the loop"
+json="$(avo run --cwd "$repo" --agent stub --prompt "paced: make kernel.txt longer" --max-iters 10 --max-wall 1 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.stopped == "budget" and (.iterations | length) == 1' >/dev/null
+yes_no $? "--max-wall 1 stops after one one-second turn" "--max-wall did not stop the loop"
+# The text stub reports no usage.
+json="$(avo run --cwd "$repo" --agent stub --prompt "make kernel.txt longer" --max-iters 2 --max-cost 0.01 --max-tokens 10 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.stopped == "max-iters" and .budget.unenforced == ["cost","tokens"]' >/dev/null
+yes_no $? "no usage reported: both budgets marked unenforced" "an unmeasured budget is not marked"
+printf '%s' "$json" | jq -e '[.warnings[] | select(test("budget unenforced"))] | length == 1' >/dev/null
+yes_no $? "and it warns once, not once per turn" "the unenforced warning is missing or repeated"
+jq -e '.budget.unenforced == ["cost","tokens"]' "$repo/.avo/runs/$(printf '%s' "$json" | jq -r .run_id)/manifest.json" >/dev/null
+yes_no $? "the manifest on disk records it too" "the manifest does not record it"
+# shellcheck disable=SC2016  # a literal dollar sign
+avo run --cwd "$repo" --agent stub --prompt "go" --max-cost 5 --max-wall 600 --dry-run 2>/dev/null | grep -q 'budget       \$5, 600s wall'
+yes_no $? "--dry-run shows the budget" "the plan does not show the budget"
+say ""
+
+# ------------------------------------------------- 14. #41: avo on the child PATH
+say "## 14. #41: an agent finds avo with no install step"
+# Node only, so no operator avo.
+bare="$(dirname "$(command -v node)"):/usr/bin:/bin"
+if PATH="$bare" bash -c "command -v avo" >/dev/null 2>&1; then
+  bad "avo is already on the stripped PATH, so this proves nothing"
+else
+  ok "the stripped PATH has no avo"
+fi
+onpath="$work/onpath"
+make_repo "$onpath"
+cat > "$onpath/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+# What every skill does first.
+{ command -v avo || echo missing; avo best --json >/dev/null 2>&1; echo "exit $?"; } > "$AVO_OUT"
+echo "line" >> kernel.txt
+echo "asked avo best, then appended a line"
+STUB
+git -C "$onpath" commit -qam "a stub that asks avo"
+PATH="$bare" AVO_OUT="$work/run-avo.txt" "$root/bin/avo" run --cwd "$onpath" --agent stub --prompt "go" --max-iters 2 >/dev/null 2>&1
+if [[ "$(head -1 "$work/run-avo.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo run puts its own bin/avo first on the agent's PATH"
+else
+  bad "the agent resolved avo as '$(head -1 "$work/run-avo.txt" 2>/dev/null)'"
+fi
+if [[ "$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)" == "exit 0" ]]; then
+  ok "the agent's 'avo best --json' ran"
+else
+  bad "the agent's 'avo best' said '$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)'"
+fi
+# Like install.sh: avo through a link.
+mkdir -p "$work/linkbin"
+ln -s "$root/bin/avo" "$work/linkbin/avo"
+PATH="$work/linkbin:$bare" AVO_OUT="$work/run-link.txt" "$work/linkbin/avo" run --cwd "$onpath" --agent stub --prompt "go" --max-iters 1 >/dev/null 2>&1
+if [[ "$(head -1 "$work/run-link.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo started through a symlink puts the checkout's bin/ first"
+else
+  bad "through a symlink, the agent resolved avo as '$(head -1 "$work/run-link.txt" 2>/dev/null)'"
+fi
+say ""
+
+# ------------------------------------------------- 15. the ablation switch (AVO-4)
+say "## 15. --supervise on|off|detect"
 json="$(avo run --cwd "$repo" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --dry-run --json 2>/dev/null)"
 printf '%s' "$json" | jq -e '.supervise == "on"' >/dev/null
 yes_no $? "the default mode is on, and the manifest says so" "the default supervise mode is not on"
