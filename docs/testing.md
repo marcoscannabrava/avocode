@@ -88,6 +88,10 @@ version read out of `test/lint-sh.sh`'s own pin.
 The e2e job runs **without any agent CLI installed** — deliberately, because the S0 acceptance case is
 `avo doctor` behaving correctly when the tools it drives are missing.
 
+`.github/workflows/qmd.yml` installs a pinned `qmd` and runs `e2e-know.sh` on the qmd path. qmd
+downloads large models on first use, so the job keeps them in the Actions cache. It runs each night,
+on demand, and on a PR that changes the knowledge code. A `SKIP` in its evidence makes the job fail.
+
 ## Benchmark a real run
 
 Tests prove the harness works. Whether the *loop* works is a separate question with its own tooling —
