@@ -188,6 +188,7 @@ test("the full commit rule on a real repo: v1, refuse a regression, refuse a bre
   const v1 = await commit(dir, ["--why", "baseline: adds the scorer"]);
   assert.equal(v1.code, 0);
   assert.equal(v1.json["action"], "committed");
+  assert.equal(v1.json["ok"], true);
   assert.equal(v1.json["version"], 1);
   assert.equal(v1.json["lineage_file"], "lineage/v001.md");
 
@@ -202,6 +203,7 @@ test("the full commit rule on a real repo: v1, refuse a regression, refuse a bre
   const again = await commit(dir);
   assert.equal(again.code, 0);
   assert.equal(again.json["action"], "noop");
+  assert.equal(again.json["ok"], true);
   assert.equal(git("rev-list", "--count", "HEAD").trim(), "2");
 
   // A regression is refused — and leaves no commit behind.
@@ -209,6 +211,8 @@ test("the full commit rule on a real repo: v1, refuse a regression, refuse a bre
   const worse = await commit(dir);
   assert.equal(worse.code, 1);
   assert.equal(worse.json["action"], "refused");
+  // A refusal is the rule working.
+  assert.equal(worse.json["ok"], true);
   assert.match(String(worse.json["reason"]), /regressed/);
   assert.equal(git("rev-list", "--count", "HEAD").trim(), "2");
 
@@ -316,6 +320,7 @@ test("avo commit refuses to run outside a git repository", async (t) => {
   const r = await commit(dir);
   assert.equal(r.code, 2);
   assert.match(String(r.json["reason"]), /not a git repository/);
+  assert.equal(r.json["ok"], false);
 });
 
 test("avo commit reports a missing scorer as a harness error, not a refusal", async (t) => {
@@ -326,6 +331,7 @@ test("avo commit reports a missing scorer as a harness error, not a refusal", as
   const r = await commit(dir);
   assert.equal(r.code, 2);
   assert.match(String(r.json["reason"]), /no executable \.avo\/score/);
+  assert.equal(r.json["ok"], false);
 });
 
 test("avo best names the version a candidate is ranked against, and exits 1 when there is none", async (t) => {
