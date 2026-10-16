@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import type { Io } from "./io.ts";
 import { LINEAGE_DIR } from "./lineage.ts";
 import { spawnRunner, type RunResult, type Runner } from "./score.ts";
@@ -647,7 +647,9 @@ export async function knowAdd(
     via = "file";
   }
 
-  const slug = opts.name === null ? (isUrl ? slugForUrl(target) : slugify(target.replace(/\.[^.]+$/, ""))) : slugify(opts.name);
+  // A file slug ignores its directory.
+  const fileSlug = slugify(basename(target).replace(/\.[^.]+$/, ""));
+  const slug = opts.name === null ? (isUrl ? slugForUrl(target) : fileSlug) : slugify(opts.name);
   const rel = `${KNOWLEDGE_DIR}/${slug}${INDEXED_EXT}`;
   const path = join(cwd, rel);
   const doc = renderDoc(target, title, now().toISOString(), via, body);
