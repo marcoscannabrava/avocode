@@ -50,9 +50,21 @@ interactively and answer the prompt, or set `defaultProjectTrust: "always"` in
 `~/.pi/agent/settings.json` — otherwise an installed harness silently does nothing in exactly the
 mode `avo fan` will drive it in. `avo install` says so every time it wires pi.
 
-`avo install` never deletes anything. A real directory in the way is reported and left alone: an
-existing `.claude/skills` full of your own skills gets avo's linked *inside* it instead. A symlink or
-file in the way needs `--force`.
+`avo install` never deletes a real file or directory. A real directory in the way is reported and
+left alone: an existing `.claude/skills` full of your own skills gets avo's linked *inside* it
+instead. A symlink or file in the way needs `--force`. One removal is automatic: when a skill link
+points into avocode's skills and its target is gone (a renamed or removed skill), `avo install`
+removes that dangling link.
+
+`avo install --uninstall` removes avo's wiring from a repo:
+
+- each link that points into avocode's checkout (skills and pi extensions),
+- the `.claude/skills` link, but only when `.agents/skills` is gone after that,
+- the block between the `AGENTS.md` markers (the file is deleted if nothing else is in it),
+- the `.pi/settings.json` keys that still have the values avo wrote.
+
+It keeps your own skills, your own text in `AGENTS.md`, and settings you changed. It does not take
+`--agent` or `--force`.
 
 ## The native `pi` extensions — the same commands, one process closer
 

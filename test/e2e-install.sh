@@ -189,6 +189,26 @@ else
   bad "running avo install in this repo was not a no-op: $(printf '%s' "$own" | jq -c '[.steps[]|select(.action!="unchanged")]')"
 fi
 
+# ------------------------------------------------- 8. prune and --uninstall (#18)
+say ""
+say "## 8. prune and --uninstall"
+gone="$(mktemp -d)"; git -C "$gone" init -q
+printf '# Our rules\n\nkeep me\n' > "$gone/AGENTS.md"
+avo install --cwd "$gone" >/dev/null 2>&1
+ln -s "$root/.agents/skills/avo-renamed" "$gone/.agents/skills/avo-renamed"
+avo install --cwd "$gone" >"$work/prune.txt" 2>&1
+say "$ avo install (with a dangling avo-renamed link) -> $(grep 'avo-renamed' "$work/prune.txt" | xargs)"
+if [[ ! -L $gone/.agents/skills/avo-renamed ]]; then ok "a dangling link to a skill avo no longer ships is pruned"; else bad "the dangling avo-renamed link survived avo install"; fi
+avo install --uninstall --cwd "$gone" >"$work/uninstall.txt" 2>&1; rc=$?
+say "$ avo install --uninstall -> exit $rc"
+while IFS= read -r line; do say "    $line"; done < "$work/uninstall.txt"
+if [[ $rc == 0 ]]; then ok "avo install --uninstall exits 0"; else bad "avo install --uninstall exited $rc"; fi
+left="$(cd "$gone" && find . -path ./.git -prune -o -print | sort | xargs)"
+if [[ $left == ". ./AGENTS.md" ]]; then ok "--uninstall removes every link, dir and settings file avo made"; else bad "--uninstall left: $left"; fi
+if [[ "$(cat "$gone/AGENTS.md")" == "$(printf '# Our rules\n\nkeep me')" ]]; then ok "AGENTS.md is back to the operator's own content"; else bad "AGENTS.md was not restored: $(cat "$gone/AGENTS.md")"; fi
+if [[ -f $root/.agents/skills/avo-vary/SKILL.md ]]; then ok "avocode's own skills are untouched"; else bad "--uninstall reached into avocode's checkout"; fi
+rm -rf "$gone"
+
 say ""
 say "# ${fails} failure(s)"
 [[ $fails == 0 ]] || exit 1

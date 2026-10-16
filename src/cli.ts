@@ -49,6 +49,7 @@ avo init:
 avo install:
   --agent <a>       pi | claude | codex | all (default all; repeatable, comma-separated)
   --force           replace a symlink or file in the way; never replaces a real directory
+  --uninstall       remove avo's links, AGENTS.md block and pi settings keys
   --json --cwd <dir>
 
 avo mem:
