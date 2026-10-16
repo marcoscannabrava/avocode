@@ -334,6 +334,21 @@ test("avo commit reports a missing scorer as a harness error, not a refusal", as
   assert.equal(r.json["ok"], false);
 });
 
+test("avo commit ok stays true when the scorer says ok:false (#39)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(
+    join(dir, ".avo/score"),
+    `#!/usr/bin/env bash\nprintf '{"ok":false,"correct":true,"primary":1,"unit":"s","higher_is_better":true}\\n'\n`,
+    { mode: 0o755 },
+  );
+  const r = await commit(dir);
+  assert.equal(r.code, 1);
+  assert.equal(r.json["action"], "refused");
+  assert.equal(r.json["ok"], true);
+  assert.equal((r.json["attempt"] as { ok: boolean }).ok, false);
+});
+
 test("avo best names the version a candidate is ranked against, and exits 1 when there is none", async (t) => {
   const dir = fixture();
   t.after(() => rmSync(dir, { recursive: true, force: true }));

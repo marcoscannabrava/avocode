@@ -96,9 +96,12 @@ the commit — you cannot improve by measuring less. Tune it in `.avo/config.jso
 Exit codes: `0` committed or no-op, `1` refused, `2` harness error. Re-running with no change is a
 no-op, never a duplicate.
 
-With `--json`, `ok` is `true` when the command ran, as for `avo score`. A refusal is also
-`ok: true`, because the rule did its work. Read `action` for the decision: `committed`, `refused`,
-`noop` or `would-commit`. `ok` is `false` only on a harness error (exit `2`).
+With `--json`, `ok` is `true` when the command ran. A refusal is also `ok: true`, because the rule
+did its work. Read `action` for the decision: `committed`, `refused`, `noop` or `would-commit`. `ok`
+is `false` only on a harness error (exit `2`).
+
+This `ok` is not the scorer's `ok`. A scorer that reports `ok: false` gives a refusal with `ok: true`
+here. Read `attempt.ok` for the scorer's value.
 
 ## `avo lineage` and `avo best` — reading `P_t`
 
