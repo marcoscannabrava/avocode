@@ -494,6 +494,112 @@ else
 fi
 say ""
 
+# ------------------------------------------------- 13. run budgets (#28)
+say "## 13. #28: cost, token and wall budgets"
+# The section 11 stub: $0.25 and 55,924 tokens a turn.
+json="$(avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 10 --max-cost 0.5 --json 2>/dev/null)"; code=$?
+yes_no "$code" "a budget stop exits 0" "a budget stop exit $code"
+printf '%s' "$json" | jq -e '.stopped == "budget" and (.iterations | length) == 2' >/dev/null
+yes_no $? "--max-cost 0.5 stops after two \$0.25 turns" "--max-cost did not stop the loop"
+printf '%s' "$json" | jq -e '.stop_reason | test("before iteration 3")' >/dev/null
+yes_no $? "it stops before the next turn, and says which" "the stop reason does not name the turn"
+json="$(avo run --cwd "$cost" --agent stub --prompt "make kernel.txt longer" --max-iters 10 --max-tokens 100000 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.stopped == "budget" and (.iterations | length) == 2 and .budget.unenforced == []' >/dev/null
+yes_no $? "--max-tokens 100000 stops after two 55,924-token turns" "--max-tokens did not stop the loop"
+json="$(avo run --cwd "$repo" --agent stub --prompt "paced: make kernel.txt longer" --max-iters 10 --max-wall 1 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.stopped == "budget" and (.iterations | length) == 1' >/dev/null
+yes_no $? "--max-wall 1 stops after one one-second turn" "--max-wall did not stop the loop"
+# The text stub reports no usage.
+json="$(avo run --cwd "$repo" --agent stub --prompt "make kernel.txt longer" --max-iters 2 --max-cost 0.01 --max-tokens 10 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.stopped == "max-iters" and .budget.unenforced == ["cost","tokens"]' >/dev/null
+yes_no $? "no usage reported: both budgets marked unenforced" "an unmeasured budget is not marked"
+printf '%s' "$json" | jq -e '[.warnings[] | select(test("budget unenforced"))] | length == 1' >/dev/null
+yes_no $? "and it warns once, not once per turn" "the unenforced warning is missing or repeated"
+jq -e '.budget.unenforced == ["cost","tokens"]' "$repo/.avo/runs/$(printf '%s' "$json" | jq -r .run_id)/manifest.json" >/dev/null
+yes_no $? "the manifest on disk records it too" "the manifest does not record it"
+# shellcheck disable=SC2016  # a literal dollar sign
+avo run --cwd "$repo" --agent stub --prompt "go" --max-cost 5 --max-wall 600 --dry-run 2>/dev/null | grep -q 'budget       \$5, 600s wall'
+yes_no $? "--dry-run shows the budget" "the plan does not show the budget"
+say ""
+
+# ------------------------------------------------- 14. #41: avo on the child PATH
+say "## 14. #41: an agent finds avo with no install step"
+# Node only, so no operator avo.
+bare="$(dirname "$(command -v node)"):/usr/bin:/bin"
+if PATH="$bare" bash -c "command -v avo" >/dev/null 2>&1; then
+  bad "avo is already on the stripped PATH, so this proves nothing"
+else
+  ok "the stripped PATH has no avo"
+fi
+onpath="$work/onpath"
+make_repo "$onpath"
+cat > "$onpath/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+# What every skill does first.
+{ command -v avo || echo missing; avo best --json >/dev/null 2>&1; echo "exit $?"; } > "$AVO_OUT"
+echo "line" >> kernel.txt
+echo "asked avo best, then appended a line"
+STUB
+git -C "$onpath" commit -qam "a stub that asks avo"
+PATH="$bare" AVO_OUT="$work/run-avo.txt" "$root/bin/avo" run --cwd "$onpath" --agent stub --prompt "go" --max-iters 2 >/dev/null 2>&1
+if [[ "$(head -1 "$work/run-avo.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo run puts its own bin/avo first on the agent's PATH"
+else
+  bad "the agent resolved avo as '$(head -1 "$work/run-avo.txt" 2>/dev/null)'"
+fi
+if [[ "$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)" == "exit 0" ]]; then
+  ok "the agent's 'avo best --json' ran"
+else
+  bad "the agent's 'avo best' said '$(sed -n 2p "$work/run-avo.txt" 2>/dev/null)'"
+fi
+# Like install.sh: avo through a link.
+mkdir -p "$work/linkbin"
+ln -s "$root/bin/avo" "$work/linkbin/avo"
+PATH="$work/linkbin:$bare" AVO_OUT="$work/run-link.txt" "$work/linkbin/avo" run --cwd "$onpath" --agent stub --prompt "go" --max-iters 1 >/dev/null 2>&1
+if [[ "$(head -1 "$work/run-link.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo started through a symlink puts the checkout's bin/ first"
+else
+  bad "through a symlink, the agent resolved avo as '$(head -1 "$work/run-link.txt" 2>/dev/null)'"
+fi
+say ""
+
+# ------------------------------------------------- 15. the ablation switch (AVO-4)
+say "## 15. --supervise on|off|detect"
+json="$(avo run --cwd "$repo" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --dry-run --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.supervise == "on"' >/dev/null
+yes_no $? "the default mode is on, and the manifest says so" "the default supervise mode is not on"
+avo run --cwd "$repo" --agent stub --prompt "go" --supervise off --dry-run 2>/dev/null | grep -q 'no avo supervise (--supervise off)'
+yes_no $? "the off plan says the supervise step is skipped" "the off plan still lists avo supervise"
+avo run --cwd "$repo" --agent stub --prompt "go" --supervise detect --dry-run 2>/dev/null | grep -q 'withheld; inject nothing'
+yes_no $? "the detect plan says nothing is injected" "the detect plan does not say it withholds"
+avo run --cwd "$repo" --agent stub --prompt "go" --supervise maybe >/dev/null 2>&1
+if [[ $? == 2 ]]; then ok "an unknown mode is a usage error (exit 2)"; else bad "an unknown mode was accepted"; fi
+
+off="$work/off"
+make_repo "$off" failing
+json="$(avo run --cwd "$off" --agent stub --prompt "fix the kernel" --max-iters 3 --stall 2 --thrash 2 --supervise off --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.supervise == "off" and .interventions == 0 and ([.iterations[].supervision] | all(. == null))' >/dev/null
+yes_no $? "off: no supervisor call and no intervention" "off still ran or steered"
+jq -e '.supervise == "off"' "$off/.avo/runs/"*/manifest.json >/dev/null
+yes_no $? "off: the manifest on disk records the mode" "the manifest does not record the mode"
+! grep -q 'STEERING' "$off/last-prompt.txt"
+yes_no $? "off: the agent never sees a directive" "off injected a directive"
+
+det="$work/detect"
+make_repo "$det" failing
+json="$(avo run --cwd "$det" --agent stub --prompt "fix the kernel" --max-iters 3 --stall 2 --thrash 2 --supervise detect --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.supervise == "detect" and .interventions == 0 and .detections >= 1' >/dev/null
+yes_no $? "detect: the stall is counted, but nothing intervened" "detect did not count the stall, or it steered"
+printf '%s' "$json" | jq -e '[.iterations[] | select(.supervision.triggered) | .withheld | test("STEERING")] | (length >= 1 and all)' >/dev/null
+yes_no $? "detect: the held-back directive is in the manifest" "detect did not keep the directive"
+! grep -q 'STEERING' "$det/last-prompt.txt"
+yes_no $? "detect: the agent never sees the directive" "detect injected a directive"
+! grep -q 'since the best version' "$det/last-prompt.txt"
+yes_no $? "detect: the prompt matches the off arm" "detect leaked supervisor state into the prompt"
+! grep -q '"kind":"intervention"' "$det/lineage/memory.jsonl" 2>/dev/null
+yes_no $? "detect: no intervention memory, so the agent cannot read it" "detect wrote an intervention memory"
+say ""
+
 say "## summary"
 if [[ $fails == 0 ]]; then
   say "all checks passed ($(grep -c '^PASS' "$evidence") of them)"

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
+import { LINEAGE_DIR } from "./config.ts";
 import type { Io } from "./io.ts";
-import { LINEAGE_DIR } from "./lineage.ts";
 import { spawnRunner, type RunResult, type Runner } from "./score.ts";
 import type { InitStep } from "./steps.ts";
 import {
@@ -554,14 +554,19 @@ export function docBody(text: string): string {
  * index already knows, so a doc added after `qmd collection add` stays invisible — `qmd ls` reports
  * "No files found" and every search returns nothing — until `qmd update` re-scans (qmd 2.8.3).
  */
-export async function reindex(runner: Runner, cwd: string, collection: string): Promise<{ embedded: boolean; warnings: string[] }> {
+export async function reindex(
+  runner: Runner,
+  cwd: string,
+  collection: string,
+  timeoutMs = EMBED_TIMEOUT_MS,
+): Promise<{ embedded: boolean; warnings: string[] }> {
   const warnings: string[] = [];
-  const up = await qmd(runner, cwd, ["update", "-c", collection], EMBED_TIMEOUT_MS);
+  const up = await qmd(runner, cwd, ["update", "-c", collection], timeoutMs);
   if (up.code !== 0 || up.spawnError !== null || up.timedOut) {
     warnings.push(`qmd update failed (${up.timedOut ? "timed out" : why(up)}); the new doc is not in the index yet`);
     return { embedded: false, warnings };
   }
-  const em = await qmd(runner, cwd, ["embed", "-c", collection], EMBED_TIMEOUT_MS);
+  const em = await qmd(runner, cwd, ["embed", "-c", collection], timeoutMs);
   if (em.code !== 0 || em.spawnError !== null || em.timedOut) {
     warnings.push(`qmd embed failed (${em.timedOut ? "timed out" : why(em)}); the doc is indexed lexically but has no vectors`);
     return { embedded: false, warnings };
@@ -647,7 +652,9 @@ export async function knowAdd(
     via = "file";
   }
 
-  const slug = opts.name === null ? (isUrl ? slugForUrl(target) : slugify(target.replace(/\.[^.]+$/, ""))) : slugify(opts.name);
+  // A file slug ignores its directory.
+  const fileSlug = slugify(basename(target).replace(/(?<=.)\.[^.]+$/, ""));
+  const slug = opts.name === null ? (isUrl ? slugForUrl(target) : fileSlug) : slugify(opts.name);
   const rel = `${KNOWLEDGE_DIR}/${slug}${INDEXED_EXT}`;
   const path = join(cwd, rel);
   const doc = renderDoc(target, title, now().toISOString(), via, body);

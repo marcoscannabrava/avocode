@@ -5,6 +5,10 @@ Every `avo` subcommand, its guarantees, and the reasoning behind the parts that 
 **Two rules hold everywhere:** every subcommand supports `--json`, and a missing optional dependency
 degrades to a named fallback with one warning instead of crashing.
 
+`avo <command> --help` (or `-h`, or `avo help <command>`) prints the options of that command and
+exits `0`. It runs nothing else. A `-h` that is the value of a flag, as in `avo commit --why -h`, is
+not a help request. Arguments after `--` are not read as help.
+
 | Command | One line |
 | --- | --- |
 | [`avo init`](#avo-init) | scaffold `.avo/`, `knowledge/`, `lineage/` in a repo |
@@ -68,7 +72,8 @@ one candidate.
 | `--no-record` | skip the attempt log |
 | `--cwd <dir>` | treat dir as the repo root |
 
-Exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed output, timeout).
+Exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed output, timeout,
+configs that disagree on `higher_is_better`).
 
 ## `avo commit` — the commit rule
 
@@ -109,6 +114,13 @@ the commit — you cannot improve by measuring less. Tune it in `.avo/config.jso
 Exit codes: `0` committed or no-op, `1` refused, `2` harness error. Re-running with no change is a
 no-op, never a duplicate.
 
+With `--json`, `ok` is `true` when the command ran. A refusal is also `ok: true`, because the rule
+did its work. Read `action` for the decision: `committed`, `refused`, `noop` or `would-commit`. `ok`
+is `false` only on a harness error (exit `2`).
+
+This `ok` is not the scorer's `ok`. A scorer that reports `ok: false` gives a refusal with `ok: true`
+here. Read `attempt.ok` for the scorer's value.
+
 ## `avo lineage` and `avo best` — reading `P_t`
 
 A committed version is a commit carrying `Avo-Version` and `Avo-Score` trailers, plus the full
@@ -147,7 +159,9 @@ Two backends, one shape. With `bd` ([beads](https://www.npmjs.com/package/@beads
 insights go to `bd remember`, versions become beads with deterministic ids (`<prefix>-v<N>`) linked
 by `bd dep add`, and dead ends become insight beads. Without it — the common case — everything lands
 in `lineage/memory.jsonl` with one warning. `avo mem --json` looks the same either way: an agent must
-not have to know whether `bd` was installed.
+not have to know whether `bd` was installed. When a `bd` read of memories is empty, avo reads again
+one time. A cold `bd` start can give an empty result one time. If the second read finds memories,
+avo shows them with a warning.
 
 Memory is a cache of *why*, never the source of truth. A failed memory write is a warning on an
 otherwise good commit, and avo's own writes (`lineage/memory.jsonl`, `.avo/.gitignore`) never count
@@ -163,11 +177,11 @@ costs nothing extra, because `avo commit` already writes `lineage/vNNN.md`.
 
 ```sh
 avo know init                          # folded into avo init; safe to re-run
-avo know add ./notes/tuning.md         # -> knowledge/notes-tuning.md, with provenance frontmatter
+avo know add ./notes/tuning.md         # -> knowledge/tuning.md, with provenance frontmatter
 avo know add https://example.com/doc   # needs FIRECRAWL_API_KEY (free tier: 1000 credits/month)
 avo know query "register pressure"     # hybrid BM25 + vector + local rerank
 avo know query "..." --lexical         # BM25 only: no LLM expansion, no rerank, instant
-avo know reindex                       # after avo commit writes a new lineage/vNNN.md
+avo know reindex                       # re-scan both collections; avo commit does it for lineage/
 avo know search "blackwell occupancy"  # the web; --ingest pipes the pages straight into K
 ```
 
@@ -182,8 +196,12 @@ files and returns identical JSON — same keys, same `Hit` shape, and a `score` 
 Two qmd facts, verified against 2.8.3 rather than assumed:
 
 - `qmd embed` only vectorizes documents the index already knows about, so `avo know add` runs
-  `qmd update` first. A doc written straight into `lineage/` — what `avo commit` does — needs
-  `avo know reindex` before qmd can see it.
+  `qmd update` first. `avo commit` (and each commit in `avo run`) does the same for `lineage/` after
+  it writes a new version. This step is skipped when qmd is not available, and on `--dry-run` or
+  `--no-record`. A failed reindex is a warning; the commit stays. Each qmd step has 60 seconds in
+  the commit path, not the 30 minutes of `avo know`. The first `qmd embed` downloads a model and
+  can take longer; then the commit warns, and `avo know reindex` finishes the index. A file you put
+  in `lineage/` by hand still needs `avo know reindex`.
 - `.qmd/` is gitignored. `index.yml` records collection paths as *absolute* paths, so a committed
   index is wrong on every other machine, and `index.sqlite` is a multi-megabyte binary.
 
@@ -300,6 +318,8 @@ avo run --prompt-file task.md --max-iters 20
 avo run --prompt "make the tokenizer faster without changing its output" --max-iters 5 --json
 avo run --prompt-file task.md --dry-run      # the resolved plan and the first turn prompt; spawns nothing
 avo run --prompt-file task.md --stall 3 --thrash 2 --timeout 600 --agent claude --model opus
+avo run --prompt-file task.md --max-iters 50 --max-cost 5 --max-tokens 2000000 --max-wall 3600
+avo run --prompt-file task.md --supervise detect   # ablation control arm: detect, do not steer
 ```
 
 **Every iteration is a fresh process.** Nothing from the previous turn is in the agent's context, so
@@ -313,9 +333,28 @@ avo,avo-intervention`) or a `lineage/memory.jsonl` record. Deliberately *not* an
 are injected at prime time, and every future session would open with a stale "you are stalling, read
 v3" from a run that ended days ago.
 
+**`--supervise on|off|detect` turns the supervisor off for an ablation.** The default is `on`. The
+manifest records the mode in `supervise`.
+
+| Mode | Calls `avo supervise` | Injects the directive | Writes intervention memory |
+| --- | --- | --- | --- |
+| `on` | yes | yes | yes |
+| `off` | no | no | no |
+| `detect` | yes | no | no |
+
+Use `detect` for the control arm of an ablation. Each iteration keeps its `supervision` signals, and
+the directive that would have fired goes into `withheld`. The run counts these in `detections`, and
+`interventions` stays at 0. So the control arm still shows its stalls. `detect` writes no memory
+record, because the agent reads memory (`avo mem`). A record would steer the agent, and the control
+arm would not be a control. In `off` and `detect`, the turn prompt also omits the "attempts since the
+best version" line. The agent sees the same prompt in both modes. Each turn also gets
+`AVO_SUPERVISE=<mode>`. In `off` and `detect`, an `avo supervise` that the agent runs prints one line
+and exits 0, so the agent cannot steer itself.
+
 | It stops when | Because |
 | --- | --- |
 | `--max-iters` is reached | the budget is the operator's, not the agent's |
+| a budget is crossed: `--max-cost <usd>`, `--max-tokens <n>` or `--max-wall <s>` | a turn count does not bound the bill. Stop reason `budget` (#28) |
 | `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is done |
 | 3 iterations in a row change nothing **and leave HEAD where it was** | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. The one stop condition steering cannot express |
 | the agent binary cannot be started | it will not start next iteration either; retrying nine more times is spinning |
@@ -341,6 +380,20 @@ idle ones (#42). A commit *without* the trailers moves HEAD but is not a version
   arithmetic we would have to keep in step with per-model rates. It is `null`, not `0`, when the
   agent reports none — nothing measured and nothing spent are different facts, and a cost budget has
   to refuse the first (#28).
+
+**Budgets stop the loop between turns, not during one.** Before each turn, `avo run` compares
+the run totals with each budget you set. When a total is at or past its budget, the loop stops
+with `stopped: "budget"`. A turn that has started always runs to its end, so the last turn can go
+past the budget. `--timeout` bounds that turn.
+
+- `--max-cost` uses `cost_usd`, the sum the agent reported.
+- `--max-tokens` uses all four token counts: `input + output + cache_read + cache_write`.
+- `--max-wall` uses the time since the run started.
+
+An agent that reports no usage cannot be held to a cost or token budget. When a turn reports no
+cost or no tokens, `avo run` gives one warning, and the manifest lists that budget in
+`budget.unenforced`. The loop does not stop for that reason. A budget you did not set is never
+listed. Wall time is always measured, so `--max-wall` is always enforced.
 
 Before this, a real six-iteration run reported **44 input tokens for a loop that sent 985,039**, and
 no cost: `cache_read_input_tokens` was dropped, and four turns lost their closing `result` event to

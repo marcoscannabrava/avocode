@@ -1,17 +1,17 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
-import { loadConfig, type AvoConfig } from "./config.ts";
+import { LINEAGE_DIR, loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
 import { HARNESS_PATHS, TRAJECTORY_IGNORE, TRAJECTORY_PATHS, withoutTrajectory } from "./harness.ts";
+import { reindex, resolveKnowledge } from "./knowledge.ts";
 import { remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
 import { runScore, spawnRunner, type Attempt, type RunResult, type Runner, type ScoreOptions } from "./score.ts";
 
 // Moved to harness.ts; re-exported for callers.
 export { HARNESS_PATHS, TRAJECTORY_PATHS, withoutTrajectory };
-
-/** Rendered, human- and qmd-readable record of each committed version. */
-export const LINEAGE_DIR = "lineage";
+// Lives in config.ts; knowledge.ts imports it.
+export { LINEAGE_DIR };
 /**
  * `.avo/.gitignore`'s contents: one entry per trajectory path, relative to `.avo/`, directories with
  * a trailing slash. A test asserts every TRAJECTORY_PATH has one, because drift is silent — the path
@@ -150,7 +150,9 @@ export async function isGitRepo(runner: Runner, cwd: string): Promise<boolean> {
  * one span of the loop — how `avo run` learns the agent committed for itself (#42).
  */
 export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Promise<Lineage> {
-  const log = await git(runner, cwd, ["log", `--format=%H${US}%aI${US}%B${RS}`, rev]);
+  // git filters; the parse below still validates.
+  const grep = `--grep=^[[:space:]]*${VERSION_TRAILER}:`;
+  const log = await git(runner, cwd, ["log", "--extended-regexp", grep, `--format=%H${US}%aI${US}%B${RS}`, rev]);
   if (log.code !== 0 || log.spawnError !== null) return { versions: [], warnings: [] };
 
   const warnings: string[] = [];
@@ -592,6 +594,18 @@ export async function recordDecisionMemory(
   return [...backend.warnings, ...w.warnings, ...(w.error === null ? [] : [w.error])];
 }
 
+/** Cold qmd embed must not block commits. */
+export const COMMIT_REINDEX_TIMEOUT_MS = 60_000;
+
+/** Puts a new lineage file into qmd. */
+export async function indexNewVersion(opts: CommitOptions, d: CommitDecision, runner: Runner): Promise<string[]> {
+  if (!opts.record || opts.dryRun || d.action !== "committed") return [];
+  // Without qmd, the local scan reads live.
+  if ((await resolveKnowledge(runner, opts.cwd)).kind !== "qmd") return [];
+  const { warnings } = await reindex(runner, opts.cwd, "lineage", COMMIT_REINDEX_TIMEOUT_MS);
+  return warnings.length === 0 ? [] : [...warnings, "run 'avo know reindex' to finish the index"];
+}
+
 /** Exit codes mirror `avo score`: 0 committed or no-op, 1 refused, 2 harness error. */
 export async function commitCommand(
   argv: readonly string[],
@@ -606,7 +620,10 @@ export async function commitCommand(
   }
   const decision = await decideCommit(parsed, runner, now);
   decision.warnings.push(...(await recordDecisionMemory(parsed, decision, runner, now)));
-  io.out(parsed.json ? `${JSON.stringify(decision)}\n` : renderDecision(decision));
+  decision.warnings.push(...(await indexNewVersion(parsed, decision, runner)));
+  // `ok`: the command ran, like score.
+  const ok = decision.errors.length === 0;
+  io.out(parsed.json ? `${JSON.stringify({ ok, ...decision })}\n` : renderDecision(decision));
   if (decision.errors.length > 0) return 2;
   return decision.action === "refused" ? 1 : 0;
 }
