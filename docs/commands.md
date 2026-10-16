@@ -164,7 +164,7 @@ costs nothing extra, because `avo commit` already writes `lineage/vNNN.md`.
 
 ```sh
 avo know init                          # folded into avo init; safe to re-run
-avo know add ./notes/tuning.md         # -> knowledge/notes-tuning.md, with provenance frontmatter
+avo know add ./notes/tuning.md         # -> knowledge/tuning.md, with provenance frontmatter
 avo know add https://example.com/doc   # needs FIRECRAWL_API_KEY (free tier: 1000 credits/month)
 avo know query "register pressure"     # hybrid BM25 + vector + local rerank
 avo know query "..." --lexical         # BM25 only: no LLM expansion, no rerank, instant
