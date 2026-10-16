@@ -283,6 +283,7 @@ avo run --prompt-file task.md --max-iters 20
 avo run --prompt "make the tokenizer faster without changing its output" --max-iters 5 --json
 avo run --prompt-file task.md --dry-run      # the resolved plan and the first turn prompt; spawns nothing
 avo run --prompt-file task.md --stall 3 --thrash 2 --timeout 600 --agent claude --model opus
+avo run --prompt-file task.md --max-iters 50 --max-cost 5 --max-tokens 2000000 --max-wall 3600
 ```
 
 **Every iteration is a fresh process.** Nothing from the previous turn is in the agent's context, so
@@ -299,6 +300,7 @@ v3" from a run that ended days ago.
 | It stops when | Because |
 | --- | --- |
 | `--max-iters` is reached | the budget is the operator's, not the agent's |
+| a budget is crossed: `--max-cost <usd>`, `--max-tokens <n>` or `--max-wall <s>` | a turn count does not bound the bill. Stop reason `budget` (#28) |
 | `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is done |
 | 3 iterations in a row change nothing **and leave HEAD where it was** | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. The one stop condition steering cannot express |
 | the agent binary cannot be started | it will not start next iteration either; retrying nine more times is spinning |
@@ -324,6 +326,20 @@ idle ones (#42). A commit *without* the trailers moves HEAD but is not a version
   arithmetic we would have to keep in step with per-model rates. It is `null`, not `0`, when the
   agent reports none — nothing measured and nothing spent are different facts, and a cost budget has
   to refuse the first (#28).
+
+**Budgets stop the loop between turns, not during one.** Before each turn, `avo run` compares
+the run totals with each budget you set. When a total is at or past its budget, the loop stops
+with `stopped: "budget"`. A turn that has started always runs to its end, so the last turn can go
+past the budget. `--timeout` bounds that turn.
+
+- `--max-cost` uses `cost_usd`, the sum the agent reported.
+- `--max-tokens` uses all four token counts: `input + output + cache_read + cache_write`.
+- `--max-wall` uses the time since the run started.
+
+An agent that reports no usage cannot be held to a cost or token budget. When a turn reports no
+cost or no tokens, `avo run` gives one warning, and the manifest lists that budget in
+`budget.unenforced`. The loop does not stop for that reason. A budget you did not set is never
+listed. Wall time is always measured, so `--max-wall` is always enforced.
 
 Before this, a real six-iteration run reported **44 input tokens for a loop that sent 985,039**, and
 no cost: `cache_read_input_tokens` was dropped, and four turns lost their closing `result` event to
