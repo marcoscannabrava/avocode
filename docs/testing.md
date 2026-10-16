@@ -84,7 +84,7 @@ No step of the gate can block forever
 itself have a time limit of `SC_TIMEOUT` seconds (default 60). A probe that does not answer in time
 counts as "no runner". A run that does not finish in time makes lint red. `just e2e` also gives each
 suite a limit of `AVO_E2E_TIMEOUT` seconds (default 1800), so a stuck suite fails instead of
-waiting forever.
+waiting forever. In CI, the e2e job also stops after 45 minutes.
 
 ## CI
 
