@@ -139,11 +139,24 @@ export function commandUsage(cmd: string): string | null {
   return `${USAGE.slice(start + 1, end)}\n`;
 }
 
+/** A help flag, unless it is a value. */
+export function asksHelp(stanza: string, args: readonly string[]): boolean {
+  // Flags the stanza shows with a <value>.
+  const takesValue = new Set([...stanza.matchAll(/(-{1,2}[a-z][a-z-]*) "?</g)].map((m) => m[1]));
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--") return false;
+    if (a === "--help" || a === "-h") return true;
+    if (takesValue.has(a)) i++;
+  }
+  return false;
+}
+
 export async function main(argv: readonly string[], io: Io = processIo): Promise<number> {
   const [cmd, ...rest] = argv;
   // Help wins before any option parser.
   const stanza = cmd === undefined ? null : commandUsage(cmd);
-  if (stanza !== null && rest.some((a) => a === "--help" || a === "-h")) {
+  if (stanza !== null && asksHelp(stanza, rest)) {
     io.out(stanza);
     return 0;
   }
@@ -154,7 +167,7 @@ export async function main(argv: readonly string[], io: Io = processIo): Promise
       io.out(USAGE);
       return 0;
     case "help": {
-      if (rest[0] === undefined) {
+      if (rest[0] === undefined || rest[0] === "--help" || rest[0] === "-h") {
         io.out(USAGE);
         return 0;
       }
