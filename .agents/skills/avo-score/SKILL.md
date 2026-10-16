@@ -40,7 +40,7 @@ gitignored trajectory, not lineage.
 | `correct` | yes | **the gate** — the candidate is actually right |
 | `primary` | yes | `number \| null`; the headline scalar, for humans |
 | `unit` | yes | non-empty string, e.g. `TFLOPS`, `s`, `%` |
-| `higher_is_better` | yes | direction of `primary` and of every entry in `scores` |
+| `higher_is_better` | yes | direction of `primary` and of every entry in `scores`; all configs must agree (exit `2` if not) |
 | `scores` | no | per-config vector — **this is what the commit rule compares** |
 | `log` | no | build/test output, for diagnosis |
 | `duration_s` | no | wall-clock of the scoring run |
