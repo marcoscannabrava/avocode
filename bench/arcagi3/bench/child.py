@@ -3,6 +3,7 @@
 #
 # Runs src/policy.py in its own process.
 
+import atexit
 import importlib
 import json
 import os
@@ -34,11 +35,17 @@ def _send(stream, payload):
     stream.flush()
 
 
-def _recv(stream):
+# A reply is one action; cap it.
+MAX_REPLY = 1 << 24
+
+
+def _recv(stream, limit=None):
     head = stream.read(4)
     if len(head) < 4:
         return None
     (size,) = struct.unpack(">I", head)
+    if limit is not None and size > limit:
+        return None
     body = stream.read(size)
     return body if len(body) == size else None
 
@@ -54,6 +61,17 @@ def _no_ptrace():
         pass
 
 
+# No secrets; same locale and hash seed.
+KEEP_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
+
+
+def _child_env():
+    """An allow-listed environment for the policy."""
+    env = {k: os.environ[k] for k in KEEP_ENV if k in os.environ}
+    env["PYTHONHASHSEED"] = os.environ.get("PYTHONHASHSEED", "0")
+    return env
+
+
 class PolicyProcess:
     """A policy behind a pipe, in a fresh interpreter."""
 
@@ -65,7 +83,10 @@ class PolicyProcess:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            env=_child_env(),
         )
+        # sys.exit() must not leave it running.
+        atexit.register(self._kill)
 
     def ready(self):
         """Wait for the policy's import."""
@@ -80,12 +101,12 @@ class PolicyProcess:
         return self._answer()
 
     def _answer(self):
-        raw = _recv(self._proc.stdout)
+        raw = _recv(self._proc.stdout, MAX_REPLY)
         if raw is None:
             raise PolicyFailed("the policy process exited")
         try:  # JSON, never pickle: unpickling runs code.
             reply = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             raise PolicyFailed("the policy process sent a malformed reply") from None
         if not isinstance(reply, dict):
             raise PolicyFailed("the policy process sent a malformed reply")
@@ -103,6 +124,10 @@ class PolicyProcess:
         try:
             self._proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            self._kill()
+
+    def _kill(self):
+        if self._proc.poll() is None:
             self._proc.kill()
             self._proc.wait()
 
@@ -111,6 +136,7 @@ class PolicyProcess:
 # A flag too, in case it is swallowed.
 
 _guard = ()
+_parent = None
 _violation = None
 
 _NETWORK = {"socket.connect", "socket.getaddrinfo", "socket.bind", "urllib.Request"}
@@ -140,6 +166,9 @@ def _hook(event, args):
             return
         if any(target.startswith(g) for g in _guard):
             _caught(f"the policy attempted to read a game source file ({Path(target).name})")
+        # Its argv names the game.
+        if _parent and (target == _parent or target.startswith(_parent + "/")):
+            _caught("the policy attempted to read the harness process")
 
 
 def _plain(value):
@@ -150,8 +179,18 @@ def _plain(value):
 
 
 # ---------------------------------------------------------------------------- the child side
+def _die_with_parent():
+    """SIGKILL this process if the parent dies."""
+    try:
+        import ctypes
+
+        ctypes.CDLL(None, use_errno=True).prctl(1, 9, 0, 0, 0)  # PR_SET_PDEATHSIG, SIGKILL
+    except (OSError, AttributeError):
+        pass
+
+
 def child_main(argv):
-    global _guard
+    global _guard, _parent
 
     # A print() must not corrupt the pipe.
     inp = os.fdopen(os.dup(0), "rb")
@@ -167,9 +206,11 @@ def child_main(argv):
             data = json.dumps({"error": f"act() returned data that is not JSON: {exc}"}).encode()
         _send(out, data)
 
+    _die_with_parent()
     sys.path.insert(0, str(HERE))
     adapter = importlib.import_module(argv[0])
     _guard = tuple(str(Path(g).resolve()) for g in argv[1:])
+    _parent = f"/proc/{os.getppid()}"
     sys.addaudithook(_hook)
 
     sys.path.insert(0, str(ROOT))
