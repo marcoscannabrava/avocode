@@ -53,7 +53,11 @@ avo fan --n 4 --prompt-file probe.md            # four probes, one worktree each
 avo fan --n 3 --prompt "try X, Y or Z" --json   # the JSON is what you should read
 avo fan --agent pi --model groq/llama-3.3-70b   # choose the agent and the probe model
 avo fan --timeout 300                           # kill a probe's process group after 300s
+avo fan --dirty --prompt-file finish.md         # start from uncommitted work, not HEAD
 ```
+
+Probes do not see uncommitted work unless you pass `--dirty`. Use it when you have half a candidate
+and want N probes to finish it in N ways.
 
 Without `--directions`, the prompt goes to **every** probe identically. Diversity comes from sampling
 only — so write a prompt that names the *problem* and invites a direction, not one that dictates the

@@ -29,6 +29,7 @@ import {
   promptSha,
   readManifest,
   runFan,
+  snapshotRef,
   type FanResult,
   type ProbeResult,
 } from "../src/fan.ts";
@@ -635,6 +636,93 @@ test("uncommitted work in the root is warned about, because probes branch from H
   writeFileSync(join(f.dir, "kernel.txt"), "half a variation\n");
   const { json } = await fan(f, ["--prompt", "noop please", "--n", "1"]);
   assert.match(json.warnings.join(" "), /uncommitted change\(s\); probes branch from HEAD/);
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("--dirty starts every probe from the uncommitted root tree (#21)", async () => {
+  const f = fixture("fandirtyflag");
+  writeFileSync(join(f.dir, "kernel.txt"), "baseline\nhalf a variation\n");
+  writeFileSync(join(f.dir, "notes.txt"), "untracked\n");
+  const head = f.git("rev-parse", "HEAD").trim();
+  const status = f.git("status", "--porcelain");
+
+  const { code, json } = await fan(f, ["--prompt", "vary it", "--n", "2", "--dirty"]);
+  assert.equal(code, 0);
+  assert.equal(json.warnings.join(" ").includes("uncommitted"), false);
+  assert.notEqual(json.baseline, head);
+  assert.equal(f.git("rev-parse", `${json.baseline}^`).trim(), head, "the snapshot sits on HEAD");
+  for (const r of json.results) {
+    const tree = join(f.dir, r.worktree);
+    assert.match(readFileSync(join(tree, "kernel.txt"), "utf8"), /^baseline\nhalf a variation\nprobe/);
+    assert.equal(readFileSync(join(tree, "notes.txt"), "utf8"), "untracked\n");
+    // Only the probe's own lines count.
+    assert.deepEqual(r.diffstat.changed, ["kernel.txt"]);
+    assert.equal(r.diffstat.insertions, r.i);
+  }
+  assert.equal(f.git("rev-parse", "HEAD").trim(), head);
+  const after = f.git("status", "--porcelain").replace("?? .avo/.gitignore\n", "");
+  assert.equal(after, status, "the root index and tree are untouched");
+
+  const io = bufferIo();
+  assert.equal(await fanCommand(["--promote", "2", "--run", json.run_id, "--json", "--cwd", f.dir], io), 0);
+  const out = JSON.parse(io.stdout) as { applied: string; warnings: string[] };
+  assert.equal(out.applied, "clean");
+  assert.deepEqual(out.warnings, []);
+  assert.equal(readFileSync(join(f.dir, "kernel.txt"), "utf8"), "baseline\nhalf a variation\nprobe 2 line 0\nprobe 2 line 1\n");
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("--dirty leaves the root index, HEAD and refs alone", async () => {
+  const f = fixture("fandirtyindex");
+  // Signing must not block the snapshot.
+  f.git("config", "commit.gpgsign", "true");
+  f.git("config", "gpg.program", "false");
+  // An operator-owned ignore file lacks avo's entries.
+  writeFileSync(join(f.dir, ".avo/.gitignore"), "# mine\n");
+  writeFileSync(join(f.dir, ".gitignore"), ".avo/attempts.jsonl\n");
+  const first = await fan(f, ["--prompt", "first run", "--n", "1", "--keep"]);
+  assert.equal(first.code, 0);
+  // Staged and unstaged edits differ.
+  writeFileSync(join(f.dir, "kernel.txt"), "baseline\nstaged\n");
+  f.git("add", "kernel.txt");
+  writeFileSync(join(f.dir, "kernel.txt"), "baseline\nstaged\nunstaged\n");
+  writeFileSync(join(f.dir, "notes.txt"), "untracked\n");
+  writeFileSync(join(f.dir, ".git/info/exclude"), "secret.log\n");
+  writeFileSync(join(f.dir, "secret.log"), "ignored\n");
+  const snap = (): string[] => [
+    f.git("rev-parse", "HEAD"),
+    f.git("symbolic-ref", "HEAD"),
+    f.git("ls-files", "--stage"),
+    f.git("diff", "--cached"),
+    f.git("for-each-ref", "refs/heads", "refs/tags"),
+  ];
+  const before = snap();
+
+  const { code, json } = await fan(f, ["--prompt", "vary it", "--n", "1", "--dirty"]);
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual(snap(), before, "index, HEAD and branches are untouched");
+  assert.equal(f.git("ls-files", "--", "notes.txt"), "", "notes.txt is still untracked");
+
+  const files = f.git("ls-tree", "-r", "--name-only", json.baseline).split("\n");
+  assert.ok(files.includes("notes.txt"));
+  assert.ok(!files.includes("secret.log"), "ignored files stay out");
+  assert.ok(!files.some((p) => p.startsWith(".avo/worktrees")), "avo's own worktrees stay out");
+  const tree = join(f.dir, json.results[0]!.worktree);
+  assert.match(readFileSync(join(tree, "kernel.txt"), "utf8"), /^baseline\nstaged\nunstaged\n/);
+
+  // The ref pins the snapshot until --clean.
+  assert.equal(f.git("rev-parse", snapshotRef(json.run_id)).trim(), json.baseline);
+  const io = bufferIo();
+  await fanCommand(["--clean", json.run_id, "--json", "--cwd", f.dir], io);
+  assert.equal(f.git("for-each-ref", snapshotRef(json.run_id)), "");
+  rmSync(f.dir, { recursive: true, force: true });
+});
+
+test("--dirty on a clean tree branches from HEAD as before", async () => {
+  const f = fixture("fandirtyclean");
+  const { code, json } = await fan(f, ["--prompt", "vary it", "--n", "1", "--dirty"]);
+  assert.equal(code, 0);
+  assert.equal(json.baseline, f.git("rev-parse", "HEAD").trim());
   rmSync(f.dir, { recursive: true, force: true });
 });
 

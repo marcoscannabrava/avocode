@@ -8,10 +8,11 @@
  */
 
 import { createHash } from "node:crypto";
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { accessSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { loadConfig } from "./config.ts";
-import { ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
+import { TRAJECTORY_PATHS, ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
 import type { Io } from "./io.ts";
 import { capOutput, driveAgent, resolveTemplate, type AgentTemplate, type AgentTokens, type Capped } from "./agents.ts";
 import {
@@ -127,6 +128,8 @@ export interface Manifest {
   started_at: string;
   finished_at: string | null;
   baseline: string;
+  /** HEAD at fan-out; differs from baseline under --dirty. */
+  head?: string;
   agent: string;
   model: string | null;
   timeout_s: number;
@@ -157,6 +160,8 @@ export interface FanOptions {
   timeoutS: number;
   /** Keep every worktree, even the ones no probe changed. */
   keep: boolean;
+  /** Start probes from uncommitted root work. */
+  dirty: boolean;
   score: boolean;
   /** `--promote <i>`, `--resume <id>`, `--clean <id|all>` all land here. */
   target: string;
@@ -177,6 +182,7 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     model: env[PROBE_MODEL_ENV] ?? null,
     timeoutS: DEFAULT_TIMEOUT_S,
     keep: false,
+    dirty: false,
     score: true,
     target: "",
     runId: null,
@@ -198,6 +204,7 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     const a = argv[i] as string;
     if (a === "--json") opts.json = true;
     else if (a === "--keep") opts.keep = true;
+    else if (a === "--dirty") opts.dirty = true;
     else if (a === "--no-score") opts.score = false;
     else if (a === "--list") {
       const e = setMode("list", a);
@@ -661,7 +668,7 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   if (!head.ok) {
     return { error: `${opts.cwd} has no commit to branch from (${head.err || "git rev-parse HEAD failed"})` };
   }
-  const baseline = head.out;
+  let baseline = head.out;
 
   // `.avo/worktrees/` is about to exist, so its lineage exclusion must come first.
   ensureTrajectoryIgnored(opts.cwd);
@@ -673,14 +680,23 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   // second fan-out warns about `.avo/worktrees/`. Same self-perturbation as S3's memory log.
   const status = await git(runner, opts.cwd, ["status", "--porcelain"]);
   const dirty = status.ok ? withoutTrajectory(status.out) : [];
-  if (dirty.length > 0) {
+  if (dirty.length > 0 && opts.dirty) {
+    const snap = await snapshotTree(runner, opts.cwd, baseline);
+    if ("error" in snap) return { error: snap.error };
+    baseline = snap.sha;
+  } else if (dirty.length > 0) {
     warnings.push(
       `the working tree has ${dirty.length} uncommitted change(s); probes branch from HEAD ` +
-        `(${baseline.slice(0, 8)}) and will not see them`,
+        `(${baseline.slice(0, 8)}) and will not see them; --dirty includes them`,
     );
   }
 
   const runId = uniqueRunId(opts.cwd, now(), sha);
+  if (baseline !== head.out) {
+    // A ref keeps the snapshot from gc.
+    const ref = await git(runner, opts.cwd, ["update-ref", snapshotRef(runId), baseline]);
+    if (!ref.ok) warnings.push(`could not pin the snapshot: ${ref.err}`);
+  }
   const probes: ManifestProbe[] = Array.from({ length: n }, (_, k) => ({
     i: k + 1,
     worktree: join(WORKTREES_DIR, runId, String(k + 1)),
@@ -694,6 +710,7 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
     started_at: now().toISOString(),
     finished_at: null,
     baseline,
+    head: head.out,
     agent: template.name,
     model: opts.model,
     timeout_s: opts.timeoutS,
@@ -710,6 +727,37 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   if (n > cap) warnings.push(`--n ${n} exceeds the concurrency cap of ${cap}; the rest queue`);
 
   return await executeProbes(opts, deps, manifest, template, warnings, cap, probeEnv(guards, sha, runId, 0));
+}
+
+/** Holds a `--dirty` snapshot until `--clean`. */
+export function snapshotRef(runId: string): string {
+  return `refs/avo/fan/${runId}`;
+}
+
+/** `--dirty`: the working tree as a commit. */
+async function snapshotTree(runner: Runner, cwd: string, head: string): Promise<{ sha: string } | { error: string }> {
+  const scratch = mkdtempSync(join(tmpdir(), "avo-fan-index-"));
+  const index = join(scratch, "index");
+  const id = { GIT_AUTHOR_NAME: "avo fan", GIT_AUTHOR_EMAIL: "avo@localhost", GIT_COMMITTER_NAME: "avo fan", GIT_COMMITTER_EMAIL: "avo@localhost" };
+  const run = async (args: string[]): Promise<Git> => {
+    const r = await runner("git", args, { cwd, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_INDEX_FILE: index, ...id } });
+    return { ok: r.code === 0 && r.spawnError === null, out: r.stdout.trim(), err: (r.stderr || r.spawnError || "").trim() };
+  };
+  try {
+    // A copied index keeps the stat cache.
+    const real = await git(runner, cwd, ["rev-parse", "--git-path", "index"]);
+    if (real.ok && existsSync(resolve(cwd, real.out))) copyFileSync(resolve(cwd, real.out), index);
+    // Whole tree, minus avo's own trajectory.
+    const add = await run(["add", "-A", "--", ":(top)"]);
+    const skip = TRAJECTORY_PATHS.map((t) => `:(top)${t}`);
+    const drop = add.ok ? await run(["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", ...skip]) : add;
+    const tree = drop.ok ? await run(["write-tree"]) : drop;
+    const commit = tree.ok ? await run(["commit-tree", "--no-gpg-sign", tree.out, "-p", head, "-m", "avo fan: uncommitted root work"]) : tree;
+    if (!commit.ok) return { error: `could not snapshot the working tree — ${commit.err || "git failed"}` };
+    return { sha: commit.out };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /** Serial on purpose: concurrent `git worktree add` calls race on the same `.git/worktrees` lock. */
@@ -922,9 +970,10 @@ export async function promote(opts: FanOptions, deps: FanDeps): Promise<PromoteR
 
   const warnings: string[] = [];
   const head = await git(runner, opts.cwd, ["rev-parse", "HEAD"]);
-  if (head.ok && head.out !== manifest.baseline) {
+  const startHead = manifest.head ?? manifest.baseline;
+  if (head.ok && head.out !== startHead) {
     warnings.push(
-      `HEAD has moved since the fan-out (${manifest.baseline.slice(0, 8)} -> ${head.out.slice(0, 8)}); ` +
+      `HEAD has moved since the fan-out (${startHead.slice(0, 8)} -> ${head.out.slice(0, 8)}); ` +
         "the patch may need the 3-way fallback",
     );
   }
@@ -1011,6 +1060,9 @@ export async function cleanRuns(opts: FanOptions, deps: FanDeps): Promise<CleanR
         out.kept.push(p.worktree);
         out.ok = false;
       }
+    }
+    if (manifest.head !== undefined && manifest.head !== manifest.baseline) {
+      await git(deps.runner, opts.cwd, ["update-ref", "-d", snapshotRef(runId)]);
     }
     try {
       rmSync(runDir(opts.cwd, runId), { recursive: true, force: true });
