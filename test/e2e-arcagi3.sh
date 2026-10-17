@@ -164,7 +164,7 @@ say ""
 
 # ================================================================ 5. the gate bites
 say "## 5. f measures the candidate, not itself"
-for victim in bench/run.py test/test_policy.py bench/games.lock .avo/protected.txt; do
+for victim in bench/run.py bench/child.py test/test_policy.py bench/games.lock .avo/protected.txt; do
   cp "$repo/$victim" "$scratch/keep"
   printf '\n# tampered\n' >> "$repo/$victim"
   line="$(cd "$repo" && .avo/score 2>&1 | tail -n 1)"
@@ -284,6 +284,76 @@ CHEAT
     ok "a policy that reaches the network is refused even when it swallows the error"
   else
     bad "network access was not caught: $(jq -r '.correct,.log' <<<"$line" | tr '\n' ' ' | head -c 300)"
+  fi
+
+  # AVO-21: must not beat honest play.
+  cp "$root/test/fixtures/arcagi3/policy-escape.py" "$target/src/policy.py"
+  line="$(cd "$target" && .avo/score 2>&1 | tail -n 1)"
+  if [[ "$(jq -r '.correct' <<<"$line")" == false ]] \
+     || jq -e --argjson b "$(jq '.primary' <<<"$base")" '.primary <= $b' >/dev/null 2>&1 <<<"$line"; then
+    ok "an engine-reaching policy scores no better than honest play ($(jq -r '.primary' <<<"$line"))"
+  else
+    bad "the policy reached the engine: primary $(jq -r '.primary' <<<"$line") vs baseline $(jq -r '.primary' <<<"$base")"
+  fi
+
+  cat > "$target/src/policy.py" <<'CHEAT'
+class Policy:
+    def __init__(self, action_space, rng):
+        self.action_space = action_space; self.rng = rng
+    def act(self, frame):
+        import subprocess
+        subprocess.run(["cat", "bench/games/ff01/ff01.py"], capture_output=True)
+        a = self.rng.choice(self.action_space)
+        return (a, {"x": 0, "y": 0}) if a.is_complex() else (a, {})
+CHEAT
+  line="$(cd "$target" && .avo/score --config ff01 2>&1 | tail -n 1)"
+  if [[ "$(jq -r '.correct' <<<"$line")" == false ]] && jq -e '.log | test("start or signal a process")' >/dev/null 2>&1 <<<"$line"; then
+    ok "a policy that starts a process is refused"
+  else
+    bad "starting a process was not caught: $(jq -r '.correct,.log' <<<"$line" | tr '\n' ' ' | head -c 300)"
+  fi
+
+  # The policy must not see secrets.
+  cat > "$target/src/policy.py" <<'CHEAT'
+import os, re
+def check():
+    leaked = [k for k in os.environ if re.search(r"_API_KEY$|_TOKEN$|^ARC_API_KEY$", k)]
+    if leaked:
+        raise RuntimeError("leaked " + ",".join(sorted(leaked)))
+class Policy:
+    def __init__(self, action_space, rng):
+        check(); self.action_space = action_space; self.rng = rng
+    def act(self, frame):
+        check()
+        a = self.rng.choice(self.action_space)
+        return (a, {"x": 0, "y": 0}) if a.is_complex() else (a, {})
+CHEAT
+  line="$(cd "$target" && ARC_API_KEY=e2e OTHER_API_KEY=e2e GH_TOKEN=e2e .avo/score --config ff01 2>&1 | tail -n 1)"
+  if [[ "$(jq -r '.correct' <<<"$line")" == true ]]; then
+    ok "the policy sees no API keys or tokens"
+  else
+    bad "a secret reached the policy: $(jq -r '.log' <<<"$line" | head -c 300)"
+  fi
+
+  # The parent's argv names the game.
+  cat > "$target/src/policy.py" <<'CHEAT'
+import os
+class Policy:
+    def __init__(self, action_space, rng):
+        self.action_space = action_space; self.rng = rng
+    def act(self, frame):
+        try:
+            open(f"/proc/{os.getppid()}/cmdline", "rb").read()
+        except BaseException:
+            pass
+        a = self.rng.choice(self.action_space)
+        return (a, {"x": 0, "y": 0}) if a.is_complex() else (a, {})
+CHEAT
+  line="$(cd "$target" && .avo/score --config ff01 2>&1 | tail -n 1)"
+  if [[ "$(jq -r '.correct' <<<"$line")" == false ]] && jq -e '.log | test("read the harness process")' >/dev/null 2>&1 <<<"$line"; then
+    ok "a policy that reads the harness's command line is refused"
+  else
+    bad "reading the harness's command line was not caught: $(jq -r '.correct,.log' <<<"$line" | tr '\n' ' ' | head -c 300)"
   fi
 
   cat > "$target/src/policy.py" <<'CHEAT'

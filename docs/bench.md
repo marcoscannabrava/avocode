@@ -245,19 +245,31 @@ Three properties were required of every config, and each disqualified a game wor
 | exact reproducibility | `wm01` | Whack-a-Mole is real-time: 0.483, 0.533, 0.483 on three runs of identical code. A config that moves on its own lets the loop commit noise |
 | not saturated | `ic02` (1.000) | no headroom is no gradient |
 
-### Anti-gaming, in three layers
+### Anti-gaming, in four layers
 
 A policy has cheaper routes to a high score than playing well, so:
 
-1. **the hash gate**, as fuzzysearch has, over `bench/run.py`, the contract suite, `bench/games.lock`
-   and `.avo/protected.txt` itself;
-2. **a sandbox** armed only while `act` runs, which refuses a policy that reads a game's source out of
-   `bench/games/` or touches the network. It raises a `BaseException` *and* sets a flag the harness
-   checks afterwards — an earlier version raised a plain `Exception`, and a policy wrapping its body
-   in `except Exception: pass` swallowed the violation and scored a clean 0.26;
-3. **the game's identity is withheld.** ARC-AGI-3 is about games you have not seen, so `bench/run.py`
+1. **the hash gate**, as fuzzysearch has, over `bench/run.py`, `bench/child.py`, the contract suite,
+   `bench/games.lock` and `.avo/protected.txt` itself;
+2. **a separate process.** `bench/child.py` runs the policy in a new Python process. The engine stays
+   in `bench/run.py`. The child gets observations and sends back actions over a pipe, as JSON, and
+   the parent checks each action. Before this change, `act` ran in the engine's process. A test policy
+   (`test/fixtures/arcagi3/policy-escape.py`) found the live game with `gc.get_objects()` and called
+   its `next_level()`, or wrote the harness's `best` local through `sys._getframe()`. It scored 5.0
+   "of 1.0". In the child process it finds nothing and scores the baseline, bit for bit;
+3. **a sandbox** in the child, armed for its whole life, which refuses a policy that reads a game's
+   source out of `bench/games/`, touches the network, or starts or signals a process. It raises a
+   `BaseException` *and* sets a flag the child checks after each call — an earlier version raised a
+   plain `Exception`, and a policy wrapping its body in `except Exception: pass` swallowed the
+   violation and scored a clean 0.26. It also refuses reads under `/proc/<parent>/`, because the
+   parent's command line names the game. The child gets an allow-listed environment, so it does not
+   see `ARC_API_KEY` or other secrets. The hook is a tripwire, not a wall: policy code in the same
+   process can turn it off. It then cannot get to the engine's state, but it can read the game
+   sources. An OS-level wall (Landlock, seccomp, a user namespace) is follow-up work;
+4. **the game's identity is withheld.** ARC-AGI-3 is about games you have not seen, so `bench/run.py`
    never tells the policy which game it is playing. Recognising one from its frames is fair; keying on
-   an id is a lookup table.
+   an id is a lookup table. The engine's frame object has a `game_id` field, so `act` gets a plain
+   object with the five documented fields only. Before AVO-21, `frame.game_id` was there to read.
 
 Memorisation is the one thing `f` cannot catch from inside, because the training games live in the
 target repo. Hence:
