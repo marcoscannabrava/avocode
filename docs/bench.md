@@ -21,13 +21,17 @@ nobody has solved, where the candidate is a policy rather than a pure function �
 **Prerequisites.** `git`, `jq`, Node ≥ 22, and — for `arcagi3` only — Python ≥ 3.12. Plus a coding
 agent (`claude`, `pi` or `codex`) for step 4. `avo doctor` tells you what is missing.
 
-**`avo` must resolve as `avo`, not `./bin/avo`** — every wired skill calls it by bare name (#41).
-From an uninstalled checkout, export it once per shell:
+**Every wired skill calls `avo` by its bare name.** `avo run` and `avo fan` put their own `bin/`
+first on the agent's `PATH`, so an agent they start always finds `avo` (#41). You start these
+commands yourself, so they must also resolve. From an uninstalled checkout, use `./bin/avo`, or
+export it once per shell:
 
 ```sh
 cd /path/to/avocode
 export PATH="$PWD/bin:$PATH"      # or run ./install.sh once, which links it into ~/.local/bin
 ```
+
+You need the export for an agent that you start by hand in the target.
 
 ## fuzzysearch — the fast one (no setup, seconds per score)
 
@@ -91,7 +95,9 @@ avo lineage --cwd <target>                   # P_t, the versions that survived
 touch <target>/.avo/STOP                     # stop the loop cleanly after this turn
 ```
 
-There is no `--max-cost` yet (#28). The cost knobs are `--max-iters`, `--timeout`, and `.avo/STOP`.
+To limit the cost, use `--max-cost <usd>`, `--max-tokens <n>` and `--max-wall <s>` (#28), together
+with `--max-iters`, `--timeout` and `.avo/STOP`. A budget stops the loop before the next turn, not
+during a turn.
 
 ## Troubleshooting
 
@@ -103,7 +109,7 @@ There is no `--max-cost` yet (#28). The cost knobs are `--max-iters`, `--timeout
 | `ok:false`, `jq not found` | install `jq`; the scorers pipe through it |
 | `correct:false`, `a protected file changed` | something edited `f`. `git checkout -- <the named path>` |
 | `correct:false`, `the game corpus does not match` | `bench/setup.sh --games-only` restores it |
-| `avo: command not found` inside an agent turn | the `PATH` export above, or `./install.sh` |
+| `avo: command not found` inside an agent turn | you started the agent by hand. Use the `PATH` export above, or `./install.sh` |
 | `avo run` exits having done nothing | no agent on `PATH`, or one that asks for permission — `avo doctor` |
 | the curve is flat | that is the agent, not `f`: both targets ship a measured ladder proving headroom |
 
@@ -145,8 +151,10 @@ corpus over 1000 words; only gate 3 sees it. A unit suite runs on small fixtures
 full-scale check, special-casing those fixtures buys a real score.
 
 The hash gate is not oversold: it covers `.avo/score` itself, but an agent that edits the scorer *and*
-the hash file defeats it from inside. `./bench/init.sh --verify <dest>` is the external audit that
-does not, and it is the last thing to run after any loop:
+the hash file defeats it from inside. `avo run` closes most of that gap during a loop: it hashes
+`.avo/score` and every path in `.avo/protected.txt` at start, and stops with `scorer-changed` when a
+turn changes one (#38). `./bench/init.sh --verify <dest>` is the external audit that does not trust
+the repo at all, and it is the last thing to run after any loop:
 
 ```sh
 ./bench/init.sh --verify ~/work/fuzzysearch    # exit 1 if f was edited — the curve means nothing

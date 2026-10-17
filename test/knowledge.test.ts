@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -364,7 +364,7 @@ test("know add copies a local file into K with provenance, then embeds it", asyn
     const r = await knowAdd(runner, http({}), {}, dir, backend, "notes/tuning.md", { name: null, force: false, noEmbed: false, backend: null, timeoutMs: 0 }, NOW);
     assert.equal(r.ok, true);
     assert.equal(r.action, "created");
-    assert.equal(r.path, "knowledge/notes-tuning.md");
+    assert.equal(r.path, "knowledge/tuning.md", "the slug ignores the directory");
     assert.equal(r.embedded, true);
     const doc = readFileSync(join(dir, r.path ?? ""), "utf8");
     assert.match(doc, /source: "notes\/tuning.md"/);
@@ -404,6 +404,47 @@ test("re-adding identical content is unchanged; differing content is refused wit
     const forced = await knowAdd(runner, http({}), {}, dir, backend, "src.md", { ...opts, force: true }, NOW);
     assert.equal(forced.action, "updated");
     assert.match(readFileSync(join(dir, "knowledge/src.md"), "utf8"), /two/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the same file from two directories is one doc, not two (#40)", async () => {
+  const dir = scratch();
+  try {
+    write(dir, "a/ukkonen.md", "# U\n\nbanded\n");
+    write(dir, "b/ukkonen.md", "# U\n\nbanded\n");
+    write(dir, "c/ukkonen.md", "# U\n\nother\n");
+    const runner = stub(NO_QMD);
+    const backend = await resolveKnowledge(runner, dir);
+    const opts = { name: null, force: false, noEmbed: true, backend: null, timeoutMs: 0 };
+    const first = await knowAdd(runner, http({}), {}, dir, backend, join(dir, "a/ukkonen.md"), opts, NOW);
+    assert.equal(first.path, "knowledge/ukkonen.md", "an absolute path leaks no directory");
+    const twin = await knowAdd(runner, http({}), {}, dir, backend, "b/ukkonen.md", opts, NOW);
+    assert.equal(twin.path, "knowledge/ukkonen.md");
+    assert.equal(twin.action, "unchanged");
+    const clash = await knowAdd(runner, http({}), {}, dir, backend, "c/ukkonen.md", opts, NOW);
+    assert.equal(clash.action, "refused", "different content needs --force or --name");
+    assert.match(clash.error ?? "", /--name <slug> to keep both/);
+    assert.match(readFileSync(join(dir, "knowledge/ukkonen.md"), "utf8"), /banded/, "the refusal overwrote nothing");
+    assert.deepEqual(readdirSync(join(dir, "knowledge")).filter((f) => f.endsWith(".md")), ["ukkonen.md"]);
+    const named = await knowAdd(runner, http({}), {}, dir, backend, "c/ukkonen.md", { ...opts, name: "ukkonen-c" }, NOW);
+    assert.equal(named.path, "knowledge/ukkonen-c.md");
+    assert.equal(named.action, "created");
+    assert.match(readFileSync(join(dir, "knowledge/ukkonen.md"), "utf8"), /banded/, "--name keeps both");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a dotfile slugs by its name, not as an empty doc", async () => {
+  const dir = scratch();
+  try {
+    write(dir, "cfg/.tuning", "# T\n\nx\n");
+    const runner = stub(NO_QMD);
+    const backend = await resolveKnowledge(runner, dir);
+    const r = await knowAdd(runner, http({}), {}, dir, backend, "cfg/.tuning", { name: null, force: false, noEmbed: true, backend: null, timeoutMs: 0 }, NOW);
+    assert.equal(r.path, "knowledge/tuning.md");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

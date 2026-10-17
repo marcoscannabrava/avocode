@@ -5,7 +5,7 @@
  * Lives apart from `init.ts` so `knowledge.ts` can report the same way without a module cycle —
  * `avo init` folds `avo know init`'s steps into its own.
  */
-export type StepAction = "created" | "unchanged" | "skipped" | "failed";
+export type StepAction = "created" | "removed" | "unchanged" | "skipped" | "failed";
 
 export interface InitStep {
   name: string;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +16,7 @@ import {
   parseConfigList,
   parseScoreArgs,
   parseScoreOutput,
+  readGit,
   renderAttempt,
   scoreCommand,
   SCORER_PATH,
@@ -86,8 +88,11 @@ test("a nested bad score names the config that broke", () => {
 });
 
 test("non-finite numbers are rejected even though JSON accepts 1e999", () => {
-  assert.match(bad(parseScoreOutput(line({ ...GOOD, scores: { b1: 1e999 } }))).errors[0] ?? "", /scores\.b1/);
-  assert.match(bad(parseScoreOutput(line({ ...GOOD, primary: 1e999 }))).errors[0] ?? "", /field 'primary'/);
+  // JSON.stringify writes Infinity as null.
+  const inf = (o: unknown) => line(o).replace('"INF"', "1e999");
+  assert.equal(JSON.parse(inf({ primary: "INF" })).primary, Infinity);
+  assert.match(bad(parseScoreOutput(inf({ ...GOOD, scores: { b1: "INF" } }))).errors[0] ?? "", /scores\.b1.*got Infinity/);
+  assert.match(bad(parseScoreOutput(inf({ ...GOOD, primary: "INF" }))).errors[0] ?? "", /field 'primary'.*got Infinity/);
 });
 
 test("primary may be null only when the candidate is not passing", () => {
@@ -182,6 +187,22 @@ test("one failing config fails the whole attempt", () => {
   assert.equal(a.correct, false);
   assert.equal(a.pass, false);
   assert.equal(a.primary, null);
+});
+
+test("configs that disagree on direction are a harness error naming them", () => {
+  const low = { ...GOOD, higher_is_better: false };
+  const a = normalize([part("b1", GOOD), part("b2", low), part("b3", low)], META);
+  assert.equal(a.pass, false);
+  assert.equal(a.primary, null);
+  assert.equal(a.errors.length, 1);
+  assert.match(a.errors[0] ?? "", /disagree on higher_is_better: true for b1; false for b2, b3/);
+});
+
+test("configs that agree on direction raise no error", () => {
+  const low = { ...GOOD, higher_is_better: false };
+  const a = normalize([part("b1", low), part("b2", low)], META);
+  assert.deepEqual(a.errors, []);
+  assert.equal(a.higher_is_better, false);
 });
 
 test("a single scorer's self-reported duration is preferred over our wall clock", () => {
@@ -318,10 +339,14 @@ test("a passing scorer exits 0, emits one JSON line, and records the attempt", a
     const a = JSON.parse(io.stdout) as Attempt;
     assert.equal(a.pass, true);
     assert.equal(a.normalized, 12.5);
-    assert.deepEqual(a.git, { head: "deadbeef", dirty: true });
+    // The stub git yields no tree, so no paths.
+    assert.deepEqual(a.git, { head: "deadbeef", dirty: true, tree: null });
     assert.deepEqual(attemptsOf(dir), [a]);
     // The scorer is invoked with no arguments when not fanning out.
-    assert.deepEqual(f.calls[0], { cmd: join(dir, SCORER_PATH), args: [] });
+    assert.deepEqual(
+      f.calls.filter((c) => c.cmd !== "git"),
+      [{ cmd: join(dir, SCORER_PATH), args: [] }],
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -533,6 +558,60 @@ test("a child that overruns the output cap keeps its LAST line, not only its fir
   }
 });
 
+test("a sink gets all of stdout while memory stays capped (#22)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-sink-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, `#!/bin/sh\ni=0\nwhile [ $i -lt 6000 ]; do printf '%090d\\n' "$i"; i=$((i+1)); done\necho err >&2\n`, { mode: 0o755 });
+    const sink = join(dir, "logs", "out.log");
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink });
+    assert.match(r.stdout, /--- avo elided \d+ bytes of output here ---/);
+    const log = readFileSync(sink, "utf8");
+    assert.equal(log.length, 6000 * 91, "every byte of stdout, and no stderr");
+    // A sink that cannot open loses nothing else.
+    for (const bad of [join(script, "x.log"), dir]) {
+      const again = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink: bad });
+      assert.equal(again.code, 0);
+      assert.equal(again.stderr, "err\n");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a sink stops at its cap and says so", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-sinkcap-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, `#!/bin/sh\ni=0\nwhile [ $i -lt 2000 ]; do printf '%090d\\n' "$i"; i=$((i+1)); done\n`, { mode: 0o755 });
+    const sink = join(dir, "out.log");
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink, sinkCap: 10_000 });
+    assert.equal(r.code, 0);
+    const log = readFileSync(sink, "utf8");
+    const marker = "\n--- avo cut the log at 10000 bytes ---\n";
+    assert.ok(log.endsWith(marker), log.slice(-80));
+    assert.equal(log.length, 10_000 + marker.length);
+    assert.match(log, /^0{90}\n/);
+    assert.match(r.stdout, /^0{90}\n/, "memory still gets the stream");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a timed-out child still leaves its sink flushed and closed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-sinkkill-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, "#!/bin/sh\necho before\nsleep 30\necho after\n", { mode: 0o755 });
+    const sink = join(dir, "out.log");
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 300, sink });
+    assert.equal(r.timedOut, true);
+    assert.equal(readFileSync(sink, "utf8"), "before\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("output that fits under the cap is passed through byte for byte, with no elision marker", async () => {
   const dir = mkdtempSync(join(tmpdir(), "avo-nocap-"));
   try {
@@ -642,4 +721,133 @@ test("with no declared configs the probe still runs, and its failure degrades to
   assert.deepEqual(attempt.configs, ["*"]);
   assert.match(attempt.warnings.join("\n"), /skip this probe/);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------------- the candidate tree (#25, #24)
+
+/** A real repo with one commit. */
+function gitRepo(): { dir: string; git: (...args: string[]) => string } {
+  const dir = mkdtempSync(join(tmpdir(), "avo-tree-test-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "avo@example.com");
+  git("config", "user.name", "avo");
+  writeFileSync(join(dir, "kernel.c"), "int main(void) { return 0; }\n");
+  mkdirSync(join(dir, "lineage"), { recursive: true });
+  writeFileSync(join(dir, "lineage/memory.jsonl"), "");
+  git("add", "-A");
+  git("commit", "-qm", "base");
+  return { dir, git };
+}
+
+test("the tree ignores avo's own writes and never touches the real index", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    const clean = await readGit(spawnRunner, dir);
+    assert.match(clean.tree ?? "", /^[0-9a-f]{40}$/);
+    assert.deepEqual(clean.paths, []);
+
+    mkdirSync(join(dir, ".avo"), { recursive: true });
+    writeFileSync(join(dir, ATTEMPTS_PATH), "{}\n");
+    writeFileSync(join(dir, ".avo/.gitignore"), "attempts.jsonl\n");
+    writeFileSync(join(dir, "lineage/memory.jsonl"), '{"key":"k","text":"t"}\n');
+    const index = readFileSync(join(dir, ".git/index"));
+    const harness = await readGit(spawnRunner, dir);
+    assert.equal(harness.tree, clean.tree, "harness writes are not a variation");
+    assert.deepEqual(harness.paths, []);
+    assert.equal(harness.dirty, true);
+    assert.deepEqual(readFileSync(join(dir, ".git/index")), index, "the real index is untouched");
+    assert.equal(git("diff", "--cached", "--name-only"), "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an edit changes the tree and names its paths; undoing it restores the tree", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    const clean = await readGit(spawnRunner, dir);
+    writeFileSync(join(dir, "kernel.c"), "int main(void) { return 1; }\n");
+    writeFileSync(join(dir, "new.h"), "#define X 1\n");
+    const edited = await readGit(spawnRunner, dir);
+    assert.notEqual(edited.tree, clean.tree);
+    assert.deepEqual(edited.paths, ["kernel.c", "new.h"]);
+
+    // Staging does not change the candidate.
+    git("add", "kernel.c");
+    assert.equal((await readGit(spawnRunner, dir)).tree, edited.tree);
+
+    git("reset", "-q", "--hard");
+    rmSync(join(dir, "new.h"));
+    assert.equal((await readGit(spawnRunner, dir)).tree, clean.tree);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ignored files are not part of the tree, and no temp index is left", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    writeFileSync(join(dir, ".gitignore"), ".venv/\n");
+    git("add", ".gitignore");
+    git("commit", "-qm", "ignore");
+    const before = await readGit(spawnRunner, dir);
+    mkdirSync(join(dir, ".venv/lib"), { recursive: true });
+    writeFileSync(join(dir, ".venv/lib/big.so"), "x".repeat(1 << 16));
+    const after = await readGit(spawnRunner, dir);
+    assert.equal(after.tree, before.tree, "an ignored dir is not a variation");
+    assert.deepEqual(after.paths, []);
+    assert.equal(git("status", "--porcelain"), "");
+    assert.equal(existsSync(join(dir, ".git/index.lock")), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("in a subdirectory, paths are relative to it", async () => {
+  const { dir, git } = gitRepo();
+  try {
+    const sub = join(dir, "pkg");
+    mkdirSync(join(sub, "lineage"), { recursive: true });
+    writeFileSync(join(sub, "lineage/memory.jsonl"), "");
+    writeFileSync(join(sub, "k.c"), "1\n");
+    git("add", "-A");
+    git("commit", "-qm", "pkg");
+    assert.deepEqual((await readGit(spawnRunner, sub)).paths, [], "its own memory log is not a change");
+    writeFileSync(join(sub, "k.c"), "2\n");
+    assert.deepEqual((await readGit(spawnRunner, sub)).paths, ["k.c"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed tree leaves paths unknown, not empty", async () => {
+  const runner: Runner = (cmd, args) =>
+    Promise.resolve(R(cmd === "git" && args[0] === "rev-parse" ? { stdout: "deadbeef\n" } : { code: 128 }));
+  const g = await readGit(runner, mkdtempSync(join(tmpdir(), "avo-tree-fail-")));
+  assert.equal(g.tree, null);
+  assert.equal(g.paths, undefined, "empty would read as a re-score");
+});
+
+test("the tree is read before the scorer, so its outputs are not the candidate", async () => {
+  const { dir } = gitRepo();
+  try {
+    mkdirSync(join(dir, ".avo"), { recursive: true });
+    const scorer = `#!/usr/bin/env bash\ndate +%s%N > out.txt\nprintf '%s\\n' '${JSON.stringify(GOOD)}'\n`;
+    writeFileSync(join(dir, SCORER_PATH), scorer, { mode: 0o755 });
+    const clean = (await readGit(spawnRunner, dir)).tree;
+    const io = bufferIo();
+    assert.equal(await scoreCommand(["--json", "--cwd", dir], io, spawnRunner), 0);
+    assert.ok(existsSync(join(dir, "out.txt")), "the scorer wrote its output");
+    const a = JSON.parse(io.stdout) as Attempt;
+    assert.equal(a.git.tree, clean, "the tree is the candidate as scored");
+    assert.deepEqual(a.git.paths, [".avo/score"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("harness.ts imports nothing, so no module can cycle through it", () => {
+  const src = readFileSync(join(import.meta.dirname, "../src/harness.ts"), "utf8");
+  assert.doesNotMatch(src, /^\s*import\s/m);
 });

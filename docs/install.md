@@ -86,13 +86,15 @@ Every optional dependency degrades with a named fallback and one warning — nev
 
 ## Work on avocode itself
 
-You do not need `install.sh` — `./bin/avo` works from the checkout after `npm install`. But **the
-wired skills all begin with `avo ...`**, so an agent driving the loop needs the bare name
-resolvable:
+You do not need `install.sh` — `./bin/avo` works from the checkout after `npm install`. The wired
+skills all begin with `avo ...`. `avo run` and `avo fan` put their own `bin/` first on the agent's
+`PATH`, so you do not need a `PATH` step for them:
 
 ```sh
-PATH="$PWD/bin:$PATH" avo run --cwd ~/work/target --agent claude ...
+./bin/avo run --cwd ~/work/target --agent claude ...
 ```
+
+An agent that you start by hand in the target does not get this. Add `bin/` to your `PATH` first.
 
 See [testing.md](testing.md) for the health check and the test suites.
 
@@ -105,4 +107,9 @@ rm -rf /path/to/avocode     # the checkout itself
 
 A repo you ran `avo init`/`avo install` in keeps its `.avo/`, `lineage/`, `knowledge/` and the
 managed block in its `AGENTS.md`. None of it depends on avocode staying installed — the lineage is
-just git commits.
+just git commits. The skill and extension links that `avo install` made point at the removed
+checkout, so they break. They are not in the lineage (`.git/info/exclude` keeps them out), so you
+can delete them, or run `avo install` again from a new checkout.
+
+To remove avo's links, its `.git/info/exclude` block and the `AGENTS.md` block from such a repo,
+run `avo install --uninstall` in it before you delete the checkout. See [agents.md](agents.md).
