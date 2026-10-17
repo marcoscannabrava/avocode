@@ -86,13 +86,15 @@ Every optional dependency degrades with a named fallback and one warning — nev
 
 ## Work on avocode itself
 
-You do not need `install.sh` — `./bin/avo` works from the checkout after `npm install`. But **the
-wired skills all begin with `avo ...`**, so an agent driving the loop needs the bare name
-resolvable:
+You do not need `install.sh` — `./bin/avo` works from the checkout after `npm install`. The wired
+skills all begin with `avo ...`. `avo run` and `avo fan` put their own `bin/` first on the agent's
+`PATH`, so you do not need a `PATH` step for them:
 
 ```sh
-PATH="$PWD/bin:$PATH" avo run --cwd ~/work/target --agent claude ...
+./bin/avo run --cwd ~/work/target --agent claude ...
 ```
+
+An agent that you start by hand in the target does not get this. Add `bin/` to your `PATH` first.
 
 See [testing.md](testing.md) for the health check and the test suites.
 

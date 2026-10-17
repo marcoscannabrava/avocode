@@ -1,0 +1,46 @@
+name: beads
+
+# Runs the mem e2e with real bd.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - src/mem.ts
+      - src/init.ts
+      - src/lineage.ts
+      - test/e2e-mem.sh
+      - .github/workflows/beads.yml
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-with-bd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Matches evidence/s3-e2e-with-bd.txt.
+      BD_VERSION: "1.2.2"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Postinstall skips the binary under CI.
+      - run: env -u CI npm install -g "@beads/bd@$BD_VERSION"
+      - run: bd --version
+      - run: ./test/e2e-mem.sh
+      # A SKIP means bd was not used.
+      - name: the beads path ran
+        run: |
+          grep -q '^# bd on PATH: yes' evidence/s3-e2e.txt
+          if grep -q '^SKIP' evidence/s3-e2e.txt; then exit 1; fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: s3-e2e-with-bd
+          path: evidence/s3-e2e.txt
