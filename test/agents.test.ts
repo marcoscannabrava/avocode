@@ -9,6 +9,7 @@ import {
   CLAUDE,
   CODEX,
   PI,
+  approvalProblem,
   customTemplate,
   driveAgent,
   parseAgentOutput,
@@ -287,6 +288,79 @@ test("usage carrying only cached input is a real reading, not the absence of one
 test("usage with none of the four field shapes present is null rather than zeros", () => {
   const out = `{"type":"result","result":"x","usage":{"service_tier":"standard"}}`;
   assert.equal(parseAgentOutput("claude", out).tokens, null);
+});
+
+// ------------------------------------------------------------ approval (#23)
+
+// Shapes read off claude 2.1.289 under a managed disableBypassPermissionsMode.
+const initIn = (mode: string): string =>
+  JSON.stringify({ type: "system", subtype: "init", session_id: "s", permissionMode: mode });
+const resultWith = (denials: string[]): string =>
+  JSON.stringify({
+    type: "result",
+    subtype: "success",
+    result: "I need permission to edit notes.txt.",
+    permission_denials: denials.map((tool_name) => ({ tool_name, tool_use_id: "t", tool_input: {} })),
+  });
+
+test("claude in a mode other than bypassPermissions is a refused approval", () => {
+  const out = [initIn("auto"), resultWith([])].join("\n");
+  assert.deepEqual(approvalProblem(CLAUDE, out), {
+    refused: true,
+    message: "claude ignored bypassPermissions and ran in mode 'auto'",
+  });
+});
+
+test("denied tool calls are named, once each", () => {
+  const out = [initIn("bypassPermissions"), resultWith(["Bash", "Edit", "Bash"])].join("\n");
+  assert.deepEqual(approvalProblem(CLAUDE, out), {
+    refused: false,
+    message: "claude denied 3 tool calls: Bash, Edit",
+  });
+});
+
+test("a clean claude turn, or one with no init event, has no approval problem", () => {
+  assert.equal(approvalProblem(CLAUDE, [initIn("bypassPermissions"), resultWith([])].join("\n")), null);
+  assert.equal(approvalProblem(CLAUDE, resultWith([])), null);
+});
+
+test("a custom claude-format agent is checked for denials, not for a mode", () => {
+  const t = customTemplate({ ...CUSTOM, format: "claude" });
+  assert.equal(approvalProblem(t, initIn("acceptEdits")), null);
+  assert.equal(approvalProblem(t, resultWith(["Write"]))?.refused, false);
+});
+
+test("other formats never report an approval problem", () => {
+  assert.equal(approvalProblem(PI, [initIn("auto"), resultWith(["Bash"])].join("\n")), null);
+  assert.equal(approvalProblem(CODEX, resultWith(["Bash"])), null);
+});
+
+test("driveAgent turns a refused mode with exit 0 into a failed turn", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-approval-"));
+  const stdout = [initIn("auto"), resultWith(["Bash"])].join("\n");
+  const turn = await driveAgent(
+    async () => ({ code: 0, stdout, stderr: "", timedOut: false, spawnError: null }),
+    CLAUDE,
+    { prompt: "p", model: "haiku" },
+    { cwd: dir, logPath: "1.log", logFile: join(dir, "1.log"), timeoutS: 5, env: {} },
+    () => new Date(0),
+  );
+  assert.equal(turn.ok, false);
+  assert.equal(turn.approval_refused, true);
+  assert.match(turn.error ?? "", /ignored bypassPermissions/);
+});
+
+test("driveAgent keeps the exit error first when the agent also crashed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-approval-"));
+  const turn = await driveAgent(
+    async () => ({ code: 2, stdout: initIn("auto"), stderr: "", timedOut: false, spawnError: null }),
+    CLAUDE,
+    { prompt: "p", model: null },
+    { cwd: dir, logPath: "1.log", logFile: join(dir, "1.log"), timeoutS: 5, env: {} },
+    () => new Date(0),
+  );
+  assert.match(turn.error ?? "", /exited 2/);
+  assert.equal(turn.approval_refused, true, "the loop still stops on it");
 });
 
 // ------------------------------------------------------------- avo on the child PATH (#41)

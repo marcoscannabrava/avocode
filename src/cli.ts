@@ -102,7 +102,8 @@ avo run:
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
   stops on          --max-iters, a crossed budget, an .avo/STOP file, 3 unchanged iterations in
-                    a row, or an agent binary that cannot be started
+                    a row, an agent binary that cannot be started, a refused permission mode,
+                    or a changed scorer
 
 avo supervise:
   --stall <n>       attempts with no committed improvement before it steers

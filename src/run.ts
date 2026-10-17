@@ -136,6 +136,7 @@ export type StopReason =
   | "stop-file"
   | "no-progress"
   | "agent-unavailable"
+  | "approval-refused"
   | "budget"
   | "scorer-changed"
   | "dry-run";
@@ -847,6 +848,15 @@ async function iterate(
     prev = it;
     writeRunManifest(opts.cwd, report);
 
+    // The next turn gets the same mode.
+    if (turn.approval_refused) {
+      report.stopped = "approval-refused";
+      report.stop_reason = turn.error ?? `${template.command} refused its approval mode`;
+      report.errors.push(report.stop_reason);
+      writeRunManifest(opts.cwd, report);
+      break;
+    }
+
     if (noops >= MAX_CONSECUTIVE_NOOPS) {
       report.stopped = "no-progress";
       report.stop_reason =
@@ -923,7 +933,8 @@ export function renderPlan(r: RunReport): string {
     ...superviseSteps(r, mode),
     "",
     `stops on: --max-iters ${r.max_iters}, ${STOP_FILE}, ${MAX_CONSECUTIVE_NOOPS} unchanged iterations in a row,`,
-    "          a crossed budget, an agent binary that cannot be started, or a changed scorer",
+    "          a crossed budget, an agent binary that cannot be started, a refused permission mode,",
+    "          or a changed scorer",
     "",
     "turn prompt (iteration 1):",
     "",

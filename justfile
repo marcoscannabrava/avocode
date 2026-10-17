@@ -41,6 +41,10 @@ e2e:
     timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-lint.sh
     timeout --foreground -k 10 {{e2e_timeout}} ./test/e2e-install-sh.sh
 
+# Real agents, real tokens: never in CI. Pass agent names to narrow.
+smoke *agents:
+    ./test/smoke-agents.sh {{agents}}
+
 # Everything, including the slow end-to-end pass.
 all: check e2e
 

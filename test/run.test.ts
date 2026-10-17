@@ -8,7 +8,7 @@ import test from "node:test";
 import { CHAIN_ENV, DEFAULT_TIMEOUT_S, DEPTH_ENV, LEVEL_ENV, promptSha } from "../src/fan.ts";
 import { bufferIo } from "../src/io.ts";
 import { commitCommand, ensureTrajectoryIgnored, parseCommitArgs, TRAJECTORY_PATHS } from "../src/lineage.ts";
-import { hashFiles, parsePins, SCORER_ENV, scorerChanges, scorerPaths } from "../src/score.ts";
+import { hashFiles, parsePins, SCORER_ENV, scorerChanges, scorerPaths, spawnRunner, type Runner } from "../src/score.ts";
 import {
   DEFAULT_MAX_ITERS,
   MAX_CONSECUTIVE_NOOPS,
@@ -135,6 +135,7 @@ const iteration = (over: Partial<Iteration> = {}): Iteration => ({
     timed_out: false,
     truncated: false,
     spawn_failed: false,
+    approval_refused: false,
     error: null,
   },
   log_path: ".avo/runs/r/logs/1.log",
@@ -563,6 +564,32 @@ test("an agent binary that cannot be started stops the loop instead of burning t
   // A turn that never ran says nothing of usage.
   assert.deepEqual(json.budget.unenforced, []);
   assert.ok(!json.warnings.some((w) => /unenforced/.test(w)), JSON.stringify(json.warnings));
+});
+
+// #23: a managed setting can refuse bypassPermissions.
+const REFUSED_STUB = `#!/bin/sh
+echo '{"type":"system","subtype":"init","session_id":"s","permissionMode":"auto"}'
+echo '{"type":"result","subtype":"success","result":"I need permission.","permission_denials":[{"tool_name":"Edit"}]}'
+`;
+
+test("a claude that refuses bypassPermissions stops the loop after one turn", async () => {
+  const f = fixture("runrefused");
+  const stub = join(f.dir, "claude-stub.sh");
+  writeFileSync(stub, REFUSED_STUB, { mode: 0o755 });
+  // PATH never reaches the spawn; swap the command.
+  const runner: Runner = (cmd, args, o) => spawnRunner(cmd === "claude" ? stub : cmd, args, o);
+  const io = bufferIo();
+  const code = await runCommand(
+    ["--prompt", "go", "--max-iters", "5", "--json", "--cwd", f.dir, "--agent", "claude"],
+    io,
+    runner,
+  );
+  const json = JSON.parse(io.stdout) as RunReport;
+  assert.equal(code, 1);
+  assert.equal(json.iterations.length, 1, "it does not spend four more turns");
+  assert.equal(json.stopped, "approval-refused");
+  assert.match(json.stop_reason, /ignored bypassPermissions and ran in mode 'auto'/);
+  assert.equal(json.iterations[0]?.agent.ok, false);
 });
 
 test("an agent that changes nothing stops the loop, because the supervisor cannot see it", async () => {
