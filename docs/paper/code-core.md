@@ -704,6 +704,13 @@ match (`src/install.ts:95-113`). `ensureLink` never replaces a real directory, a
 foreign symlink only with `--force` (`:116-134`). Links are relative inside one repo and absolute
 when they reach out of it, so they survive clones and `avo fan` worktrees (`:143-146`).
 
+**Absolute links stay out of the lineage (#32).** An absolute link names a path on this machine.
+`avo install` lists each one in a managed block in the repo's local ignore file, which
+`git rev-parse --git-path info/exclude` finds (`excludeLocalLinks`). The entries are anchored at the
+repo root, and all worktrees share the file. Thus `git add -A` in `avo commit` does not stage the
+links, and a clone has none. `avo fan` copies the listed links into each probe worktree
+(`mirrorLinks`).
+
 **The five skills** (`.agents/skills/`): `avo-vary` (one variation step: prime → best → know query →
 one change → score → commit), `avo-score` (the `f` contract and authoring rules), `avo-lineage`
 (reading `P_t` and the commit rule), `avo-knowledge` (`K`), `avo-fanout` (`avo fan`). They are

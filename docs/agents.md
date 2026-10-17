@@ -54,6 +54,19 @@ mode `avo fan` will drive it in. `avo install` says so every time it wires pi.
 existing `.claude/skills` full of your own skills gets avo's linked *inside* it instead. A symlink or
 file in the way needs `--force`.
 
+**The links stay out of the lineage.** When avocode is outside the target repo, a link to it is
+absolute. It names a path on this machine, so it must not go into a version. `avo install` writes each
+absolute link into a managed block in `.git/info/exclude`. Thus the `git add -A` in `avo commit` does
+not stage it. The file is local to the clone, so the ignore rule does not go into a version either.
+`AGENTS.md`, `.pi/settings.json` and the relative `.claude/skills` link are portable, and git still
+tracks them. The results are:
+
+- A clone gets no link to your machine. Run `avo install` again in each clone.
+- `avo fan` copies the excluded links into each probe worktree. All worktrees share
+  `.git/info/exclude`, so the links are not in the probe's diff either.
+- A re-run rewrites the block with the same text, so the file does not change.
+- If a link is already in the lineage, `avo install` tells you to remove it with `git rm --cached`.
+
 ## The native `pi` extensions — the same commands, one process closer
 
 Every capability is reachable from `bash` first (invariant 8); the extensions are *bindings*, not new

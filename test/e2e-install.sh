@@ -189,6 +189,33 @@ else
   bad "running avo install in this repo was not a no-op: $(printf '%s' "$own" | jq -c '[.steps[]|select(.action!="unchanged")]')"
 fi
 
+# ------------------------------------------------- 8. absolute links stay out of the lineage (#32)
+say ""
+say "## 8. install links do not enter the lineage"
+lin="$(mktemp -d)"
+git -C "$lin" init -q
+git -C "$lin" config user.email avo@example.com
+git -C "$lin" config user.name avo
+git -C "$lin" commit -q --allow-empty -m base
+out="$(avo install --cwd "$lin" --json)"
+printf '%s' "$out" | jq -e '[.steps[] | select(.name == ".git/info/exclude" and .action == "created")] | length == 1' >/dev/null
+yes_no $? "avo install says it wrote .git/info/exclude" "no exclude step in: $(printf '%s' "$out" | jq -c '[.steps[].name]')"
+git -C "$lin" add -A
+# Mode 120000 is a symlink; no staged one may hold an absolute path.
+abs="$(git -C "$lin" ls-files -s | awk '$1 == "120000" {print $4}' | while read -r p; do t="$(git -C "$lin" cat-file -p ":$p")"; [[ $t == /* ]] && echo "$p"; done)"
+if [[ -z $abs ]]; then ok "git add -A stages no absolute link"; else bad "absolute links staged: $abs"; fi
+git -C "$lin" ls-files --error-unmatch AGENTS.md .claude/skills >/dev/null 2>&1
+yes_no $? "AGENTS.md and the relative .claude/skills link still enter the lineage" "the portable wiring was not staged"
+git -C "$lin" commit -qm wired
+clone="$(mktemp -d)"
+git clone -q "$lin" "$clone/c"
+abs="$(find "$clone/c" -path "$clone/c/.git" -prune -o -type l -lname '/*' -print)"
+if [[ -z $abs ]]; then ok "a clone holds no link to this machine's avocode"; else bad "a clone has absolute links: $abs"; fi
+before="$(cat "$lin/.git/info/exclude")"
+avo install --cwd "$lin" >/dev/null 2>&1
+if [[ "$(cat "$lin/.git/info/exclude")" == "$before" ]]; then ok "a re-run leaves .git/info/exclude byte-identical"; else bad "a re-run changed .git/info/exclude"; fi
+rm -rf "$lin" "$clone"
+
 say ""
 say "# ${fails} failure(s)"
 [[ $fails == 0 ]] || exit 1

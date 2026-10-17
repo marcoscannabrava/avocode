@@ -107,4 +107,6 @@ rm -rf /path/to/avocode     # the checkout itself
 
 A repo you ran `avo init`/`avo install` in keeps its `.avo/`, `lineage/`, `knowledge/` and the
 managed block in its `AGENTS.md`. None of it depends on avocode staying installed — the lineage is
-just git commits.
+just git commits. The skill and extension links that `avo install` made point at the removed
+checkout, so they break. They are not in the lineage (`.git/info/exclude` keeps them out), so you
+can delete them, or run `avo install` again from a new checkout.

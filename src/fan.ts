@@ -12,6 +12,7 @@ import { accessSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { loadConfig } from "./config.ts";
+import { mirrorLinks } from "./install.ts";
 import { TRAJECTORY_PATHS, ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
 import type { Io } from "./io.ts";
 import { capOutput, driveAgent, resolveTemplate, type AgentTemplate, type AgentTokens, type Capped } from "./agents.ts";
@@ -722,6 +723,10 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
 
   const created = await addWorktrees(runner, opts.cwd, probes, baseline);
   if (created.length > 0) return { error: created.join("; ") };
+  // Install links are local, not lineage (#32).
+  for (const p of probes) {
+    for (const f of mirrorLinks(opts.cwd, join(opts.cwd, p.worktree))) warnings.push(`probe ${p.i}: could not link ${f}`);
+  }
 
   const cap = concurrencyCap();
   if (n > cap) warnings.push(`--n ${n} exceeds the concurrency cap of ${cap}; the rest queue`);
