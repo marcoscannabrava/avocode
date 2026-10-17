@@ -55,9 +55,31 @@ avo fan --agent pi --model groq/llama-3.3-70b   # choose the agent and the probe
 avo fan --timeout 300                           # kill a probe's process group after 300s
 ```
 
-The prompt goes to **every** probe identically. Diversity comes from sampling, not from N different
-prompts — so write a prompt that names the *problem* and invites a direction, not one that dictates the
+Without `--directions`, the prompt goes to **every** probe identically. Diversity comes from sampling
+only — so write a prompt that names the *problem* and invites a direction, not one that dictates the
 edit. A prompt saying "delete the bounds check" gets you four identical diffs.
+
+### Directed fan-out
+
+When you can name the directions, give each probe one:
+
+```bash
+cat > directions.txt <<'EOF'
+- unroll the inner loop 4x
+- replace the branch with a lookup table
+- cache the parsed header
+EOF
+avo fan --prompt-file probe.md --directions directions.txt --json
+```
+
+- One direction per line. avo ignores blank lines and `#` lines, and removes list markers. You can
+  give it the directions from `avo supervise` as they are.
+- Probe `i` gets the shared prompt, then `Your direction: <line i>`. Put the task, the rules and
+  "do not touch `.avo/score`" in the shared prompt. Put only the idea in each line.
+- `--n` is the number of lines. A different `--n` is a usage error (exit 2).
+- Each result has `direction`, so you can see which idea each score belongs to.
+- `--resume` reads the directions from the manifest. Do not pass `--directions` again.
+- A probe cannot fan out its own prompt or the shared prompt again: both are on the cycle chain.
 
 Tell the probes what the loop needs back: what to change, that they must not touch `.avo/score`, and
 that a one-line summary of *what they tried* is what you will read. Their final message becomes
@@ -68,6 +90,7 @@ Each probe returns:
 | Field | Meaning |
 | --- | --- |
 | `i` | 1-based probe number — what `--promote <i>` takes |
+| `direction` | the `--directions` line this probe got, or `null` |
 | `ok` | the agent process finished and was not killed. **Says nothing about the candidate** |
 | `score` | `avo score` run inside that worktree: `pass`, `primary`, `normalized`, `scores` |
 | `diffstat` | files, insertions, deletions, and the paths touched |

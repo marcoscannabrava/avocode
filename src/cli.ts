@@ -73,6 +73,8 @@ avo know:
 avo fan:
   --n <k>           how many probes (default 3); they run min(8, cpus-2) at a time
   --prompt-file <f> | --prompt "<text>"   the task every probe is given
+  --directions <f>  one direction per line, one probe each, appended to the prompt;
+                    --n defaults to the line count and must match it
   --agent <a>       pi | claude | codex | a custom one from .avo/config.json
                     (default: $AVO_AGENT, the config, then the first on PATH)
   --model <m>       the probe model (default $AVO_PROBE_MODEL); small models are the point
