@@ -29,16 +29,21 @@ cd "$root" || exit 1
 #                 binary on first use, so no install and no apt-get is needed anywhere
 #   PATH again    any version, last resort for an offline checkout, and it says so loudly
 SC_PIN="0.11.0"
+SC_TIMEOUT="${SC_TIMEOUT:-60}"
 
-sc_version() { "$@" --version 2>/dev/null | sed -n 's/^version: *//p' | head -1; }
+# A hung probe means "no" (#53).
+bounded() {
+  if command -v timeout >/dev/null 2>&1; then timeout -k 5 "$SC_TIMEOUT" "$@"; else "$@"; fi
+}
+sc_version() { bounded "$@" --version 2>/dev/null | sed -n 's/^version: *//p' | head -1; }
 
 sc=()
 if [[ -n "${SHELLCHECK:-}" ]]; then
   read -r -a sc <<<"$SHELLCHECK"
-  if ! "${sc[@]}" --version >/dev/null 2>&1; then sc=(); fi
+  if ! bounded "${sc[@]}" --version >/dev/null 2>&1; then sc=(); fi
 elif command -v shellcheck >/dev/null 2>&1 && [[ "$(sc_version shellcheck)" == "$SC_PIN" ]]; then
   sc=(shellcheck)
-elif npm exec --yes -- shellcheck --version >/dev/null 2>&1; then
+elif bounded npm exec --yes -- shellcheck --version >/dev/null 2>&1; then
   sc=(npm exec --yes -- shellcheck)
 elif command -v shellcheck >/dev/null 2>&1; then
   sc=(shellcheck)
@@ -81,9 +86,11 @@ if [[ "${1:-}" == "--list" ]]; then
   exit 0
 fi
 
-"${sc[@]}" -S style -- "${targets[@]}"
+bounded "${sc[@]}" -S style -- "${targets[@]}"
 code=$?
-if (( code != 0 )); then
+if (( code == 124 || code == 137 )); then
+  echo "lint-sh: shellcheck did not finish in ${SC_TIMEOUT}s -- lint is red" >&2
+elif (( code != 0 )); then
   echo "lint-sh: shellcheck failed on ${#targets[@]} scripts (exit $code) -- lint is red" >&2
 fi
 exit $code

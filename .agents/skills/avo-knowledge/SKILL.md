@@ -44,7 +44,7 @@ nothing configured it names all three and how to enable each rather than failing
 
 ```bash
 avo know add https://arxiv.org/abs/2506.xxxxx           # fetch -> knowledge/<slug>.md
-avo know add ./notes/kernel-design.md                   # a local file
+avo know add ./notes/kernel-design.md                   # -> knowledge/kernel-design.md
 avo know add <url> --name flash-attn-3                  # name the doc
 avo know add <url> --force                              # replace a differing existing doc
 ```
@@ -60,12 +60,13 @@ re-fetch look like a conflict.
 ## Keep the index current
 
 ```bash
-avo know reindex          # re-scan the collections; needed after files land in lineage/
+avo know reindex          # re-scan the collections; avo commit does it for lineage/
 avo know init             # create the collections (folded into `avo init`)
 ```
 
-`avo commit` writes `lineage/vNNN.md` directly, so run `avo know reindex` before searching the lineage
-for something committed in this session.
+`avo commit` reindexes `lineage/` after it writes a new version, so a version you just committed is
+searchable at once. Run `avo know reindex` only after you add files to `knowledge/` or `lineage/` by
+hand, or when a commit warns that the reindex failed.
 
 ## Judgement
 

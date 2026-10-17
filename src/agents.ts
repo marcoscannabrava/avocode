@@ -8,7 +8,8 @@
  * carries the same class of flag.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Runner } from "./score.ts";
 
 export interface AgentInvocation {
@@ -56,6 +57,8 @@ export interface AgentTemplate {
    * `avo fan --json` so the operator sees what the agent was allowed to do.
    */
   approval: string;
+  /** The mode the agent must report back. */
+  permissionMode?: string;
 }
 
 /** Ends option parsing, so a prompt that begins with `-` is a prompt and not a misread flag. */
@@ -73,6 +76,8 @@ export const PI: AgentTemplate = {
   approval: "--approve (trusts project-local files for this run; headless pi cannot ask)",
 };
 
+const CLAUDE_MODE = "bypassPermissions";
+
 export const CLAUDE: AgentTemplate = {
   name: "claude",
   command: "claude",
@@ -84,13 +89,14 @@ export const CLAUDE: AgentTemplate = {
     "stream-json",
     "--verbose",
     "--permission-mode",
-    "bypassPermissions",
+    CLAUDE_MODE,
     ...model(inv, "--model"),
     END_OPTS,
     inv.prompt,
   ],
   format: "claude",
   approval: "--permission-mode bypassPermissions (a prompt in --print mode is an auto-denial)",
+  permissionMode: CLAUDE_MODE,
 };
 
 export const CODEX: AgentTemplate = {
@@ -325,9 +331,54 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
   return { summary: summary ?? streamed ?? lastProseLine(stdout), tokens, cost_usd: costUsd };
 }
 
+/** A turn whose approval flag failed. */
+export interface ApprovalProblem {
+  /** The mode was refused; later turns fail too. */
+  refused: boolean;
+  message: string;
+}
+
+/** Finds a refused mode or denied tools (#23). */
+export function approvalProblem(template: AgentTemplate, stdout: string): ApprovalProblem | null {
+  if (template.format !== "claude") return null;
+  let mode: string | null = null;
+  let denied: string[] = [];
+  for (const e of jsonLines(stdout)) {
+    if (e["type"] === "system" && e["subtype"] === "init" && typeof e["permissionMode"] === "string") {
+      mode = e["permissionMode"];
+    } else if (e["type"] === "result" && Array.isArray(e["permission_denials"])) {
+      denied = e["permission_denials"].map((d) => {
+        const name = obj(d)?.["tool_name"];
+        return typeof name === "string" ? name : "?";
+      });
+    }
+  }
+  const want = template.permissionMode;
+  if (want !== undefined && mode !== null && mode !== want) {
+    return {
+      refused: true,
+      message: `${template.command} ignored ${want} and ran in mode '${mode}'`,
+    };
+  }
+  if (denied.length > 0) {
+    const tools = [...new Set(denied)].join(", ");
+    return { refused: false, message: `${template.command} denied ${denied.length} tool calls: ${tools}` };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // driving one turn
 // ---------------------------------------------------------------------------
+
+/** The checkout's `bin/`, which holds `avo`. */
+export const CHECKOUT_BIN = join(dirname(dirname(fileURLToPath(import.meta.url))), "bin");
+
+/** Skills call `avo`; put it first (#41). */
+export function withAvoBin(path: string | undefined): string {
+  const dirs = (path ?? "").split(delimiter).filter((d) => d !== "" && d !== CHECKOUT_BIN);
+  return [CHECKOUT_BIN, ...dirs].join(delimiter);
+}
 
 /** 50KB / 2000 lines, whichever comes first. The uncapped text is always on disk (`log_path`). */
 const SUMMARY_CAP_CHARS = 50_000;
@@ -377,6 +428,8 @@ export interface AgentTurn {
   truncated: boolean;
   /** The command could not be started at all — the one failure worth stopping a whole loop for. */
   spawn_failed: boolean;
+  /** The agent refused its approval mode. */
+  approval_refused: boolean;
   error: string | null;
 }
 
@@ -397,7 +450,7 @@ export async function driveAgent(
   const run = await runner(template.command, template.args(inv), {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutS * 1000,
-    env: opts.env,
+    env: { ...opts.env, PATH: withAvoBin(opts.env["PATH"] ?? process.env["PATH"]) },
   });
   const wallS = Math.round((now().getTime() - started) / 100) / 10;
 
@@ -420,6 +473,9 @@ export async function driveAgent(
   } else if (run.code !== 0) {
     error = `the agent exited ${run.code}; its output is in ${opts.logPath}`;
   }
+  // Catches an exit 0 that changed nothing.
+  const approval = run.spawnError === null ? approvalProblem(template, run.stdout) : null;
+  if (error === null && approval !== null) error = approval.message;
 
   return {
     ok: error === null,
@@ -431,6 +487,7 @@ export async function driveAgent(
     timed_out: run.timedOut,
     truncated: capped.truncated,
     spawn_failed: run.spawnError !== null,
+    approval_refused: approval?.refused === true,
     error,
   };
 }
