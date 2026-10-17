@@ -8,7 +8,8 @@
  * carries the same class of flag.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Runner } from "./score.ts";
 
 export interface AgentInvocation {
@@ -329,6 +330,15 @@ export function parseAgentOutput(format: OutputFormat, stdout: string): AgentOut
 // driving one turn
 // ---------------------------------------------------------------------------
 
+/** The checkout's `bin/`, which holds `avo`. */
+export const CHECKOUT_BIN = join(dirname(dirname(fileURLToPath(import.meta.url))), "bin");
+
+/** Skills call `avo`; put it first (#41). */
+export function withAvoBin(path: string | undefined): string {
+  const dirs = (path ?? "").split(delimiter).filter((d) => d !== "" && d !== CHECKOUT_BIN);
+  return [CHECKOUT_BIN, ...dirs].join(delimiter);
+}
+
 /** 50KB / 2000 lines, whichever comes first. The uncapped text is always on disk (`log_path`). */
 const SUMMARY_CAP_CHARS = 50_000;
 const SUMMARY_CAP_LINES = 2_000;
@@ -397,7 +407,7 @@ export async function driveAgent(
   const run = await runner(template.command, template.args(inv), {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutS * 1000,
-    env: opts.env,
+    env: { ...opts.env, PATH: withAvoBin(opts.env["PATH"] ?? process.env["PATH"]) },
   });
   const wallS = Math.round((now().getTime() - started) / 100) / 10;
 

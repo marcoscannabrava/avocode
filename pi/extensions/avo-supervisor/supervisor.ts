@@ -149,7 +149,7 @@ export function statusLine(s: Supervision): string {
   const b = s.state.best;
   const parts: string[] = [b === null ? "no version yet" : `v${b.version}`];
   if (b !== null && b.primary !== null) parts.push(`${b.primary}${b.unit === "" ? "" : ` ${b.unit}`}`);
-  parts.push(`${s.state.since_best} since best`);
+  parts.push(`${s.state.variations_since_best} since best`);
   if (s.triggered) parts.push(`! ${s.signals.map((x) => x.kind).join("+")}`);
   return parts.join(" · ");
 }

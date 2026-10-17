@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
-import { loadConfig, type AvoConfig } from "./config.ts";
+import { LINEAGE_DIR, loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
-import { MEMORY_PATH, remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
+import { HARNESS_PATHS, TRAJECTORY_IGNORE, TRAJECTORY_PATHS, withoutTrajectory } from "./harness.ts";
+import { reindex, resolveKnowledge } from "./knowledge.ts";
+import { remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
 import {
   parsePins,
   runScore,
@@ -16,15 +18,10 @@ import {
   type ScoreOptions,
 } from "./score.ts";
 
-/** Rendered, human- and qmd-readable record of each committed version. */
-export const LINEAGE_DIR = "lineage";
-/**
- * Trajectory, not population. Written *by* the harness during a variation step, so they must never
- * enter the lineage: committing them puts the log of how a version was reached inside it, and leaves
- * the tree permanently dirty — which defeats the no-op check below.
- */
-export const TRAJECTORY_PATHS: readonly string[] = [".avo/attempts.jsonl", ".avo/worktrees", ".avo/runs"];
-const TRAJECTORY_IGNORE = ".avo/.gitignore";
+// Moved to harness.ts; re-exported for callers.
+export { HARNESS_PATHS, TRAJECTORY_PATHS, withoutTrajectory };
+// Lives in config.ts; knowledge.ts imports it.
+export { LINEAGE_DIR };
 /**
  * `.avo/.gitignore`'s contents: one entry per trajectory path, relative to `.avo/`, directories with
  * a trailing slash. A test asserts every TRAJECTORY_PATH has one, because drift is silent — the path
@@ -38,16 +35,6 @@ const IGNORE_ENTRIES: readonly string[] = ["attempts.jsonl", "worktrees/", "runs
  */
 const IGNORE_MARKER = "# written by avo";
 const IGNORE_HEADER = `${IGNORE_MARKER}: trajectory, not lineage`;
-/**
- * Everything avo writes *by itself*, none of which may read as a candidate change: the trajectory
- * log, the harness gitignore, and the memory log `avo commit` appends *after* committing. Without
- * this, v1's memory makes the next run see a change the agent never made — scoring an unchanged
- * tree, refusing it, and remembering that refusal, which dirties the tree again.
- *
- * Unlike TRAJECTORY_PATHS these stay staged: they belong in the repo, they are just not evidence of
- * a variation.
- */
-export const HARNESS_PATHS: readonly string[] = [...TRAJECTORY_PATHS, TRAJECTORY_IGNORE, MEMORY_PATH];
 /** `git notes --ref=avo` carries the full attempt; trailers carry only what the comparator needs. */
 export const NOTES_REF = "avo";
 export const VERSION_TRAILER = "Avo-Version";
@@ -128,19 +115,6 @@ export async function git(runner: Runner, cwd: string, args: readonly string[]):
   return await runner("git", args, { cwd, timeoutMs: 60_000 });
 }
 
-/** Drops what avo wrote itself, so a repo the agent did not touch still reads as clean. */
-export function withoutTrajectory(porcelain: string): string[] {
-  return porcelain
-    .split("\n")
-    .filter((l) => l.trim() !== "")
-    .filter((l) => {
-      // porcelain v1: XY <path>, where a rename is "XY old -> new".
-      const path = l.slice(3).split(" -> ").pop() ?? "";
-      const clean = path.replace(/^"|"$/g, "");
-      return !HARNESS_PATHS.some((t) => clean === t || clean.startsWith(`${t}/`));
-    });
-}
-
 /**
  * Idempotent and *additive*: a file we wrote gains any missing entry, so a repo predating
  * `.avo/runs/` still stops tracking it. Returning early on an existing file — the original bug —
@@ -186,7 +160,9 @@ export async function isGitRepo(runner: Runner, cwd: string): Promise<boolean> {
  * one span of the loop — how `avo run` learns the agent committed for itself (#42).
  */
 export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Promise<Lineage> {
-  const log = await git(runner, cwd, ["log", `--format=%H${US}%aI${US}%B${RS}`, rev]);
+  // git filters; the parse below still validates.
+  const grep = `--grep=^[[:space:]]*${VERSION_TRAILER}:`;
+  const log = await git(runner, cwd, ["log", "--extended-regexp", grep, `--format=%H${US}%aI${US}%B${RS}`, rev]);
   if (log.code !== 0 || log.spawnError !== null) return { versions: [], warnings: [] };
 
   const warnings: string[] = [];
@@ -638,6 +614,18 @@ export async function recordDecisionMemory(
   return [...backend.warnings, ...w.warnings, ...(w.error === null ? [] : [w.error])];
 }
 
+/** Cold qmd embed must not block commits. */
+export const COMMIT_REINDEX_TIMEOUT_MS = 60_000;
+
+/** Puts a new lineage file into qmd. */
+export async function indexNewVersion(opts: CommitOptions, d: CommitDecision, runner: Runner): Promise<string[]> {
+  if (!opts.record || opts.dryRun || d.action !== "committed") return [];
+  // Without qmd, the local scan reads live.
+  if ((await resolveKnowledge(runner, opts.cwd)).kind !== "qmd") return [];
+  const { warnings } = await reindex(runner, opts.cwd, "lineage", COMMIT_REINDEX_TIMEOUT_MS);
+  return warnings.length === 0 ? [] : [...warnings, "run 'avo know reindex' to finish the index"];
+}
+
 /** Exit codes mirror `avo score`: 0 committed or no-op, 1 refused, 2 harness error. */
 export async function commitCommand(
   argv: readonly string[],
@@ -652,7 +640,10 @@ export async function commitCommand(
   }
   const decision = await decideCommit(parsed, runner, now);
   decision.warnings.push(...(await recordDecisionMemory(parsed, decision, runner, now)));
-  io.out(parsed.json ? `${JSON.stringify(decision)}\n` : renderDecision(decision));
+  decision.warnings.push(...(await indexNewVersion(parsed, decision, runner)));
+  // `ok`: the command ran, like score.
+  const ok = decision.errors.length === 0;
+  io.out(parsed.json ? `${JSON.stringify({ ok, ...decision })}\n` : renderDecision(decision));
   if (decision.errors.length > 0) return 2;
   return decision.action === "refused" ? 1 : 0;
 }
