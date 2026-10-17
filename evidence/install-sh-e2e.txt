@@ -1,9 +1,9 @@
-# install.sh e2e — 2026-08-26T07:35:15Z
-# node v22.14.0, bin-dir /tmp/tmp.4oyXQPUFBb/bin
+# install.sh e2e — 2026-10-17T00:23:13Z
+# node v22.14.0, bin-dir /tmp/tmp.c0IvL6cVRO/bin
 
 $ ./install.sh --bin-dir <sandbox> --skip-doctor -> exit 0
     
-    avocode installer (/home/marcos/code/avocode)
+    avocode installer (/home/marcos/code/avocode/.claude/worktrees/agent-a5c5ae598806eab43)
     
       found        node v22.14.0
       found        npm 10.9.2
@@ -14,14 +14,14 @@ $ ./install.sh --bin-dir <sandbox> --skip-doctor -> exit 0
       found        tsx tsx v4.23.12
     
     avo on PATH
-      created      /tmp/tmp.4oyXQPUFBb/bin/avo -> /home/marcos/code/avocode/bin/avo
+      created      /tmp/tmp.c0IvL6cVRO/bin/avo -> /home/marcos/code/avocode/.claude/worktrees/agent-a5c5ae598806eab43/bin/avo
       works        avo 0.1.0
     
-    Installed, but /tmp/tmp.4oyXQPUFBb/bin is not on your PATH.
+    Installed, but /tmp/tmp.c0IvL6cVRO/bin is not on your PATH.
     
       Add this to ~/.zshrc, then open a new shell:
     
-        export PATH="/tmp/tmp.4oyXQPUFBb/bin:$PATH"
+        export PATH="/tmp/tmp.c0IvL6cVRO/bin:$PATH"
     
     Next:  avo init      in the repo you want to optimize
            avo install   wire your coding agent to avo's skills
