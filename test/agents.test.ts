@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
+  CHECKOUT_BIN,
   BUILTIN_AGENT_NAMES,
   CLAUDE,
   CODEX,
   PI,
+  approvalProblem,
   customTemplate,
+  driveAgent,
   parseAgentOutput,
   resolveTemplate,
+  withAvoBin,
+  type AgentTemplate,
   type CustomAgent,
 } from "../src/agents.ts";
+import { spawnRunner, type Runner } from "../src/score.ts";
 
 // The three flag assertions below are the whole reason this file exists. Each names a flag whose
 // absence fails *silently* — the agent starts, does nothing useful, exits 0 — so a test that only
@@ -280,4 +289,155 @@ test("usage carrying only cached input is a real reading, not the absence of one
 test("usage with none of the four field shapes present is null rather than zeros", () => {
   const out = `{"type":"result","result":"x","usage":{"service_tier":"standard"}}`;
   assert.equal(parseAgentOutput("claude", out).tokens, null);
+});
+
+// ------------------------------------------------------------- the turn log (#22)
+
+test("a chatty agent's log on disk is complete, past the 200KB memory cap", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-log-"));
+  try {
+    const script = join(dir, "agent.sh");
+    const pad = "x".repeat(80);
+    writeFileSync(
+      script,
+      `#!/bin/sh\ni=0\nwhile [ $i -lt 6000 ]; do printf '{"type":"assistant","n":%d,"pad":"${pad}"}\\n' "$i"; i=$((i+1)); done\nprintf '{"type":"result","result":"done","usage":{"input_tokens":24,"output_tokens":5}}\\n'\necho warn >&2\n`,
+      { mode: 0o755 },
+    );
+    const template: AgentTemplate = { name: "chatty", command: script, args: () => [], format: CLAUDE.format, approval: "" };
+    const logFile = join(dir, "logs", "1.log");
+    const turn = await driveAgent(spawnRunner, template, { prompt: "p", model: null }, { cwd: dir, logPath: "logs/1.log", logFile, timeoutS: 0, env: {} }, () => new Date());
+    assert.equal(turn.ok, true);
+    const log = readFileSync(logFile, "utf8");
+    assert.ok(log.length > 600_000, `log is ${log.length} bytes; it must hold every line`);
+    assert.doesNotMatch(log, /avo elided/, "the log is not the capped copy");
+    assert.match(log, /^\{"type":"assistant","n":0,/);
+    assert.match(log, /"n":3000,/, "the middle survived");
+    assert.match(log, /"type":"result".*\n\n--- stderr ---\nwarn\n$/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a runner that ignores the sink still leaves a fresh log", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-log-"));
+  try {
+    const logFile = join(dir, "logs", "1.log");
+    mkdirSync(join(dir, "logs"));
+    writeFileSync(logFile, "stale output from an earlier run\n");
+    const runner: Runner = async () => ({ code: 0, stdout: "fresh\n", stderr: "", timedOut: false, spawnError: null });
+    const template: AgentTemplate = { name: "stub", command: "stub", args: () => [], format: CLAUDE.format, approval: "" };
+    await driveAgent(runner, template, { prompt: "p", model: null }, { cwd: dir, logPath: "logs/1.log", logFile, timeoutS: 0, env: {} }, () => new Date());
+    assert.equal(readFileSync(logFile, "utf8"), "fresh\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ------------------------------------------------------------ approval (#23)
+
+// Shapes read off claude 2.1.289 under a managed disableBypassPermissionsMode.
+const initIn = (mode: string): string =>
+  JSON.stringify({ type: "system", subtype: "init", session_id: "s", permissionMode: mode });
+const resultWith = (denials: string[]): string =>
+  JSON.stringify({
+    type: "result",
+    subtype: "success",
+    result: "I need permission to edit notes.txt.",
+    permission_denials: denials.map((tool_name) => ({ tool_name, tool_use_id: "t", tool_input: {} })),
+  });
+
+test("claude in a mode other than bypassPermissions is a refused approval", () => {
+  const out = [initIn("auto"), resultWith([])].join("\n");
+  assert.deepEqual(approvalProblem(CLAUDE, out), {
+    refused: true,
+    message: "claude ignored bypassPermissions and ran in mode 'auto'",
+  });
+});
+
+test("denied tool calls are named, once each", () => {
+  const out = [initIn("bypassPermissions"), resultWith(["Bash", "Edit", "Bash"])].join("\n");
+  assert.deepEqual(approvalProblem(CLAUDE, out), {
+    refused: false,
+    message: "claude denied 3 tool calls: Bash, Edit",
+  });
+});
+
+test("a clean claude turn, or one with no init event, has no approval problem", () => {
+  assert.equal(approvalProblem(CLAUDE, [initIn("bypassPermissions"), resultWith([])].join("\n")), null);
+  assert.equal(approvalProblem(CLAUDE, resultWith([])), null);
+});
+
+test("a custom claude-format agent is checked for denials, not for a mode", () => {
+  const t = customTemplate({ ...CUSTOM, format: "claude" });
+  assert.equal(approvalProblem(t, initIn("acceptEdits")), null);
+  assert.equal(approvalProblem(t, resultWith(["Write"]))?.refused, false);
+});
+
+test("other formats never report an approval problem", () => {
+  assert.equal(approvalProblem(PI, [initIn("auto"), resultWith(["Bash"])].join("\n")), null);
+  assert.equal(approvalProblem(CODEX, resultWith(["Bash"])), null);
+});
+
+test("driveAgent turns a refused mode with exit 0 into a failed turn", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-approval-"));
+  const stdout = [initIn("auto"), resultWith(["Bash"])].join("\n");
+  const turn = await driveAgent(
+    async () => ({ code: 0, stdout, stderr: "", timedOut: false, spawnError: null }),
+    CLAUDE,
+    { prompt: "p", model: "haiku" },
+    { cwd: dir, logPath: "1.log", logFile: join(dir, "1.log"), timeoutS: 5, env: {} },
+    () => new Date(0),
+  );
+  assert.equal(turn.ok, false);
+  assert.equal(turn.approval_refused, true);
+  assert.match(turn.error ?? "", /ignored bypassPermissions/);
+});
+
+test("driveAgent keeps the exit error first when the agent also crashed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-approval-"));
+  const turn = await driveAgent(
+    async () => ({ code: 2, stdout: initIn("auto"), stderr: "", timedOut: false, spawnError: null }),
+    CLAUDE,
+    { prompt: "p", model: null },
+    { cwd: dir, logPath: "1.log", logFile: join(dir, "1.log"), timeoutS: 5, env: {} },
+    () => new Date(0),
+  );
+  assert.match(turn.error ?? "", /exited 2/);
+  assert.equal(turn.approval_refused, true, "the loop still stops on it");
+});
+
+// ------------------------------------------------------------- avo on the child PATH (#41)
+
+test("withAvoBin puts avo's bin first, once", () => {
+  assert.equal(withAvoBin("/usr/bin:/bin"), `${CHECKOUT_BIN}:/usr/bin:/bin`);
+  assert.equal(withAvoBin(`/usr/bin:${CHECKOUT_BIN}`), `${CHECKOUT_BIN}:/usr/bin`);
+  assert.equal(withAvoBin(undefined), CHECKOUT_BIN);
+  assert.equal(withAvoBin(""), CHECKOUT_BIN);
+});
+
+function turnOpts(dir: string, env: Record<string, string>) {
+  return { cwd: dir, logPath: "turn.log", logFile: join(dir, "turn.log"), timeoutS: 30, env };
+}
+
+test("driveAgent hands the child a PATH with avo on it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-path-"));
+  let seen: Record<string, string> | undefined;
+  const runner: Runner = async (_cmd, _args, opts) => {
+    seen = opts.env;
+    return { code: 0, stdout: "done", stderr: "", timedOut: false, spawnError: null };
+  };
+  const tpl = customTemplate({ name: "stub", command: "stub", args: ["{prompt}"] });
+  await driveAgent(runner, tpl, { prompt: "p", model: null }, turnOpts(dir, { AVO_FAN_PROBE: "1" }), () => new Date());
+  assert.equal(seen?.["PATH"]?.split(":")[0], CHECKOUT_BIN);
+  assert.equal(seen?.["AVO_FAN_PROBE"], "1", "the rest of the env survives");
+});
+
+test("a child with a stripped PATH still resolves avo", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-path-"));
+  const stub = join(dir, "stub.sh");
+  writeFileSync(stub, "#!/bin/sh\ncommand -v avo || echo missing\n", { mode: 0o755 });
+  const tpl = customTemplate({ name: "stub", command: stub, args: ["{prompt}"] });
+  const env = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` };
+  const turn = await driveAgent(spawnRunner, tpl, { prompt: "p", model: null }, turnOpts(dir, env), () => new Date());
+  assert.equal(turn.summary, join(CHECKOUT_BIN, "avo"));
 });

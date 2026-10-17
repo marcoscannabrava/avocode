@@ -50,9 +50,37 @@ interactively and answer the prompt, or set `defaultProjectTrust: "always"` in
 `~/.pi/agent/settings.json` — otherwise an installed harness silently does nothing in exactly the
 mode `avo fan` will drive it in. `avo install` says so every time it wires pi.
 
-`avo install` never deletes anything. A real directory in the way is reported and left alone: an
-existing `.claude/skills` full of your own skills gets avo's linked *inside* it instead. A symlink or
-file in the way needs `--force`.
+`avo install` never deletes a real file or directory. A real directory in the way is reported and
+left alone: an existing `.claude/skills` full of your own skills gets avo's linked *inside* it
+instead. A symlink or file in the way needs `--force`. One removal is automatic: when a skill link
+points into avocode's skills and its target is gone (a renamed or removed skill), `avo install`
+removes that dangling link.
+
+`avo install --uninstall` removes avo's wiring from a repo:
+
+- each link that points into avocode's checkout (skills and pi extensions),
+- the `.claude/skills` link, but only when `.agents/skills` is gone after that,
+- the block between the `AGENTS.md` markers (the file is deleted if nothing else is in it),
+- `.pi/settings.json`, but only when it holds avo's two keys with avo's values and nothing else.
+- avo's block in `.git/info/exclude`. An entry stays only while its link is still there.
+
+It keeps your own skills and your own text in `AGENTS.md`. If `.pi/settings.json` has other keys,
+it keeps the file as it is. avo cannot tell if you set `defaultTools` or `enableSkillCommands`, so
+the step names them and you can remove them yourself. In a repo that holds a real copy of avo's
+skills, such as avocode's own checkout, it removes nothing. It does not take `--agent` or `--force`.
+
+**The links stay out of the lineage.** When avocode is outside the target repo, a link to it is
+absolute. It names a path on this machine, so it must not go into a version. `avo install` writes each
+absolute link into a managed block in `.git/info/exclude`. Thus the `git add -A` in `avo commit` does
+not stage it. The file is local to the clone, so the ignore rule does not go into a version either.
+`AGENTS.md`, `.pi/settings.json` and the relative `.claude/skills` link are portable, and git still
+tracks them. The results are:
+
+- A clone gets no link to your machine. Run `avo install` again in each clone.
+- `avo fan` copies the excluded links into each probe worktree. All worktrees share
+  `.git/info/exclude`, so the links are not in the probe's diff either.
+- A re-run rewrites the block with the same text, so the file does not change.
+- If a link is already in the lineage, `avo install` tells you to remove it with `git rm --cached`.
 
 ## The native `pi` extensions — the same commands, one process closer
 

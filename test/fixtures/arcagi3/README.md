@@ -18,6 +18,15 @@ The refused rung is the more useful of the two: a real, plausible, measured regr
 can prove `avo commit`'s vector rule bites on this target rather than only asserting that a good change
 lands.
 
+## The escape
+
+`policy-escape.py` is an adversarial policy. It plays the baseline random walk, draw for draw. It also
+tries to reach the engine from `act`: it finds the live game with `gc.get_objects()` and calls its
+`next_level()`, and it writes the harness's `best` local through `sys._getframe()`. When `act` ran in
+the engine's process, this scored 5.0 "of 1.0" (AVO-21). Now the policy runs in a child process, so it
+finds nothing and scores the baseline exactly. `test/e2e-arcagi3.sh` checks that it never scores above
+honest play.
+
 ## The holdout
 
 `holdout.lock` pins eight games the target never sees, from the same upstream commit as

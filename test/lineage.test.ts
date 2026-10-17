@@ -10,6 +10,7 @@ import { bufferIo } from "../src/io.ts";
 import {
   bestCommand,
   bestVersion,
+  COMMIT_REINDEX_TIMEOUT_MS,
   commitCommand,
   ensureTrajectoryIgnored,
   extractWhy,
@@ -26,6 +27,7 @@ import {
   withoutTrajectory,
   type Version,
 } from "../src/lineage.ts";
+import { QMD, QMD_CONFIG } from "../src/knowledge.ts";
 import { spawnRunner, type Attempt, type Runner } from "../src/score.ts";
 
 // ---------------------------------------------------------------- pure helpers
@@ -192,6 +194,7 @@ test("the full commit rule on a real repo: v1, refuse a regression, refuse a bre
   const v1 = await commit(dir, ["--why", "baseline: adds the scorer"]);
   assert.equal(v1.code, 0);
   assert.equal(v1.json["action"], "committed");
+  assert.equal(v1.json["ok"], true);
   assert.equal(v1.json["version"], 1);
   assert.equal(v1.json["lineage_file"], "lineage/v001.md");
 
@@ -206,6 +209,7 @@ test("the full commit rule on a real repo: v1, refuse a regression, refuse a bre
   const again = await commit(dir);
   assert.equal(again.code, 0);
   assert.equal(again.json["action"], "noop");
+  assert.equal(again.json["ok"], true);
   assert.equal(git("rev-list", "--count", "HEAD").trim(), "2");
 
   // A regression is refused — and leaves no commit behind.
@@ -213,6 +217,8 @@ test("the full commit rule on a real repo: v1, refuse a regression, refuse a bre
   const worse = await commit(dir);
   assert.equal(worse.code, 1);
   assert.equal(worse.json["action"], "refused");
+  // A refusal is the rule working.
+  assert.equal(worse.json["ok"], true);
   assert.match(String(worse.json["reason"]), /regressed/);
   assert.equal(git("rev-list", "--count", "HEAD").trim(), "2");
 
@@ -253,6 +259,71 @@ test("a refused commit writes nothing at all — no lineage file, no staged inde
   assert.equal(refused.json["action"], "refused");
   assert.equal(existsSync(join(dir, "lineage/v002.md")), false);
   assert.equal(git("diff", "--cached", "--name-only").trim(), "");
+});
+
+test("a committed version is reindexed into qmd, and nothing else is (#14)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, ".qmd"));
+  writeFileSync(join(dir, QMD_CONFIG), "collections:\n  lineage:\n    path: x\n");
+  writeFileSync(join(dir, ".git/info/exclude"), ".qmd/\n");
+  const calls: string[] = [];
+  let installed = true;
+  const runner: Runner = (cmd, args, opts) => {
+    if (cmd !== QMD) return spawnRunner(cmd, args, opts);
+    calls.push(args.join(" "));
+    const base = { stdout: "qmd 2.8.3\n", stderr: "", timedOut: false };
+    return Promise.resolve(installed ? { ...base, code: 0, spawnError: null } : { ...base, code: -1, spawnError: "ENOENT" });
+  };
+  const run = async (extra: string[]) => {
+    const io = bufferIo();
+    const code = await commitCommand(["--cwd", dir, "--json", ...extra], io, runner, clock);
+    return { code, json: JSON.parse(io.stdout) as { action: string; warnings: string[] } };
+  };
+  const reindexed = () => calls.filter((c) => c.startsWith("update") || c.startsWith("embed"));
+
+  assert.equal((await run(["--dry-run"])).json.action, "would-commit");
+  assert.deepEqual(reindexed(), [], "a dry run has no version to index");
+
+  assert.equal((await run([])).json.action, "committed");
+  assert.deepEqual(reindexed(), ["update -c lineage", "embed -c lineage"]);
+
+  writeFileSync(join(dir, "impl.sh"), "echo 42\n# padding padding padding padding padding\n");
+  assert.equal((await run([])).json.action, "refused");
+  assert.equal(reindexed().length, 2, "a refusal writes no lineage file");
+
+  writeFileSync(join(dir, "impl.sh"), "echo 42\n# padding\n");
+  assert.equal((await run(["--no-record"])).json.action, "committed");
+  assert.equal(reindexed().length, 2, "--no-record skips it, as it skips memory");
+
+  installed = false;
+  writeFileSync(join(dir, "impl.sh"), "echo 42\n");
+  const v3 = await run([]);
+  assert.equal(v3.json.action, "committed");
+  assert.equal(reindexed().length, 2, "no qmd, no reindex");
+  assert.ok(!v3.json.warnings.some((w) => /qmd/.test(w)), "and no qmd warning on a good commit");
+});
+
+test("a slow qmd embed is bounded and never fails the commit (#14)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, ".qmd"));
+  writeFileSync(join(dir, QMD_CONFIG), "collections:\n  lineage:\n    path: x\n");
+  writeFileSync(join(dir, ".git/info/exclude"), ".qmd/\n");
+  const limits: number[] = [];
+  const runner: Runner = (cmd, args, opts) => {
+    if (cmd !== QMD) return spawnRunner(cmd, args, opts);
+    if (args[0] === "update" || args[0] === "embed") limits.push(opts.timeoutMs ?? 0);
+    const timedOut = args[0] === "embed";
+    return Promise.resolve({ code: timedOut ? -1 : 0, stdout: "qmd 2.8.3\n", stderr: "", timedOut, spawnError: null });
+  };
+  const io = bufferIo();
+  assert.equal(await commitCommand(["--cwd", dir, "--json"], io, runner, clock), 0);
+  const out = JSON.parse(io.stdout) as { action: string; warnings: string[] };
+  assert.equal(out.action, "committed");
+  assert.deepEqual(limits, [COMMIT_REINDEX_TIMEOUT_MS, COMMIT_REINDEX_TIMEOUT_MS]);
+  assert.ok(out.warnings.some((w) => /qmd embed failed \(timed out\)/.test(w)));
+  assert.ok(out.warnings.some((w) => /avo know reindex/.test(w)));
 });
 
 test("--dry-run reports the decision and leaves the repository untouched", async (t) => {
@@ -320,6 +391,7 @@ test("avo commit refuses to run outside a git repository", async (t) => {
   const r = await commit(dir);
   assert.equal(r.code, 2);
   assert.match(String(r.json["reason"]), /not a git repository/);
+  assert.equal(r.json["ok"], false);
 });
 
 test("avo commit reports a missing scorer as a harness error, not a refusal", async (t) => {
@@ -330,6 +402,22 @@ test("avo commit reports a missing scorer as a harness error, not a refusal", as
   const r = await commit(dir);
   assert.equal(r.code, 2);
   assert.match(String(r.json["reason"]), /no executable \.avo\/score/);
+  assert.equal(r.json["ok"], false);
+});
+
+test("avo commit ok stays true when the scorer says ok:false (#39)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(
+    join(dir, ".avo/score"),
+    `#!/usr/bin/env bash\nprintf '{"ok":false,"correct":true,"primary":1,"unit":"s","higher_is_better":true}\\n'\n`,
+    { mode: 0o755 },
+  );
+  const r = await commit(dir);
+  assert.equal(r.code, 1);
+  assert.equal(r.json["action"], "refused");
+  assert.equal(r.json["ok"], true);
+  assert.equal((r.json["attempt"] as { ok: boolean }).ok, false);
 });
 
 test("avo best names the version a candidate is ranked against, and exits 1 when there is none", async (t) => {
@@ -616,4 +704,53 @@ printf '{"ok":true,"correct":true,"primary":%s,"unit":"ops","higher_is_better":t
   const r = await commit(dir);
   assert.equal(r.code, 2, JSON.stringify(r.json));
   assert.match((r.json["errors"] as string[])[0] as string, /lost configs: b/);
+});
+
+test("readLineage lets git filter yet reads only real trailers (#8)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  const score = JSON.stringify({ primary: 1, unit: "s", higher_is_better: false, scores: {} });
+
+  git("commit", "-q", "--allow-empty", "-m", "prose\n\nthis mentions Avo-Version: 9 mid-line");
+  git("commit", "-q", "--allow-empty", "-m", `indented v1\n\n  Avo-Version: 1\n  Avo-Score: ${score}`);
+  git("commit", "-q", "--allow-empty", "-m", "lowercase\n\navo-version: 7");
+  git("commit", "-q", "--allow-empty", "-m", "prose at line start\n\nAvo-Version: is the trailer key");
+  const { versions, warnings } = await readLineage(spawnRunner, dir);
+  assert.deepEqual(
+    versions.map((v) => v.version),
+    [1],
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] as string, /unreadable Avo-Version trailer \('is the trailer key'\)/);
+});
+
+test("readLineage keeps last-wins and ranges under the grep (#8)", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  const score = (p: number) => JSON.stringify({ primary: p, unit: "s", higher_is_better: false, scores: {} });
+
+  git("commit", "-q", "--allow-empty", "-m", `v1\n\nAvo-Version: 1\nAvo-Score: ${score(3)}`);
+  const before = git("rev-parse", "HEAD").trim();
+  git("commit", "-q", "--allow-empty", "-m", "plain work");
+  // a squash puts an old body first
+  const squashed = `v2\n\nold body\nAvo-Version: 1\nAvo-Score: ${score(3)}\n\nAvo-Version: 2\nAvo-Score: ${score(2)}`;
+  git("commit", "-q", "--allow-empty", "-m", squashed);
+
+  const seen: string[][] = [];
+  const all = await readLineage(async (cmd, args, o) => (seen.push([...args]), await spawnRunner(cmd, args, o)), dir);
+  assert.ok(seen[0]?.some((a) => a.startsWith("--grep=")), "git does the filtering");
+  assert.deepEqual(
+    all.versions.map((v) => [v.version, v.score.primary]),
+    [
+      [1, 3],
+      [2, 2],
+    ],
+  );
+  const span = await readLineage(spawnRunner, dir, `${before}..HEAD`);
+  assert.deepEqual(
+    span.versions.map((v) => v.version),
+    [2],
+  );
 });

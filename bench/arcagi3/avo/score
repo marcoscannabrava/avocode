@@ -92,7 +92,8 @@ fi
 # protected file to keep in step.
 for t in test/test_*.py; do
   [[ -f "$t" ]] || continue
-  if ! suite="$("$PY" "$t" 2>&1)"; then
+  # Policy code runs here too: no secrets.
+  if ! suite="$(env -i PATH="$PATH" HOME="${HOME-}" LANG="${LANG-C}" "$PY" "$t" 2>&1)"; then
     emit true false "the policy contract suite failed ($t):
 $(printf '%s' "$suite" | tail -n 40)"
   fi

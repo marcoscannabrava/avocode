@@ -391,6 +391,23 @@ test("avo_fan drives the agent named in its arguments, on the model it was given
   assert.ok(agentCall.args.includes("haiku"), `the probe model was not passed: ${agentCall.args.join(" ")}`);
 });
 
+test("avo_fan appends one direction per probe", async (t) => {
+  const dir = fixture();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const prompts: string[] = [];
+  const runner: Runner = async (cmd, args, opts) => {
+    if (cmd === "git" || cmd.endsWith(SCORER_PATH)) return spawnRunner(cmd, args, opts);
+    prompts.push(args.join(" "));
+    return { code: 0, stdout: "did nothing\n", stderr: "", timedOut: false, spawnError: null } satisfies RunResult;
+  };
+
+  const r = await call(toolsOf(deps({ runner })).get("avo_fan")!, { prompt: "try things", directions: ["A", "B"], agent: "claude" }, dir);
+  assert.equal((r.details as { n: number }).n, 2);
+  assert.equal(prompts.length, 2);
+  assert.equal(prompts.filter((p) => p.includes("Your direction: A")).length, 1);
+  assert.equal(prompts.filter((p) => p.includes("Your direction: B")).length, 1);
+});
+
 // ------------------------------------------------------------------- branching
 
 test("every successful call returns details, because Pi rebuilds state from them on a branch", async (t) => {

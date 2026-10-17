@@ -8,10 +8,12 @@
  */
 
 import { createHash } from "node:crypto";
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { accessSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { loadConfig } from "./config.ts";
-import { ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
+import { mirrorLinks } from "./install.ts";
+import { TRAJECTORY_PATHS, ensureTrajectoryIgnored, withoutTrajectory } from "./lineage.ts";
 import type { Io } from "./io.ts";
 import { capOutput, driveAgent, resolveTemplate, type AgentTemplate, type AgentTokens, type Capped } from "./agents.ts";
 import {
@@ -69,6 +71,8 @@ export interface ProbeScore {
 export interface ProbeResult {
   /** 1-based, as `--promote <i>` takes it. */
   i: number;
+  /** The `--directions` line this probe got. */
+  direction: string | null;
   /** The agent process ran to completion and was not killed. Says nothing about the candidate. */
   ok: boolean;
   score: ProbeScore | null;
@@ -114,6 +118,8 @@ interface ManifestProbe {
   i: number;
   worktree: string;
   status: "pending" | "done";
+  /** Absent in manifests older than `--directions`. */
+  direction?: string | null;
   result: ProbeResult | null;
 }
 
@@ -123,6 +129,8 @@ export interface Manifest {
   started_at: string;
   finished_at: string | null;
   baseline: string;
+  /** HEAD at fan-out; differs from baseline under --dirty. */
+  head?: string;
   agent: string;
   model: string | null;
   timeout_s: number;
@@ -141,14 +149,20 @@ export interface FanOptions {
   mode: FanMode;
   json: boolean;
   cwd: string;
-  n: number;
+  /** `null` until given: directions may set it. */
+  n: number | null;
   prompt: string | null;
   promptFile: string | null;
+  /** One direction per probe; the file wins. */
+  directionsFile: string | null;
+  directions: string[] | null;
   agent: string | null;
   model: string | null;
   timeoutS: number;
   /** Keep every worktree, even the ones no probe changed. */
   keep: boolean;
+  /** Start probes from uncommitted root work. */
+  dirty: boolean;
   score: boolean;
   /** `--promote <i>`, `--resume <id>`, `--clean <id|all>` all land here. */
   target: string;
@@ -160,13 +174,16 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     mode: "run",
     json: false,
     cwd: process.cwd(),
-    n: DEFAULT_N,
+    n: null,
     prompt: null,
     promptFile: null,
+    directionsFile: null,
+    directions: null,
     agent: env[AGENT_ENV] ?? null,
     model: env[PROBE_MODEL_ENV] ?? null,
     timeoutS: DEFAULT_TIMEOUT_S,
     keep: false,
+    dirty: false,
     score: true,
     target: "",
     runId: null,
@@ -188,6 +205,7 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     const a = argv[i] as string;
     if (a === "--json") opts.json = true;
     else if (a === "--keep") opts.keep = true;
+    else if (a === "--dirty") opts.dirty = true;
     else if (a === "--no-score") opts.score = false;
     else if (a === "--list") {
       const e = setMode("list", a);
@@ -204,6 +222,9 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
           break;
         case "--prompt-file":
           opts.promptFile = v;
+          break;
+        case "--directions":
+          opts.directionsFile = v;
           break;
         case "--agent":
           opts.agent = v;
@@ -250,6 +271,10 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
       return { error: "avo fan: --prompt and --prompt-file are alternatives; pass one" };
     }
   }
+  // A resume reads its directions from the manifest.
+  if (opts.directionsFile !== null && opts.mode !== "run") {
+    return { error: "avo fan: --directions only applies to a new run" };
+  }
   if (opts.mode === "promote") {
     const i = Number(opts.target);
     if (!Number.isInteger(i) || i < 1) return { error: `avo fan: --promote needs a probe number (1-based), got '${opts.target}'` };
@@ -263,6 +288,29 @@ export function parseFanArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
 
 export function promptSha(prompt: string): string {
   return createHash("sha256").update(prompt).digest("hex").slice(0, 12);
+}
+
+// ---------------------------------------------------------------------------
+// directions
+// ---------------------------------------------------------------------------
+
+/**
+ * One direction per non-blank line. `#` lines are comments, and a list marker (`- `, `* `, `1. `)
+ * is dropped, so a supervisor's directive list goes in as written.
+ */
+export function parseDirections(text: string): string[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"))
+    .map((l) => l.replace(/^(?:[-*+]|\d+[.)])\s+/, "").trim())
+    .filter((l) => l !== "");
+}
+
+/** The shared prompt, then this probe's direction. */
+export function directedPrompt(prompt: string, direction: string | null): string {
+  if (direction === null) return prompt;
+  return `${prompt.trimEnd()}\n\nYour direction: ${direction}\nOther probes try other directions; stay on this one.\n`;
 }
 
 export interface GuardsOk {
@@ -316,6 +364,17 @@ export function checkGuards(env: NodeJS.ProcessEnv, sha: string): GuardsOk | Gua
     };
   }
   return { ok: true, level, maxDepth, chain, warnings };
+}
+
+/**
+ * A directed probe also chains its own full prompt, so re-fanning exactly what it was given is a
+ * cycle too. The shared prompt is already on the chain: a nested run of it, with any directions, is
+ * refused.
+ */
+function probeChain(env: Record<string, string>, prompt: string, direction: string | null): Record<string, string> {
+  if (direction === null) return {};
+  const chain = env[CHAIN_ENV] ?? "";
+  return { [CHAIN_ENV]: [chain, promptSha(prompt)].filter((s) => s !== "").join(",") };
 }
 
 /** The environment a probe inherits: one level deeper, with this prompt added to the chain. */
@@ -391,6 +450,11 @@ export function readManifest(cwd: string, runId: string): Manifest | { error: st
   try {
     const m = JSON.parse(raw) as Manifest;
     if (m.version !== 1 || !Array.isArray(m.probes)) return { error: `${relative(cwd, path)} is not a v1 run manifest` };
+    // Older manifests have no directions.
+    for (const p of m.probes) {
+      p.direction ??= null;
+      if (p.result !== null) p.result.direction ??= p.direction;
+    }
     return m;
   } catch (e) {
     return { error: `${relative(cwd, path)} is corrupt (${(e as Error).message})` };
@@ -465,17 +529,19 @@ interface ProbeContext {
 async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeResult> {
   const worktree = join(ctx.cwd, probe.worktree);
   const logPath = join(WORKTREES_DIR, ctx.runId, "logs", `${probe.i}.log`);
+  const direction = probe.direction ?? null;
+  const prompt = directedPrompt(ctx.prompt, direction);
 
   const turn = await driveAgent(
     ctx.runner,
     ctx.template,
-    { prompt: ctx.prompt, model: ctx.model },
+    { prompt, model: ctx.model },
     {
       cwd: worktree,
       logPath,
       logFile: join(ctx.cwd, logPath),
       timeoutS: ctx.timeoutS,
-      env: { ...ctx.env, [PROBE_ENV]: String(probe.i) },
+      env: { ...ctx.env, ...probeChain(ctx.env, prompt, direction), [PROBE_ENV]: String(probe.i) },
     },
     ctx.now,
   );
@@ -501,6 +567,7 @@ async function runProbe(ctx: ProbeContext, probe: ManifestProbe): Promise<ProbeR
 
   return {
     i: probe.i,
+    direction,
     ok: turn.ok,
     score,
     diffstat: await diffstatOf(ctx.runner, worktree, ctx.baseline),
@@ -554,6 +621,25 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   }
   if (prompt.trim() === "") return { error: "the prompt is empty; a probe with no task is not a probe" };
 
+  let directions = opts.directions;
+  if (opts.directionsFile !== null) {
+    try {
+      directions = parseDirections(readFileSync(opts.directionsFile, "utf8"));
+    } catch (e) {
+      return { error: `cannot read --directions ${opts.directionsFile} — ${(e as Error).message}` };
+    }
+  }
+  if (directions !== null && directions.length === 0) return { error: "the directions file has no directions" };
+  if (directions !== null) {
+    // The API path skips parseDirections.
+    directions = directions.map((d) => d.trim());
+    if (directions.some((d) => d === "" || /[\r\n]/.test(d))) return { error: "each direction must be one non-empty line" };
+  }
+  if (directions !== null && opts.n !== null && opts.n !== directions.length) {
+    return { error: `--n is ${opts.n} but there are ${directions.length} directions` };
+  }
+  const n = opts.n ?? directions?.length ?? DEFAULT_N;
+
   const sha = promptSha(prompt);
   const guards = checkGuards(env, sha);
   if (!guards.ok) return { error: guards.error };
@@ -583,7 +669,7 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   if (!head.ok) {
     return { error: `${opts.cwd} has no commit to branch from (${head.err || "git rev-parse HEAD failed"})` };
   }
-  const baseline = head.out;
+  let baseline = head.out;
 
   // `.avo/worktrees/` is about to exist, so its lineage exclusion must come first.
   ensureTrajectoryIgnored(opts.cwd);
@@ -595,18 +681,28 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
   // second fan-out warns about `.avo/worktrees/`. Same self-perturbation as S3's memory log.
   const status = await git(runner, opts.cwd, ["status", "--porcelain"]);
   const dirty = status.ok ? withoutTrajectory(status.out) : [];
-  if (dirty.length > 0) {
+  if (dirty.length > 0 && opts.dirty) {
+    const snap = await snapshotTree(runner, opts.cwd, baseline);
+    if ("error" in snap) return { error: snap.error };
+    baseline = snap.sha;
+  } else if (dirty.length > 0) {
     warnings.push(
       `the working tree has ${dirty.length} uncommitted change(s); probes branch from HEAD ` +
-        `(${baseline.slice(0, 8)}) and will not see them`,
+        `(${baseline.slice(0, 8)}) and will not see them; --dirty includes them`,
     );
   }
 
   const runId = uniqueRunId(opts.cwd, now(), sha);
-  const probes: ManifestProbe[] = Array.from({ length: opts.n }, (_, k) => ({
+  if (baseline !== head.out) {
+    // A ref keeps the snapshot from gc.
+    const ref = await git(runner, opts.cwd, ["update-ref", snapshotRef(runId), baseline]);
+    if (!ref.ok) warnings.push(`could not pin the snapshot: ${ref.err}`);
+  }
+  const probes: ManifestProbe[] = Array.from({ length: n }, (_, k) => ({
     i: k + 1,
     worktree: join(WORKTREES_DIR, runId, String(k + 1)),
     status: "pending",
+    direction: directions?.[k] ?? null,
     result: null,
   }));
   const manifest: Manifest = {
@@ -615,6 +711,7 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
     started_at: now().toISOString(),
     finished_at: null,
     baseline,
+    head: head.out,
     agent: template.name,
     model: opts.model,
     timeout_s: opts.timeoutS,
@@ -626,11 +723,46 @@ export async function runFan(opts: FanOptions, deps: FanDeps): Promise<FanResult
 
   const created = await addWorktrees(runner, opts.cwd, probes, baseline);
   if (created.length > 0) return { error: created.join("; ") };
+  // Install links are local, not lineage (#32).
+  for (const p of probes) {
+    for (const f of mirrorLinks(opts.cwd, join(opts.cwd, p.worktree))) warnings.push(`probe ${p.i}: could not link ${f}`);
+  }
 
   const cap = concurrencyCap();
-  if (opts.n > cap) warnings.push(`--n ${opts.n} exceeds the concurrency cap of ${cap}; the rest queue`);
+  if (n > cap) warnings.push(`--n ${n} exceeds the concurrency cap of ${cap}; the rest queue`);
 
   return await executeProbes(opts, deps, manifest, template, warnings, cap, probeEnv(guards, sha, runId, 0));
+}
+
+/** Holds a `--dirty` snapshot until `--clean`. */
+export function snapshotRef(runId: string): string {
+  return `refs/avo/fan/${runId}`;
+}
+
+/** `--dirty`: the working tree as a commit. */
+async function snapshotTree(runner: Runner, cwd: string, head: string): Promise<{ sha: string } | { error: string }> {
+  const scratch = mkdtempSync(join(tmpdir(), "avo-fan-index-"));
+  const index = join(scratch, "index");
+  const id = { GIT_AUTHOR_NAME: "avo fan", GIT_AUTHOR_EMAIL: "avo@localhost", GIT_COMMITTER_NAME: "avo fan", GIT_COMMITTER_EMAIL: "avo@localhost" };
+  const run = async (args: string[]): Promise<Git> => {
+    const r = await runner("git", args, { cwd, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_INDEX_FILE: index, ...id } });
+    return { ok: r.code === 0 && r.spawnError === null, out: r.stdout.trim(), err: (r.stderr || r.spawnError || "").trim() };
+  };
+  try {
+    // A copied index keeps the stat cache.
+    const real = await git(runner, cwd, ["rev-parse", "--git-path", "index"]);
+    if (real.ok && existsSync(resolve(cwd, real.out))) copyFileSync(resolve(cwd, real.out), index);
+    // Whole tree, minus avo's own trajectory.
+    const add = await run(["add", "-A", "--", ":(top)"]);
+    const skip = TRAJECTORY_PATHS.map((t) => `:(top)${t}`);
+    const drop = add.ok ? await run(["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", ...skip]) : add;
+    const tree = drop.ok ? await run(["write-tree"]) : drop;
+    const commit = tree.ok ? await run(["commit-tree", "--no-gpg-sign", tree.out, "-p", head, "-m", "avo fan: uncommitted root work"]) : tree;
+    if (!commit.ok) return { error: `could not snapshot the working tree — ${commit.err || "git failed"}` };
+    return { sha: commit.out };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /** Serial on purpose: concurrent `git worktree add` calls race on the same `.git/worktrees` lock. */
@@ -843,9 +975,10 @@ export async function promote(opts: FanOptions, deps: FanDeps): Promise<PromoteR
 
   const warnings: string[] = [];
   const head = await git(runner, opts.cwd, ["rev-parse", "HEAD"]);
-  if (head.ok && head.out !== manifest.baseline) {
+  const startHead = manifest.head ?? manifest.baseline;
+  if (head.ok && head.out !== startHead) {
     warnings.push(
-      `HEAD has moved since the fan-out (${manifest.baseline.slice(0, 8)} -> ${head.out.slice(0, 8)}); ` +
+      `HEAD has moved since the fan-out (${startHead.slice(0, 8)} -> ${head.out.slice(0, 8)}); ` +
         "the patch may need the 3-way fallback",
     );
   }
@@ -933,6 +1066,9 @@ export async function cleanRuns(opts: FanOptions, deps: FanDeps): Promise<CleanR
         out.ok = false;
       }
     }
+    if (manifest.head !== undefined && manifest.head !== manifest.baseline) {
+      await git(deps.runner, opts.cwd, ["update-ref", "-d", snapshotRef(runId)]);
+    }
     try {
       rmSync(runDir(opts.cwd, runId), { recursive: true, force: true });
     } catch (e) {
@@ -968,6 +1104,7 @@ export function renderFan(f: FanResult): string {
       `  ${String(r.i).padEnd(3)} ${flag}  ${scoreCell(r).padEnd(20)} ` +
         `${d.files} file(s) +${d.insertions}/-${d.deletions}  ${r.wall_s}s${f.best === r.i ? "  <- best" : ""}`,
     );
+    if (r.direction !== null) lines.push(`      direction: ${r.direction.slice(0, 100)}`);
     if (r.summary !== null) lines.push(`      ${r.summary.split("\n")[0]?.slice(0, 100) ?? ""}`);
     if (r.error !== null) lines.push(`      error: ${r.error}`);
     lines.push(`      ${r.worktree}`);

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # PROTECTED -- this file is part of `f`. Editing it makes `bench/init.sh --verify` fail.
 #
-# The ARC-AGI-3 episode harness. It owns the environment; `src/policy.py` only ever sees frames.
+# The ARC-AGI-3 episode harness. It owns the environment; `src/policy.py` only ever sees frames,
+# from its own process (bench/child.py).
 #
 #   bench/run.py --list                 config names, one per line
 #   bench/run.py --config <game>        one JSON line for that game
@@ -24,12 +25,14 @@
 
 import argparse
 import json
-import os
 import random
 import statistics
 import sys
 import time
+import types
 from pathlib import Path
+
+from child import Cheated, PolicyFailed, PolicyProcess
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -80,51 +83,41 @@ ROLLOUTS = 24
 POLICY_SEED = 1000003
 
 
-class Cheated(BaseException):
-    """The policy reached for something a policy does not get to see.
+# ---------------------------------------------------------------------------- the child's adapter
+# bench/child.py calls these in the child.
 
-    Deliberately a BaseException and not an Exception: the first version of this was an Exception,
-    and a policy whose act() body was wrapped in `except Exception: pass` swallowed its own
-    violation and scored a clean 0.26. Anything a bare `except Exception` can catch is not a gate.
-    """
+# A policy holding these could build an engine.
+BANNED = ("arcengine", "arc_agi")
 
 
-# ---------------------------------------------------------------------------- the sandbox
-# A policy has two cheap routes to a high score that have nothing to do with playing well: read the
-# game's source (it is right there in bench/games/) or phone out. The audit hook is armed only for
-# the duration of policy.act, so the engine's own file access during make/step is untouched.
+def policy_args(spec):
+    """Policy(...) keyword arguments, from plain data."""
+    from arcengine import GameAction
 
-_armed = False
-_games_dir = None
-
-# Raising is not enough on its own -- `except BaseException` is still a thing a determined candidate
-# can write. So every violation is also recorded here, and the harness checks it after act() returns.
-# A cheat that swallows the exception still trips the flag.
-_violation = None
+    return {
+        "action_space": [GameAction[name] for name in spec["actions"]],
+        "rng": random.Random(spec["seed"]),
+    }
 
 
-def _caught(why):
-    global _violation
-    if _violation is None:
-        _violation = why
-    raise Cheated(why)
+def frame_view(obs):
+    """What act() is handed."""
+    return types.SimpleNamespace(**obs)
 
 
-def _hook(event, args):
-    if not _armed:
-        return
-    if event in ("socket.connect", "socket.getaddrinfo", "socket.bind", "urllib.Request"):
-        _caught(f"the policy attempted network access ({event})")
-    if event == "open" and _games_dir is not None:
-        try:
-            target = Path(os.fsdecode(args[0])).resolve()
-        except (TypeError, ValueError):
-            return
-        if str(target).startswith(str(_games_dir)):
-            _caught(f"the policy attempted to read a game source file ({target.name})")
-
-
-sys.addaudithook(_hook)
+def encode(choice):
+    """act()'s return value as plain data."""
+    action, data = choice, {}
+    if isinstance(choice, tuple):
+        if len(choice) != 2:
+            return {"bad": f"act() returned a {len(choice)}-tuple; expected (action, data)"}
+        action, data = choice
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return {"bad": f"act() returned action data of type {type(data).__name__}; expected a dict"}
+    name = getattr(action, "name", None)
+    return {"action": name if isinstance(name, str) else None, "repr": repr(action), "data": data}
 
 
 def _emit(payload):
@@ -137,9 +130,7 @@ def _fail(config, log, ok=True, correct=False):
 
 
 # ---------------------------------------------------------------------------- one episode
-def episode(arc, game_id, rollout, policy_cls, action_state):
-    global _armed
-
+def episode(arc, game_id, rollout, child, action_state):
     from arcengine import GameState
 
     env = arc.make(game_id, seed=rollout)
@@ -149,20 +140,13 @@ def episode(arc, game_id, rollout, policy_cls, action_state):
     # The policy is given the action space and the frames. It is NOT given the game id: ARC-AGI-3 is
     # a benchmark about games you have never seen, so a policy keyed on the id is a lookup table,
     # and withholding it is what makes the holdout mean anything.
-    policy = policy_cls(action_space=list(env.action_space), rng=random.Random(POLICY_SEED + rollout))
+    child.call("reset", {"actions": [a.name for a in env.action_space], "seed": POLICY_SEED + rollout})
 
     frame = env.reset()
     best = 0
     actions = 0
     for _ in range(BUDGET):
-        _armed = True
-        try:
-            choice = policy.act(frame)
-        finally:
-            _armed = False
-        if _violation is not None:
-            raise Cheated(f"{_violation} (and swallowed the error it raised)")
-        action, data = _unpack(choice, env.action_space)
+        action, data = _unpack(child.call("act", _observe(frame)), env.action_space)
         frame = env.step(action, data=data)
         actions += 1
         if frame is None:
@@ -177,18 +161,27 @@ def episode(arc, game_id, rollout, policy_cls, action_state):
     return best / total
 
 
-def _unpack(choice, action_space):
-    """A policy returns an action, or an (action, data) pair. Anything else is a contract failure."""
-    data = {}
-    action = choice
-    if isinstance(choice, tuple):
-        if len(choice) != 2:
-            raise Cheated(f"act() returned a {len(choice)}-tuple; expected (action, data)")
-        action, data = choice
-    if action not in action_space:
-        raise Cheated(f"act() returned {action!r}, which is not in this game's action space")
-    if data is None:
-        data = {}
+def _observe(frame):
+    """The documented fields. Not game_id."""
+    return {
+        "frame": frame.frame,
+        "state": frame.state,
+        "levels_completed": frame.levels_completed,
+        "win_levels": frame.win_levels,
+        "available_actions": list(frame.available_actions),
+    }
+
+
+def _unpack(reply, action_space):
+    """Check the child's reply; trust none of it."""
+    if not isinstance(reply, dict):
+        raise Cheated("the policy process sent a malformed reply")
+    if "bad" in reply:
+        raise Cheated(str(reply["bad"]))
+    action = next((a for a in action_space if a.name == reply.get("action")), None)
+    if action is None:
+        raise Cheated(f"act() returned {reply.get('repr')}, which is not in this game's action space")
+    data = reply.get("data")
     if not isinstance(data, dict):
         raise Cheated(f"act() returned action data of type {type(data).__name__}; expected a dict")
     if action.is_complex() and not {"x", "y"} <= set(data):
@@ -218,28 +211,24 @@ def main():
     if args.config not in known:
         _fail(args.config, f"no such config '{args.config}' (have: {', '.join(known)})", ok=False)
 
-    global _games_dir
     games_dir = Path(args.games_dir).resolve() if args.games_dir else (HERE / "games")
-    _games_dir = games_dir
     if not games_dir.is_dir():
         _fail(args.config, f"no game corpus at {games_dir} -- run bench/setup.sh", ok=False)
+
+    # Started first, so both imports overlap.
+    child = PolicyProcess("run", guard=[games_dir])
 
     try:
         from arc_agi import Arcade, OperationMode
     except ImportError as exc:
         _fail(args.config, f"the arc-agi toolkit is not importable ({exc}) -- run bench/setup.sh", ok=False)
 
-    sys.path.insert(0, str(ROOT))
     try:
-        from src.policy import Policy
-    except Exception as exc:  # a broken candidate is a candidate failure, not a harness failure
-        _fail(args.config, f"src/policy.py does not import: {type(exc).__name__}: {exc}")
-
-    # A policy that imported the engine could read game state straight out of it.
-    for banned in ("arcengine", "arc_agi"):
-        mod = sys.modules.get("src.policy")
-        if mod is not None and getattr(mod, banned.split(".")[0], None) is not None:
-            _fail(args.config, f"src/policy.py imported {banned}; a policy sees frames, nothing else")
+        child.ready()
+    except Cheated as exc:
+        _fail(args.config, f"the candidate broke the policy contract: {exc}")
+    except PolicyFailed as exc:  # a broken candidate is a candidate failure, not a harness failure
+        _fail(args.config, str(exc))
 
     import logging
 
@@ -255,12 +244,15 @@ def main():
     per_rollout = []
     try:
         for rollout in range(ROLLOUTS):
-            per_rollout.append(episode(arc, args.config, rollout, Policy, action_state))
+            per_rollout.append(episode(arc, args.config, rollout, child, action_state))
     except Cheated as exc:
         _fail(args.config, f"the candidate broke the policy contract: {exc}")
+    except PolicyFailed as exc:
+        _fail(args.config, f"the candidate raised during play: {exc}")
     except Exception as exc:
         _fail(args.config, f"the candidate raised during play: {type(exc).__name__}: {exc}")
 
+    child.close()
     score = statistics.mean(per_rollout)
     _emit(
         {

@@ -64,7 +64,8 @@ once.
 | File | Owns |
 | --- | --- |
 | `cli.ts` | subcommand dispatch, flag parsing, exit codes |
-| `score.ts` | **`f`** — run `.avo/score`, validate the JSON, normalize it into an attempt |
+| `score.ts` | **`f`** — run `.avo/score`, validate the JSON, normalize it into an attempt with its tree hash and changed paths |
+| `harness.ts` | the paths avo writes for itself; imports nothing, so `score.ts`, `mem.ts` and `lineage.ts` all use it |
 | `config.ts` | `.avo/config.json` — the reduction, the noise floor, declared configs, `rescore_best` |
 | `compare.ts` | the commit rule's comparator over the score *vector* |
 | `lineage.ts` | **`P_t`** — `avo commit`, `avo lineage`, `avo best`; trailers, notes, `lineage/vNNN.md` |
@@ -76,7 +77,7 @@ once.
 | `skills.ts` | the Agent Skills frontmatter parser and spec validator |
 | `agents.ts` | headless agent command templates + `driveAgent` — one turn, as both `fan` and `run` see it |
 | `fan.ts` | `avo fan` — worktrees, probes, the four guards, promote, resume |
-| `supervise.ts` | `avo supervise` — the stall/thrash detector and the directive it cites with |
+| `supervise.ts` | `avo supervise` — the stall/thrash detector and the directive it cites with. Stall counts distinct trees; thrash needs the same failure on shared paths |
 | `run.ts` | `avo run` — the continuous loop, its manifest, the intervention record |
 | `doctor.ts` | dependency and API-key report |
 | `steps.ts` | the `created`/`unchanged`/`skipped` step report `init` and `know init` share |
