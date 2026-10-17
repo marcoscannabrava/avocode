@@ -41,7 +41,7 @@ import {
   type CommitOptions,
 } from "./lineage.ts";
 import { remember, resolveBackend, shortHash, type Backend } from "./mem.ts";
-import { SCORER_PATH, spawnRunner, type Runner } from "./score.ts";
+import { hashFiles, parsePins, SCORER_ENV, SCORER_PATH, scorerChanges, scorerPaths, spawnRunner, type Runner } from "./score.ts";
 import { supervise, SUPERVISE_ENV, type Signal, type SignalKind } from "./supervise.ts";
 
 /** Every run lives here. In TRAJECTORY_PATHS and gitignored: trajectory, not lineage. */
@@ -131,7 +131,14 @@ export interface Iteration {
   warnings: string[];
 }
 
-export type StopReason = "max-iters" | "stop-file" | "no-progress" | "agent-unavailable" | "budget" | "dry-run";
+export type StopReason =
+  | "max-iters"
+  | "stop-file"
+  | "no-progress"
+  | "agent-unavailable"
+  | "budget"
+  | "scorer-changed"
+  | "dry-run";
 
 /** A budget the agent gives no number for. */
 export type UsageBudget = "cost" | "tokens";
@@ -169,6 +176,8 @@ export interface RunReport {
   started_at: string;
   finished_at: string | null;
   thresholds: { stall: number; thrash: number };
+  /** sha256 of each `f` file at start (#38). */
+  scorer_hashes: Record<string, string | null>;
   /** Absent in older manifests, which means `on`. */
   supervise?: SuperviseMode;
   iterations: Iteration[];
@@ -602,6 +611,7 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     started_at: now().toISOString(),
     finished_at: null,
     thresholds,
+    scorer_hashes: hashFiles(opts.cwd, scorerPaths(opts.cwd)),
     supervise: opts.supervise,
     iterations: [],
     committed: [],
@@ -675,7 +685,13 @@ async function iterate(
 ): Promise<RunReport> {
   const { runner, now } = deps;
   const guards = checkGuards(deps.env, report.prompt_sha);
-  const childEnv = guards.ok ? probeEnv(guards, report.prompt_sha, report.run_id, 0) : {};
+  // The outer run's pins win when nested.
+  const outer = parsePins(deps.env[SCORER_ENV]);
+  const pins = JSON.stringify(outer ?? report.scorer_hashes);
+  const childEnv = {
+    ...(guards.ok ? probeEnv(guards, report.prompt_sha, report.run_id, 0) : {}),
+    [SCORER_ENV]: pins,
+  };
 
   const mode = opts.supervise;
   let directive: string | null = null;
@@ -748,6 +764,23 @@ async function iterate(
       break;
     }
 
+    // An edited `f` scores nothing honestly (#38).
+    const changed = scorerChanges(opts.cwd, report.scorer_hashes);
+    if (changed.length > 0) {
+      it.head_after = await head(runner, opts.cwd);
+      report.head = it.head_after;
+      // Versions from before the edit still count.
+      const own = await agentVersions(runner, opts.cwd, it.head_before, it.head_after, null);
+      it.agent_versions = own.versions;
+      it.warnings.push(...own.warnings);
+      for (const v of own.versions) report.committed.push(v.version);
+      report.stopped = "scorer-changed";
+      report.stop_reason = `iteration ${iter} changed ${changed.join(", ")}; avo run committed nothing`;
+      report.errors.push(report.stop_reason);
+      writeRunManifest(opts.cwd, report);
+      break;
+    }
+
     // The only writer of a version (invariant 1), through the same `decideCommit` the command
     // calls, so the rule cannot differ. The agent's final message is the `--why`.
     const why = capOutput(turn.summary ?? "", WHY_CAP_CHARS, 40).text.trim();
@@ -764,6 +797,7 @@ async function iterate(
       cwd: opts.cwd,
       why: why === "" ? null : why,
       dryRun: false,
+      pins: outer,
     };
     const decision = await decideCommit(commitOpts, runner, now);
     it.warnings.push(...(await recordDecisionMemory(commitOpts, decision, runner, now)));
@@ -876,6 +910,7 @@ export function renderPlan(r: RunReport): string {
     `  timeout      ${r.timeout_s === 0 ? "none" : `${r.timeout_s}s per turn`}`,
     `  budget       ${describeBudget(r.budget)}`,
     `  thresholds   stall ${r.thresholds.stall}, thrash ${r.thresholds.thrash}`,
+    `  scorer       ${Object.keys(r.scorer_hashes).length} file(s) hashed; a change stops the run`,
     `  supervise    ${mode}`,
     `  baseline     ${r.baseline.slice(0, 8)}`,
     `  run dir      ${join(RUNS_DIR, r.run_id)} (not created)`,
@@ -888,7 +923,7 @@ export function renderPlan(r: RunReport): string {
     ...superviseSteps(r, mode),
     "",
     `stops on: --max-iters ${r.max_iters}, ${STOP_FILE}, ${MAX_CONSECUTIVE_NOOPS} unchanged iterations in a row,`,
-    "          a crossed budget, or an agent binary that cannot be started",
+    "          a crossed budget, an agent binary that cannot be started, or a changed scorer",
     "",
     "turn prompt (iteration 1):",
     "",

@@ -600,6 +600,71 @@ yes_no $? "detect: the prompt matches the off arm" "detect leaked supervisor sta
 yes_no $? "detect: no intervention memory, so the agent cannot read it" "detect wrote an intervention memory"
 say ""
 
+# ---------------------------------------- 16. #38: a turn that edits f stops the run
+say "## 16. #38: the scorer is fixed for a run"
+tamper="$work/tamper"
+make_repo "$tamper"
+printf 'fixed\n' > "$tamper/bench.txt"
+printf '# part of f\nbench.txt\n' > "$tamper/.avo/protected.txt"
+git -C "$tamper" add -A
+git -C "$tamper" commit -qm "protect bench.txt"
+# Edits f so every candidate wins.
+cat > "$tamper/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "line at iteration ${AVO_FAN_PROBE:-?}" >> kernel.txt
+printf '#!/usr/bin/env bash\necho %s\n' \
+  "'{\"ok\":true,\"correct\":true,\"primary\":999,\"unit\":\"lines\",\"higher_is_better\":true}'" > .avo/score
+echo "I made the scorer more generous"
+STUB
+chmod +x "$tamper/stub.sh"
+
+json="$(avo run --cwd "$tamper" --agent stub --prompt "make kernel.txt longer" --max-iters 5 --json 2>/dev/null)"; code=$?
+id="$(printf '%s' "$json" | jq -r .run_id)"
+jq -e '.scorer_hashes | keys == [".avo/protected.txt", ".avo/score", "bench.txt"] and all(.[]; test("^[0-9a-f]{64}$"))' \
+  "$tamper/.avo/runs/$id/manifest.json" >/dev/null
+yes_no $? "the manifest holds the sha256 of .avo/score and each protected path" "the manifest has no scorer hashes"
+printf '%s' "$json" | jq -e '.stopped == "scorer-changed" and (.iterations | length) == 1' >/dev/null
+yes_no $? "a turn that edits .avo/score stops the run at that turn" "the run kept going on an edited scorer"
+printf '%s' "$json" | jq -e '.iterations[0].decision == null and .committed == []' >/dev/null
+yes_no $? "avo commit never ran on the edited scorer" "a decision was taken with an edited scorer"
+if [[ "$(git -C "$tamper" log -1 --format=%s)" == "protect bench.txt" ]]; then ok 'nothing was committed'; else bad 'a tampered turn was committed'; fi
+if [[ $code == 1 ]]; then ok "and it exits 1"; else bad "exit $code for a tampered run"; fi
+git -C "$tamper" checkout -q -- .avo/score kernel.txt
+out="$(avo run --cwd "$tamper" --agent stub --prompt "make kernel.txt longer" --max-iters 1 2>/dev/null)"
+printf '%s' "$out" | grep -q 'stopped: scorer-changed'
+yes_no $? "the rendering names the stop reason" "renderRun hides the scorer stop"
+
+# A protected file counts as part of f.
+git -C "$tamper" checkout -q -- .avo/score kernel.txt
+cat > "$tamper/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "line" >> kernel.txt
+echo "edited" >> bench.txt
+echo "I edited the reference"
+STUB
+json="$(avo run --cwd "$tamper" --agent stub --prompt "make kernel.txt longer" --max-iters 5 --json 2>/dev/null)"
+printf '%s' "$json" | jq -e '.stopped == "scorer-changed" and (.stop_reason | test("bench.txt")) and .committed == []' >/dev/null
+yes_no $? "a turn that edits a protected path stops the run too" "a protected path edit went unseen"
+
+# The agent's own avo commit checks f too.
+git -C "$tamper" checkout -q -- bench.txt kernel.txt
+cat > "$tamper/stub.sh" <<STUB
+#!/usr/bin/env bash
+echo "line" >> kernel.txt
+echo "# tuned" >> .avo/score
+"$root/bin/avo" commit --why "scored by my scorer" > .git/avo-commit.out 2>&1
+git checkout -q -- .avo/score
+echo "I committed with my scorer, then put it back"
+STUB
+before="$(git -C "$tamper" rev-parse HEAD)"
+json="$(avo run --cwd "$tamper" --agent stub --prompt "make kernel.txt longer" --max-iters 1 --json 2>/dev/null)"
+grep -q 'refused — f changed since avo run started: .avo/score' "$tamper/.git/avo-commit.out"
+yes_no $? "the agent's own avo commit refuses an edited f" "avo commit inside a turn scored with an edited f"
+printf '%s' "$json" | jq -e '.iterations[0].agent_versions == [] and .iterations[0].decision.action == "committed"' >/dev/null
+yes_no $? "only the real f judged the turn's change" "a version came from the edited f"
+if ! git -C "$tamper" log --format=%B "$before..HEAD" | grep -q 'scored by my scorer'; then ok "no commit carries the edited f's --why"; else bad "the edited f's version landed"; fi
+say ""
+
 say "## summary"
 if [[ $fails == 0 ]]; then
   say "all checks passed ($(grep -c '^PASS' "$evidence") of them)"

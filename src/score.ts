@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   accessSync,
   appendFileSync,
@@ -26,6 +27,10 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 export const SCORER_PATH = ".avo/score";
 /** Append-only log of every `avo score` run. Attempts are not commits (PLAN §3). */
 export const ATTEMPTS_PATH = ".avo/attempts.jsonl";
+/** Optional list of `f`'s files, one per line. */
+export const PROTECTED_LIST = ".avo/protected.txt";
+/** `avo run` pins `f`'s hashes here for its turns. */
+export const SCORER_ENV = "AVO_SCORER_HASHES";
 /** A child's output beyond this is elided; a runaway scorer must not exhaust memory. */
 const OUTPUT_CAP = 200_000;
 /**
@@ -715,4 +720,58 @@ export async function scoreCommand(
   io.out(opts.json ? `${JSON.stringify(attempt)}\n` : renderAttempt(attempt));
   if (attempt.errors.length > 0) return 2;
   return attempt.pass ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// the scorer's own files
+// ---------------------------------------------------------------------------
+
+/** `.avo/score`, plus the protected list and its paths. */
+export function scorerPaths(cwd: string): string[] {
+  const paths = [SCORER_PATH];
+  let list: string;
+  try {
+    list = readFileSync(join(cwd, PROTECTED_LIST), "utf8");
+  } catch {
+    return paths;
+  }
+  paths.push(PROTECTED_LIST);
+  for (const raw of list.split("\n")) {
+    const line = raw.trim();
+    if (line !== "" && !line.startsWith("#")) paths.push(line);
+  }
+  return [...new Set(paths)];
+}
+
+/** sha256 per path; `null` when absent. */
+export function hashFiles(cwd: string, paths: readonly string[]): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const p of paths) {
+    try {
+      out[p] = createHash("sha256").update(readFileSync(join(cwd, p))).digest("hex");
+    } catch {
+      out[p] = null;
+    }
+  }
+  return out;
+}
+
+/** Start-time paths whose hash moved since. */
+export function scorerChanges(cwd: string, start: Record<string, string | null>): string[] {
+  // Start-time list: an edit cannot shrink it.
+  const now = hashFiles(cwd, Object.keys(start));
+  return Object.keys(start).filter((p) => now[p] !== start[p]);
+}
+
+/** Pins from `SCORER_ENV`, or `null`. */
+export function parsePins(raw: string | undefined): Record<string, string | null> | null {
+  if (raw === undefined || raw === "") return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+    const ok = Object.values(v).every((h) => h === null || typeof h === "string");
+    return ok && Object.keys(v).length > 0 ? (v as Record<string, string | null>) : null;
+  } catch {
+    return null;
+  }
 }

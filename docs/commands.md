@@ -114,6 +114,10 @@ the commit — you cannot improve by measuring less. Tune it in `.avo/config.jso
 Exit codes: `0` committed or no-op, `1` refused, `2` harness error. Re-running with no change is a
 no-op, never a duplicate.
 
+Inside an `avo run` turn, `avo commit` also refuses when `f` changed since the run started. `avo run`
+gives each turn the start hashes in `AVO_SCORER_HASHES`, and `avo commit` hashes the same files again
+before it scores (#38). Outside a run, this variable is not set and there is no check.
+
 With `--json`, `ok` is `true` when the command ran. A refusal is also `ok: true`, because the rule
 did its work. Read `action` for the decision: `committed`, `refused`, `noop` or `would-commit`. `ok`
 is `false` only on a harness error (exit `2`).
@@ -358,6 +362,24 @@ and exits 0, so the agent cannot steer itself.
 | `.avo/STOP` exists | the one command meant to run for days needs a brake that does not require finding the process — and one an agent can reach when the task is done |
 | 3 iterations in a row change nothing **and leave HEAD where it was** | an unchanged tree is never scored, so it records no attempt and the supervisor *cannot* see it. The one stop condition steering cannot express |
 | the agent binary cannot be started | it will not start next iteration either; retrying nine more times is spinning |
+| a turn changes `f` (stop reason `scorer-changed`) | a score from an edited `f` is not a measurement. avo commits nothing from that turn and exits 1 (#38) |
+
+**The scorer is fixed for a run.** At start, `avo run` writes the sha256 of `.avo/score` to the
+manifest as `scorer_hashes`. If `.avo/protected.txt` exists, it also hashes that file and each path
+in it (one path per line; `#` starts a comment). After each turn and before `avo commit`, `avo run`
+hashes the same paths again. A changed, new or deleted file stops the run. The check uses the list
+from the start, so an edit to `.avo/protected.txt` cannot remove a path from it. Each path must be a
+file: a directory is not hashed.
+
+The turn cannot commit with an edited `f` either. `avo run` puts the start hashes in
+`AVO_SCORER_HASHES` for each turn, and an `avo commit` that the agent runs refuses when a hash
+changed. A nested `avo run` keeps the outer run's hashes. Thus an agent that edits `f`, commits and
+then restores `f` gets no version. A version that the agent committed before the edit stays in the
+lineage and in `committed`.
+
+These checks stop an honest mistake in an unattended run. They are not a security boundary: an
+agent can unset the variable, or call `git commit` with the trailers itself. They do not replace an
+external audit such as `bench/init.sh --verify`.
 
 **The agent usually commits for itself, and the manifest says so.** The `avo-vary` skill — wired in
 by `avo install`, and pointed at by the turn prompt — has the agent run `avo commit --why "..."`
