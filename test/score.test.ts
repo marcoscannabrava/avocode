@@ -558,6 +558,60 @@ test("a child that overruns the output cap keeps its LAST line, not only its fir
   }
 });
 
+test("a sink gets all of stdout while memory stays capped (#22)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-sink-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, `#!/bin/sh\ni=0\nwhile [ $i -lt 6000 ]; do printf '%090d\\n' "$i"; i=$((i+1)); done\necho err >&2\n`, { mode: 0o755 });
+    const sink = join(dir, "logs", "out.log");
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink });
+    assert.match(r.stdout, /--- avo elided \d+ bytes of output here ---/);
+    const log = readFileSync(sink, "utf8");
+    assert.equal(log.length, 6000 * 91, "every byte of stdout, and no stderr");
+    // A sink that cannot open loses nothing else.
+    for (const bad of [join(script, "x.log"), dir]) {
+      const again = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink: bad });
+      assert.equal(again.code, 0);
+      assert.equal(again.stderr, "err\n");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a sink stops at its cap and says so", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-sinkcap-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, `#!/bin/sh\ni=0\nwhile [ $i -lt 2000 ]; do printf '%090d\\n' "$i"; i=$((i+1)); done\n`, { mode: 0o755 });
+    const sink = join(dir, "out.log");
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 0, sink, sinkCap: 10_000 });
+    assert.equal(r.code, 0);
+    const log = readFileSync(sink, "utf8");
+    const marker = "\n--- avo cut the log at 10000 bytes ---\n";
+    assert.ok(log.endsWith(marker), log.slice(-80));
+    assert.equal(log.length, 10_000 + marker.length);
+    assert.match(log, /^0{90}\n/);
+    assert.match(r.stdout, /^0{90}\n/, "memory still gets the stream");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a timed-out child still leaves its sink flushed and closed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-sinkkill-"));
+  try {
+    const script = join(dir, "s.sh");
+    writeFileSync(script, "#!/bin/sh\necho before\nsleep 30\necho after\n", { mode: 0o755 });
+    const sink = join(dir, "out.log");
+    const r = await spawnRunner(script, [], { cwd: dir, timeoutMs: 300, sink });
+    assert.equal(r.timedOut, true);
+    assert.equal(readFileSync(sink, "utf8"), "before\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("output that fits under the cap is passed through byte for byte, with no elision marker", async () => {
   const dir = mkdtempSync(join(tmpdir(), "avo-nocap-"));
   try {

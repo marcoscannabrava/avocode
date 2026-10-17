@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
   parseAgentOutput,
   resolveTemplate,
   withAvoBin,
+  type AgentTemplate,
   type CustomAgent,
 } from "../src/agents.ts";
 import { spawnRunner, type Runner } from "../src/score.ts";
@@ -288,6 +289,48 @@ test("usage carrying only cached input is a real reading, not the absence of one
 test("usage with none of the four field shapes present is null rather than zeros", () => {
   const out = `{"type":"result","result":"x","usage":{"service_tier":"standard"}}`;
   assert.equal(parseAgentOutput("claude", out).tokens, null);
+});
+
+// ------------------------------------------------------------- the turn log (#22)
+
+test("a chatty agent's log on disk is complete, past the 200KB memory cap", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-log-"));
+  try {
+    const script = join(dir, "agent.sh");
+    const pad = "x".repeat(80);
+    writeFileSync(
+      script,
+      `#!/bin/sh\ni=0\nwhile [ $i -lt 6000 ]; do printf '{"type":"assistant","n":%d,"pad":"${pad}"}\\n' "$i"; i=$((i+1)); done\nprintf '{"type":"result","result":"done","usage":{"input_tokens":24,"output_tokens":5}}\\n'\necho warn >&2\n`,
+      { mode: 0o755 },
+    );
+    const template: AgentTemplate = { name: "chatty", command: script, args: () => [], format: CLAUDE.format, approval: "" };
+    const logFile = join(dir, "logs", "1.log");
+    const turn = await driveAgent(spawnRunner, template, { prompt: "p", model: null }, { cwd: dir, logPath: "logs/1.log", logFile, timeoutS: 0, env: {} }, () => new Date());
+    assert.equal(turn.ok, true);
+    const log = readFileSync(logFile, "utf8");
+    assert.ok(log.length > 600_000, `log is ${log.length} bytes; it must hold every line`);
+    assert.doesNotMatch(log, /avo elided/, "the log is not the capped copy");
+    assert.match(log, /^\{"type":"assistant","n":0,/);
+    assert.match(log, /"n":3000,/, "the middle survived");
+    assert.match(log, /"type":"result".*\n\n--- stderr ---\nwarn\n$/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a runner that ignores the sink still leaves a fresh log", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-log-"));
+  try {
+    const logFile = join(dir, "logs", "1.log");
+    mkdirSync(join(dir, "logs"));
+    writeFileSync(logFile, "stale output from an earlier run\n");
+    const runner: Runner = async () => ({ code: 0, stdout: "fresh\n", stderr: "", timedOut: false, spawnError: null });
+    const template: AgentTemplate = { name: "stub", command: "stub", args: () => [], format: CLAUDE.format, approval: "" };
+    await driveAgent(runner, template, { prompt: "p", model: null }, { cwd: dir, logPath: "logs/1.log", logFile, timeoutS: 0, env: {} }, () => new Date());
+    assert.equal(readFileSync(logFile, "utf8"), "fresh\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ------------------------------------------------------------ approval (#23)

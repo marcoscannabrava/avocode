@@ -5,12 +5,14 @@ import {
   appendFileSync,
   constants,
   copyFileSync,
+  createWriteStream,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
+  type WriteStream,
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -33,6 +35,8 @@ export const PROTECTED_LIST = ".avo/protected.txt";
 export const SCORER_ENV = "AVO_SCORER_HASHES";
 /** A child's output beyond this is elided; a runaway scorer must not exhaust memory. */
 const OUTPUT_CAP = 200_000;
+/** A turn log stops here; disks are finite. */
+export const SINK_CAP = 256 * 1024 * 1024;
 /**
  * How much of that budget goes to the *end* of the output rather than the beginning.
  *
@@ -128,6 +132,10 @@ export interface RunOpts {
   timeoutMs: number;
   /** Extra environment for the child, merged over `process.env`. Used by `avo fan`'s guards. */
   env?: Record<string, string>;
+  /** File that gets stdout, up to `sinkCap`. */
+  sink?: string;
+  /** Bytes the sink keeps; default SINK_CAP. */
+  sinkCap?: number;
 }
 
 /** Runs one child process. Injected so the command is testable without real scorers. */
@@ -165,14 +173,49 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
         : null;
     const out = capped();
     const err = capped();
-    child.stdout.on("data", (d: Buffer) => void out.push(d.toString()));
+    // The cap bounds memory, not the sink.
+    const sink = opts.sink === undefined ? null : openSink(opts.sink, opts.sinkCap ?? SINK_CAP);
+    child.stdout.on("data", (d: Buffer) => {
+      sink?.write(d);
+      out.push(d.toString());
+    });
     child.stderr.on("data", (d: Buffer) => void err.push(d.toString()));
     child.on("error", (e: Error) => void (spawnError = e.message));
     child.on("close", (code) => {
       if (timer !== null) clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout: out.value(), stderr: err.value(), timedOut, spawnError });
+      const done = () => resolve({ code: code ?? -1, stdout: out.value(), stderr: err.value(), timedOut, spawnError });
+      if (sink === null) done();
+      else sink.end(done);
     });
   });
+
+interface Sink {
+  write(d: Buffer): void;
+  end(cb: () => void): void;
+}
+
+/** A capped write stream; failed writes drop. */
+function openSink(path: string, cap: number): Sink | null {
+  let s: WriteStream;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    s = createWriteStream(path);
+  } catch {
+    return null;
+  }
+  s.on("error", () => undefined);
+  let written = 0;
+  return {
+    write(d) {
+      if (written >= cap) return;
+      const room = cap - written;
+      written += d.length;
+      if (d.length <= room) s.write(d);
+      else s.write(Buffer.concat([d.subarray(0, room), Buffer.from(`\n--- avo cut the log at ${cap} bytes ---\n`)]));
+    },
+    end: (cb) => void s.end(cb),
+  };
+}
 
 /**
  * Accumulates a child's output into a bounded head **and a rolling tail**, with a marked gap.
