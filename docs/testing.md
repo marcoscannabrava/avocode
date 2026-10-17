@@ -33,6 +33,7 @@ node_modules/.bin/tsx --test test/compare.test.ts
 | `just test` | the `node:test` unit suites |
 | `just e2e` | exercises the real `bin/avo`; writes `evidence/*-e2e.txt` |
 | `just all` | `check` + `e2e` |
+| `just smoke [agent…]` | one real agent turn per agent CLI on `PATH` — costs tokens, never in CI |
 | `just doctor` | `./bin/avo doctor` |
 | `just install` | `./install.sh` |
 
@@ -79,14 +80,119 @@ than naming its own — findings are not stable across versions. A runner at the
 and still runs; refusing to lint would be a worse failure than the drift. `SHELLCHECK=<path>` pins a
 runner and disables the fallback.
 
+No step of the gate can block forever
+([#53](https://github.com/marcoscannabrava/avocode/issues/53)). Each shellcheck probe and the run
+itself have a time limit of `SC_TIMEOUT` seconds (default 60). A probe that does not answer in time
+counts as "no runner". A run that does not finish in time makes lint red. `just e2e` also gives each
+suite a limit of `AVO_E2E_TIMEOUT` seconds (default 1800), so a stuck suite fails instead of
+waiting forever. In CI, the e2e job also stops after 45 minutes.
+
 ## CI
 
 `.github/workflows/ci.yml` runs two jobs on every push to `main` and every PR: `check` (lint +
 typecheck + test) and `e2e`, which uploads `evidence/` as an artifact. Both install the shellcheck
 version read out of `test/lint-sh.sh`'s own pin.
 
+`.github/workflows/beads.yml` installs a pinned `bd` and runs `e2e-mem.sh` on the beads path. The
+`bd` install is large, so this job does not run on every PR. It runs each night, on demand, and on a
+PR that changes the memory code. A `SKIP` in its evidence makes the job fail.
+
 The e2e job runs **without any agent CLI installed** — deliberately, because the S0 acceptance case is
 `avo doctor` behaving correctly when the tools it drives are missing.
+
+`.github/workflows/qmd.yml` installs a pinned `qmd` and runs `e2e-know.sh` on the qmd path. qmd
+downloads large models on first use, so the job keeps them in the Actions cache. It runs each night,
+on demand, and on a PR that changes the knowledge code. A `SKIP` in its evidence makes the job fail.
+A hybrid `avo know query` that falls back to the local scan also makes it fail.
+
+## The real-agent smoke test
+
+The e2e suites use a stub agent. They cannot tell you if a real agent CLI still accepts avo's flags,
+or if it finds the skills ([#19](https://github.com/marcoscannabrava/avocode/issues/19),
+[#23](https://github.com/marcoscannabrava/avocode/issues/23)). `test/smoke-agents.sh` does this check.
+It spends tokens, so it is not part of `just e2e`, and it stops at once when `CI` is set.
+
+```sh
+just smoke             # every agent on PATH: pi, claude, codex
+just smoke claude      # one agent
+```
+
+For each agent, the script does these steps:
+
+1. It makes a tiny target in a temp directory, outside this repo. The target has one file and an
+   `f` that counts its lines.
+2. It runs `avo install --agent <agent>` and commits the result into the baseline.
+3. It runs one `avo run --max-iters 1` turn. The prompt names no avo command, so only the skills
+   can tell the agent to use avo.
+4. It checks four things:
+   - the agent called avo (a shim on `PATH` logs each call; the agent log is the fallback),
+   - no tool call was denied (a denial means the approval flag broke),
+   - a version or a refusal is on record,
+   - avo parsed the token counts.
+
+An agent that is not on `PATH` is a `SKIP`, not a `FAIL`. On a failure, the script keeps the temp
+targets and prints their path. The transcript goes to `evidence/smoke-agents.txt`.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `AVO_SMOKE_TIMEOUT` | `180` | seconds for each turn |
+| `AVO_SMOKE_MODEL_CLAUDE` | `haiku` | the model for claude |
+| `AVO_SMOKE_MODEL_PI`, `AVO_SMOKE_MODEL_CODEX` | unset | the model; without it, that agent is a `SKIP` |
+| `AVO_SMOKE_IN_CI` | unset | set it to run when `CI` is set |
+
+One claude turn on `haiku` costs about $0.05.
+
+If claude fails with `ignored bypassPermissions`, a managed setting blocks that mode. Look for
+`permissions.disableBypassPermissionsMode` in `~/.claude/remote-settings.json` and in the managed
+settings file. You cannot change this from avo. Ask the owner of the policy.
+
+### Run it every night
+
+Use cron or a systemd user timer. The job needs the same `PATH` and agent logins as your shell.
+
+With cron (`crontab -e`):
+
+```cron
+# 03:17 every night
+17 3 * * * cd $HOME/code/avocode && PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin ./test/smoke-agents.sh >> $HOME/.cache/avo-smoke.log 2>&1
+```
+
+With systemd, write two files:
+
+```ini
+# ~/.config/systemd/user/avo-smoke.service
+[Unit]
+Description=avo real-agent smoke test
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/avocode
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=%h/code/avocode/test/smoke-agents.sh
+```
+
+```ini
+# ~/.config/systemd/user/avo-smoke.timer
+[Unit]
+Description=Run the avo smoke test every night
+
+[Timer]
+OnCalendar=*-*-* 03:17
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then start the timer and read the last result:
+
+```sh
+systemctl --user enable --now avo-smoke.timer
+journalctl --user -u avo-smoke.service -n 50
+```
+
+The script exits non-zero when a check fails, so `systemctl --user status avo-smoke` shows a failed
+unit.
 
 ## Benchmark a real run
 

@@ -709,7 +709,15 @@ is still known as avo's. `avo install` removes such dangling skill links. `avo i
 --uninstall` (`runUninstall`) removes avo's links and the marked `AGENTS.md` block (`removeBlock`).
 It deletes `.pi/settings.json` only when the file holds nothing but avo's keys with avo's values
 (`unmergePiSettings`); otherwise the keys stay, because avo cannot prove it wrote them. In a repo
-with a real copy of avo's skills (avocode itself), it removes nothing.
+with a real copy of avo's skills (avocode itself), it removes nothing. It also drops the entries of
+removed links from the exclude block, and the block itself when no entry is left (`unexcludeLinks`).
+
+**Absolute links stay out of the lineage (#32).** An absolute link names a path on this machine.
+`avo install` lists each one in a managed block in the repo's local ignore file, which
+`git rev-parse --git-path info/exclude` finds (`excludeLocalLinks`). The entries are anchored at the
+repo root, and all worktrees share the file. Thus `git add -A` in `avo commit` does not stage the
+links, and a clone has none. `avo fan` copies the listed links into each probe worktree
+(`mirrorLinks`).
 
 **The five skills** (`.agents/skills/`): `avo-vary` (one variation step: prime → best → know query →
 one change → score → commit), `avo-score` (the `f` contract and authoring rules), `avo-lineage`

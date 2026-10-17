@@ -63,7 +63,7 @@ out="$(avo commit --cwd "$fixture" --why "baseline: adds the scorer" --json)"
 code=$?
 say "\$ avo commit (v1) -> exit $code"
 say "  $(printf '%s' "$out" | jq -c '{action,version,reason}')"
-if [[ $code -eq 0 ]] && printf '%s' "$out" | jq -e '.action == "committed" and .version == 1' >/dev/null; then
+if [[ $code -eq 0 ]] && printf '%s' "$out" | jq -e '.ok == true and .action == "committed" and .version == 1' >/dev/null; then
   ok "the first passing candidate becomes v1"
 else
   bad "v1 was not committed"
@@ -108,7 +108,7 @@ out="$(avo commit --cwd "$fixture" --json)"
 code=$?
 say "\$ avo commit (bigger file) -> exit $code"
 say "  $(printf '%s' "$out" | jq -c '{action,reason}')"
-if [[ $code -eq 1 ]] && printf '%s' "$out" | jq -e '.action == "refused" and (.reason | test("regressed"))' >/dev/null; then
+if [[ $code -eq 1 ]] && printf '%s' "$out" | jq -e '.ok == true and .action == "refused" and (.reason | test("regressed"))' >/dev/null; then
   ok "a regression is refused with a reason that names the config"
 else
   bad "a regression was not refused"

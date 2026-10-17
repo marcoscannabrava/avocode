@@ -41,6 +41,10 @@ case "$prompt" in
   *noop*) echo "considered it, changed nothing"; exit 0 ;;
   *slow*) sleep 60; exit 0 ;;
 esac
+# A directed probe records the direction it got.
+if [[ $prompt == *"Your direction:"* ]]; then
+  printf '%s\n' "$prompt" | grep '^Your direction:' > direction.txt
+fi
 for ((k = 0; k < ${AVO_FAN_PROBE:-1}; k++)); do echo "probe ${AVO_FAN_PROBE} line $k" >> kernel.txt; done
 echo "appended ${AVO_FAN_PROBE} line(s) at depth ${AVO_FAN_LEVEL} of ${AVO_FAN_DEPTH}"
 STUB
@@ -79,7 +83,7 @@ grep -q 'AVO_FAN_DEPTH' "$skill"
 yes_no $? "it documents the depth guard" "it never mentions AVO_FAN_DEPTH"
 # A skill must not instruct a command that does not exist — the reason this one waited for S6.
 usage="$(avo help)"
-for c in "--promote" "--resume" "--clean" "--list" "AVO_FAN_DEPTH" "AVO_PROBE_MODEL"; do
+for c in "--directions" "--promote" "--resume" "--clean" "--list" "AVO_FAN_DEPTH" "AVO_PROBE_MODEL"; do
   printf '%s' "$usage" | grep -q -- "$c"
   yes_no $? "avo help documents $c" "avo help never mentions $c"
 done
@@ -201,6 +205,38 @@ avo fan --clean all --json --cwd "$repo" >/dev/null
 if [[ "$(worktrees)" == "$base_wt" ]]; then ok "git worktree list is back to baseline after every suite"; else bad "worktrees leaked: $(worktrees)"; fi
 say ""
 
+# ------------------------------------------------- 7b. directed fan-out
+say "## 7b. one direction per probe"
+dirs="$work/directions.txt"
+printf '# from avo supervise\n- unroll the loop\n- use a lookup table\n- cache the result\n' > "$dirs"
+out="$(avo fan --prompt 'vary the kernel' --directions "$dirs" --json --cwd "$repo")"
+rc=$?
+yes_no $rc "avo fan --directions exited 0" "avo fan --directions exited $rc"
+echo "$out" | jq -e '.n == 3' >/dev/null
+yes_no $? "--n defaults to the number of directions" "n was $(echo "$out" | jq .n)"
+echo "$out" | jq -e '[.results[].direction] == ["unroll the loop","use a lookup table","cache the result"]' >/dev/null
+yes_no $? "each result names its direction" "directions were $(echo "$out" | jq -c '[.results[].direction]')"
+seen=0
+for i in 1 2 3; do
+  want="Your direction: $(echo "$out" | jq -r ".results[$((i - 1))].direction")"
+  wt="$repo/$(echo "$out" | jq -r ".results[$((i - 1))].worktree")"
+  [[ "$(cat "$wt/direction.txt" 2>/dev/null)" == "$want" ]] && seen=$((seen + 1))
+done
+if [[ $seen == 3 ]]; then ok "each probe got only its own direction"; else bad "$seen of 3 probes saw their own direction"; fi
+run_id="$(echo "$out" | jq -r .run_id)"
+jq -e '[.probes[].direction] | length == 3 and all(. != null)' "$repo/.avo/worktrees/$run_id/manifest.json" >/dev/null
+yes_no $? "the manifest stores the directions for --resume" "the manifest has no directions"
+avo fan --clean all --json --cwd "$repo" >/dev/null
+out="$(avo fan --n 2 --prompt 'vary it' --directions "$dirs" --json --cwd "$repo" 2>/dev/null)"
+rc=$?
+if [[ $rc == 2 ]]; then ok "--n that disagrees with the directions exits 2"; else bad "expected exit 2, got $rc"; fi
+echo "$out" | jq -e '.error | test("--n is 2 but there are 3 directions")' >/dev/null
+yes_no $? "the error names both counts" "the error was: $out"
+if [[ "$(worktrees)" == "$base_wt" ]]; then ok "the refused run made no worktrees"; else bad "worktrees leaked: $(worktrees)"; fi
+avo fan --resume x --directions "$dirs" --cwd "$repo" >/dev/null 2>&1 && rc=0 || rc=$?
+if [[ $rc == 2 ]]; then ok "--directions with --resume is a usage error"; else bad "expected exit 2, got $rc"; fi
+say ""
+
 # ------------------------------------------------- 8. usage
 say "## 8. usage errors"
 avo fan --cwd "$repo" >/dev/null 2>&1 && rc=0 || rc=$?
@@ -213,6 +249,50 @@ yes_no $? "an unknown agent names the alternatives" "the error was: $out"
 out="$(avo fan --promote 1 --run nope --json --cwd "$repo" 2>/dev/null)"
 echo "$out" | jq -e '.error | test("no run")' >/dev/null
 yes_no $? "promoting from a run that does not exist says so" "the error was: $out"
+say ""
+
+# ------------------------------------------------- 9. #41: avo on the child PATH
+say "## 9. #41: a probe finds avo with no install step"
+# Node only, so no operator avo.
+bare="$(dirname "$(command -v node)"):/usr/bin:/bin"
+if PATH="$bare" bash -c "command -v avo" >/dev/null 2>&1; then
+  bad "avo is already on the stripped PATH, so this proves nothing"
+else
+  ok "the stripped PATH has no avo"
+fi
+cat > "$repo/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+# What every skill does first.
+{ command -v avo || echo missing; avo best --json >/dev/null 2>&1; echo "exit $?"; } > "$AVO_OUT"
+echo "line" >> kernel.txt
+echo "asked avo best, then appended a line"
+STUB
+PATH="$bare" AVO_OUT="$work/fan-avo.txt" "$root/bin/avo" fan --n 1 --prompt "path check" --cwd "$repo" >/dev/null 2>&1
+if [[ "$(head -1 "$work/fan-avo.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo fan puts its own bin/avo first on the probe's PATH"
+else
+  bad "the probe resolved avo as '$(head -1 "$work/fan-avo.txt" 2>/dev/null)'"
+fi
+# No version yet, so 1 is fine; 127 is not.
+if [[ "$(sed -n 2p "$work/fan-avo.txt" 2>/dev/null)" =~ ^exit\ [01]$ ]]; then
+  ok "the probe's 'avo best --json' ran"
+else
+  bad "the probe's 'avo best' said '$(sed -n 2p "$work/fan-avo.txt" 2>/dev/null)'"
+fi
+say ""
+
+# ------------------------------------------------- 10. install links reach probes, not the lineage
+say "## 10. install links in a probe worktree (#32)"
+avo install --cwd "$repo" --agent pi --json >/dev/null
+git -C "$repo" add -A
+git -C "$repo" commit -qm wired
+if git -C "$repo" ls-files --error-unmatch .pi/extensions/avo >/dev/null 2>&1; then bad "the install link entered the lineage"; else ok "the install link stays out of the lineage"; fi
+out="$(avo fan --n 1 --prompt 'vary it' --json --cwd "$repo")"
+wt="$repo/$(echo "$out" | jq -r '.results[0].worktree')"
+if [[ -f $wt/.pi/extensions/avo/index.ts ]]; then ok "the probe worktree reads the extension through its link"; else bad "the probe worktree has no extension link"; fi
+echo "$out" | jq -e '.results[0].diffstat.changed == ["kernel.txt"]' >/dev/null
+yes_no $? "the mirrored link is not part of the probe's diff" "diffstat was $(echo "$out" | jq -c '.results[0].diffstat.changed')"
+avo fan --clean all --json --cwd "$repo" >/dev/null
 say ""
 
 say "# $(grep -c '^PASS' "$evidence") checks passed, $fails failed"
