@@ -2,3 +2,5 @@ logs/
 node_modules/
 .avo/worktrees/
 .claude/settings.local.json
+# machine-local, from test/smoke-agents.sh
+evidence/smoke-agents.txt

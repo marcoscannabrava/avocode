@@ -251,5 +251,35 @@ echo "$out" | jq -e '.error | test("no run")' >/dev/null
 yes_no $? "promoting from a run that does not exist says so" "the error was: $out"
 say ""
 
+# ------------------------------------------------- 9. #41: avo on the child PATH
+say "## 9. #41: a probe finds avo with no install step"
+# Node only, so no operator avo.
+bare="$(dirname "$(command -v node)"):/usr/bin:/bin"
+if PATH="$bare" bash -c "command -v avo" >/dev/null 2>&1; then
+  bad "avo is already on the stripped PATH, so this proves nothing"
+else
+  ok "the stripped PATH has no avo"
+fi
+cat > "$repo/stub.sh" <<'STUB'
+#!/usr/bin/env bash
+# What every skill does first.
+{ command -v avo || echo missing; avo best --json >/dev/null 2>&1; echo "exit $?"; } > "$AVO_OUT"
+echo "line" >> kernel.txt
+echo "asked avo best, then appended a line"
+STUB
+PATH="$bare" AVO_OUT="$work/fan-avo.txt" "$root/bin/avo" fan --n 1 --prompt "path check" --cwd "$repo" >/dev/null 2>&1
+if [[ "$(head -1 "$work/fan-avo.txt" 2>/dev/null)" == "$root/bin/avo" ]]; then
+  ok "avo fan puts its own bin/avo first on the probe's PATH"
+else
+  bad "the probe resolved avo as '$(head -1 "$work/fan-avo.txt" 2>/dev/null)'"
+fi
+# No version yet, so 1 is fine; 127 is not.
+if [[ "$(sed -n 2p "$work/fan-avo.txt" 2>/dev/null)" =~ ^exit\ [01]$ ]]; then
+  ok "the probe's 'avo best --json' ran"
+else
+  bad "the probe's 'avo best' said '$(sed -n 2p "$work/fan-avo.txt" 2>/dev/null)'"
+fi
+say ""
+
 say "# $(grep -c '^PASS' "$evidence") checks passed, $fails failed"
 exit $((fails > 0 ? 1 : 0))
