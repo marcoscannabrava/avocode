@@ -72,10 +72,11 @@ avo supervise      # exit 0 = still making progress; exit 1 = it printed a direc
 It reads the same lineage and attempt log you do, and fires on the two things you cannot see from
 inside one turn:
 
-- **stall** — N attempts since the last committed improvement. Not "N failures": an attempt that
+- **stall** — N variations since the last committed improvement. A variation is a distinct working
+  tree, so a second `avo score` of the same tree does not count. Not "N failures": a variation that
   passed `f` and still did not beat the best version counts too, because it did not move `P_t`.
-- **thrash** — the last K attempts failed *the same way*. The same error three times means your
-  diagnosis is wrong, not your edit.
+- **thrash** — the last K variations failed *the same way* in the same files. The same error three
+  times means your diagnosis is wrong, not your edit.
 
 The directive cites specific versions, the dead ends memory holds, and the docs in `K` no version has
 ever mentioned. Treat that last list as your candidate directions — a doc is listed precisely because
@@ -104,6 +105,8 @@ things follow:
   behind. Committing yourself is fine too; it is not a no-op and the loop keeps going.
 - **`touch .avo/STOP` when the task is genuinely done.** It ends the loop before the next turn. Use it
   when there is nothing left to vary — not when *this* turn was hard.
+- **`avo supervise` can be off.** In an ablation run, `AVO_SUPERVISE` is `off` or `detect`, and
+  `avo supervise` prints one line and exits 0. This is correct. Do not work around it.
 
 Before calling `avo run` or `avo fan` from inside a turn, check the depth: `AVO_FAN_LEVEL` against
 `AVO_FAN_DEPTH`. At the limit you must do the work yourself.

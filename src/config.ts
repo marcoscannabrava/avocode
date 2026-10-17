@@ -1,11 +1,14 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { CustomAgent, OutputFormat } from "./agents.ts";
 
 /** Optional per-repo settings. Absent is the common case and never a warning. */
 export const CONFIG_PATH = ".avo/config.json";
+
+/** Rendered, human- and qmd-readable record of each committed version. */
+export const LINEAGE_DIR = "lineage";
 
 /** Config names must be plain tokens — also how we detect a scorer with no `--configs`. */
 export const CONFIG_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -28,6 +31,10 @@ export const ConfigSchema = Type.Object(
     weights: Type.Optional(Type.Record(Type.String(), Type.Number({ minimum: 0 }))),
     /** Declares the scorer's configs so `avo score --parallel` skips the `--configs` probe. */
     configs: Type.Optional(Type.Array(Type.String())),
+    /** `near`: re-measure the best on close calls. */
+    rescore_best: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("near")])),
+    /** Untracked paths the rescore worktree links in. */
+    rescore_links: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
     /**
      * When the supervisor intervenes (S7). `stall`: attempts allowed with no committed improvement.
      * `thrash`: consecutive same-signature failures that count as re-trying one broken thing. Repo
@@ -69,6 +76,10 @@ export interface AvoConfig {
   weights: Record<string, number>;
   /** `null` = not declared; probe the scorer instead. */
   configs: string[] | null;
+  /** Whether `avo commit` re-measures a close incumbent. */
+  rescore_best: "off" | "near";
+  /** Repo-relative paths linked into the rescore worktree. */
+  rescore_links: string[];
   /** `null` = no custom agent declared; `avo fan` offers only the built-ins. */
   agent: CustomAgent | null;
   /** Thresholds `avo supervise` fires at. A flag overrides them; the defaults apply otherwise. */
@@ -89,6 +100,8 @@ export const DEFAULT_CONFIG: AvoConfig = {
   z: DEFAULT_Z,
   weights: {},
   configs: null,
+  rescore_best: "off",
+  rescore_links: [],
   agent: null,
   supervise: { stall: DEFAULT_STALL, thrash: DEFAULT_THRASH },
 };
@@ -99,7 +112,7 @@ export const DEFAULT_CONFIG: AvoConfig = {
  * one process accumulate each other's arguments.
  */
 function defaults(): AvoConfig {
-  return { ...DEFAULT_CONFIG, weights: {}, supervise: { ...DEFAULT_CONFIG.supervise } };
+  return { ...DEFAULT_CONFIG, weights: {}, rescore_links: [], supervise: { ...DEFAULT_CONFIG.supervise } };
 }
 
 export interface LoadedConfig {
@@ -147,6 +160,8 @@ export function loadConfig(cwd: string): LoadedConfig {
     z: file.z ?? DEFAULT_Z,
     weights: file.weights ?? {},
     configs: null,
+    rescore_best: file.rescore_best ?? DEFAULT_CONFIG.rescore_best,
+    rescore_links: [],
     agent: null,
     supervise: {
       stall: file.supervise?.stall ?? DEFAULT_STALL,
@@ -178,5 +193,21 @@ export function loadConfig(cwd: string): LoadedConfig {
       config.configs = [...new Set(file.configs)];
     }
   }
+  if (file.rescore_links !== undefined) {
+    const bad = file.rescore_links.filter((p) => !insideRepo(p));
+    if (bad.length > 0) {
+      warnings.push(`${CONFIG_PATH}: field 'rescore_links' has paths outside the repo (${bad.join(", ")}); ignoring it`);
+    } else {
+      config.rescore_links = [...new Set(file.rescore_links.map((p) => normalize(p).replace(/\/+$/, "")))];
+    }
+  }
   return { config, warnings, present: true };
+}
+
+/** Relative, below the root, not `.git`. */
+export function insideRepo(p: string): boolean {
+  if (isAbsolute(p)) return false;
+  const n = normalize(p).replace(/\/+$/, "");
+  if (n === "." || n === ".." || n.startsWith("../")) return false;
+  return n !== ".git" && !n.startsWith(".git/");
 }

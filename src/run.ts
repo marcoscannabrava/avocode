@@ -8,7 +8,8 @@
  * *between*: every iteration is a fresh process, so the turn prompt is the only continuity.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import {
   capOutput,
@@ -33,6 +34,7 @@ import {
   decideCommit,
   ensureTrajectoryIgnored,
   git,
+  indexNewVersion,
   isGitRepo,
   readLineage,
   recordDecisionMemory,
@@ -40,8 +42,8 @@ import {
   type CommitOptions,
 } from "./lineage.ts";
 import { remember, resolveBackend, shortHash, type Backend } from "./mem.ts";
-import { SCORER_PATH, spawnRunner, type Runner } from "./score.ts";
-import { supervise, type Signal, type SignalKind } from "./supervise.ts";
+import { hashFiles, parsePins, SCORER_ENV, SCORER_PATH, scorerChanges, scorerPaths, spawnRunner, type Runner } from "./score.ts";
+import { supervise, SUPERVISE_ENV, type Signal, type SignalKind } from "./supervise.ts";
 
 /** Every run lives here. In TRAJECTORY_PATHS and gitignored: trajectory, not lineage. */
 export const RUNS_DIR = ".avo/runs";
@@ -56,6 +58,10 @@ export const DEFAULT_MAX_ITERS = 10;
 export const MAX_CONSECUTIVE_NOOPS = 3;
 /** How much of the agent's own words become the commit rationale. A commit body is not a log. */
 const WHY_CAP_CHARS = 2_000;
+
+/** `on` steers, `off` skips, `detect` only records. */
+export const SUPERVISE_MODES = ["on", "off", "detect"] as const;
+export type SuperviseMode = (typeof SUPERVISE_MODES)[number];
 
 /** Said once per silent turn, in the manifest and in the rendered run (#49). */
 const NO_SUMMARY = "the agent produced no final message, so this turn is recorded with no rationale";
@@ -93,6 +99,7 @@ export interface TurnSupervision {
   triggered: boolean;
   signals: Signal[];
   since_best: number;
+  variations_since_best: number;
   repeat: number;
 }
 
@@ -120,10 +127,32 @@ export interface Iteration {
   /** The directive this iteration produced, injected into the *next* turn. */
   directive: string | null;
   intervention: Intervention | null;
+  /** `detect` only: the directive held back. */
+  withheld?: string | null;
   warnings: string[];
 }
 
-export type StopReason = "max-iters" | "stop-file" | "no-progress" | "agent-unavailable" | "dry-run";
+export type StopReason =
+  | "max-iters"
+  | "stop-file"
+  | "no-progress"
+  | "agent-unavailable"
+  | "approval-refused"
+  | "budget"
+  | "scorer-changed"
+  | "dry-run";
+
+/** A budget the agent gives no number for. */
+export type UsageBudget = "cost" | "tokens";
+
+/** Whole-run limits; `null` means unset (#28). */
+export interface RunBudget {
+  max_cost_usd: number | null;
+  max_tokens: number | null;
+  max_wall_s: number | null;
+  /** Set, but a turn reported no usage. */
+  unenforced: UsageBudget[];
+}
 
 /**
  * The whole run, and the on-disk manifest. One shape, not two: a manifest that can drift from
@@ -141,17 +170,27 @@ export interface RunReport {
   model: string | null;
   max_iters: number;
   timeout_s: number;
+  budget: RunBudget;
   prompt_sha: string;
   prompt: string;
   baseline: string;
   head: string;
   started_at: string;
   finished_at: string | null;
+  /** The loop's process; absent in old manifests. */
+  pid?: number;
+  host?: string;
   thresholds: { stall: number; thrash: number };
+  /** sha256 of each `f` file at start (#38). */
+  scorer_hashes: Record<string, string | null>;
+  /** Absent in older manifests, which means `on`. */
+  supervise?: SuperviseMode;
   iterations: Iteration[];
   /** Version numbers this run committed, in order. The run's actual output. */
   committed: number[];
   interventions: number;
+  /** Iterations that would steer; non-zero only in `detect`. */
+  detections?: number;
   /** Summed over every iteration. Disjoint by construction — see `AgentTokens`. */
   tokens: AgentTokens;
   /**
@@ -169,7 +208,12 @@ export interface RunReport {
 // arguments
 // ---------------------------------------------------------------------------
 
+export type RunMode = "run" | "resume" | "list" | "clean";
+
 export interface RunOptions {
+  mode: RunMode;
+  /** `--resume <id>` and `--clean <id|all>` land here. */
+  target: string;
   json: boolean;
   cwd: string;
   prompt: string | null;
@@ -178,14 +222,39 @@ export interface RunOptions {
   model: string | null;
   maxIters: number;
   timeoutS: number;
+  /** Whole-run budgets; `null` = no limit. */
+  maxCost: number | null;
+  maxTokens: number | null;
+  maxWallS: number | null;
   dryRun: boolean;
   /** `null` = take it from `.avo/config.json`, then the default. As for `avo supervise`. */
   stall: number | null;
   thrash: number | null;
+  supervise: SuperviseMode;
 }
+
+/** Flags that only shape a new run. */
+const NEW_RUN_FLAGS = new Set([
+  "--prompt",
+  "--prompt-file",
+  "--agent",
+  "--model",
+  "-n",
+  "--max-iters",
+  "--timeout",
+  "--stall",
+  "--thrash",
+  "--dry-run",
+  "--max-cost",
+  "--max-tokens",
+  "--max-wall",
+  "--supervise",
+]);
 
 export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): RunOptions | { error: string } {
   const opts: RunOptions = {
+    mode: "run",
+    target: "",
     json: false,
     cwd: process.cwd(),
     prompt: null,
@@ -195,21 +264,38 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     model: null,
     maxIters: DEFAULT_MAX_ITERS,
     timeoutS: DEFAULT_TIMEOUT_S,
+    maxCost: null,
+    maxTokens: null,
+    maxWallS: null,
     dryRun: false,
     stall: null,
     thrash: null,
+    supervise: "on",
   };
   const value = (i: number, flag: string): string | { error: string } => {
     const v = argv[i + 1];
     if (v === undefined) return { error: `avo run: ${flag} needs a value` };
     return v;
   };
+  let sawMode = false;
+  const setMode = (m: RunMode, flag: string): { error: string } | null => {
+    if (sawMode) return { error: `avo run: ${flag} cannot be combined with another mode` };
+    sawMode = true;
+    opts.mode = m;
+    return null;
+  };
+
+  let newRunFlag: string | null = null;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
+    if (NEW_RUN_FLAGS.has(a)) newRunFlag ??= a;
     if (a === "--json") opts.json = true;
     else if (a === "--dry-run") opts.dryRun = true;
-    else {
+    else if (a === "--list") {
+      const e = setMode("list", a);
+      if (e !== null) return e;
+    } else {
       const v = value(i, a);
       if (typeof v !== "string") return v;
       switch (a) {
@@ -241,6 +327,24 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
           opts.timeoutS = t;
           break;
         }
+        case "--max-cost": {
+          const c = Number(v);
+          if (!Number.isFinite(c) || c <= 0) return { error: `avo run: --max-cost needs a positive number, got '${v}'` };
+          opts.maxCost = c;
+          break;
+        }
+        case "--max-tokens": {
+          const n = Number(v);
+          if (!Number.isInteger(n) || n < 1) return { error: `avo run: --max-tokens needs a positive integer, got '${v}'` };
+          opts.maxTokens = n;
+          break;
+        }
+        case "--max-wall": {
+          const t = Number(v);
+          if (!Number.isFinite(t) || t <= 0) return { error: `avo run: --max-wall needs a positive number, got '${v}'` };
+          opts.maxWallS = t;
+          break;
+        }
         case "--stall": {
           const n = Number(v);
           if (!Number.isInteger(n) || n < 1) return { error: `avo run: --stall needs an integer >= 1` };
@@ -253,6 +357,19 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
           opts.thrash = n;
           break;
         }
+        case "--resume":
+        case "--clean": {
+          const e = setMode(a.slice(2) as RunMode, a);
+          if (e !== null) return e;
+          opts.target = v;
+          break;
+        }
+        case "--supervise": {
+          const m = SUPERVISE_MODES.find((k) => k === v);
+          if (m === undefined) return { error: `avo run: --supervise needs on, off or detect` };
+          opts.supervise = m;
+          break;
+        }
         default:
           return { error: `avo run: unknown option '${a}'` };
       }
@@ -260,6 +377,11 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     }
   }
 
+  if (opts.mode !== "run") {
+    // The manifest holds these; never ignore one.
+    if (newRunFlag !== null) return { error: `avo run: --${opts.mode} does not take ${newRunFlag}` };
+    return opts;
+  }
   if (opts.prompt === null && opts.promptFile === null) {
     return { error: 'avo run: needs --prompt-file <f> or --prompt "<text>" — a loop with no task is not a loop' };
   }
@@ -322,7 +444,9 @@ export function turnPrompt(
   if (prev !== null) {
     lines.push(`Previous iteration: ${describeOutcome(prev)}`);
     const s = prev.supervision;
-    if (s !== null) lines.push(`State: ${s.since_best} attempt(s) since the best version.`);
+    if (s !== null) {
+      lines.push(`State: ${s.variations_since_best} variation(s) since the best version (${s.since_best} score calls).`);
+    }
     lines.push(
       "",
       "You are a fresh process: nothing from the previous turn is in your context. Read what is",
@@ -354,10 +478,16 @@ export function writeRunManifest(cwd: string, report: RunReport): void {
   }
 }
 
+/** Ids are names, never paths. */
+const RUN_ID = /^\w[\w.-]*$/;
+
 export function readRunManifest(cwd: string, runId: string): RunReport | { error: string } {
+  if (!RUN_ID.test(runId)) return { error: `'${runId}' is not a run id` };
   try {
     const m = JSON.parse(readFileSync(join(runDir(cwd, runId), RUN_MANIFEST), "utf8")) as RunReport;
-    if (m.version !== 1 || !Array.isArray(m.iterations)) return { error: `${runId}'s manifest is not a v1 run manifest` };
+    if (m.version !== 1 || !Array.isArray(m.iterations) || m.run_id !== runId) {
+      return { error: `${runId}'s manifest is not a v1 run manifest` };
+    }
     return m;
   } catch {
     return { error: `no run '${runId}' in ${RUNS_DIR}` };
@@ -370,6 +500,22 @@ function uniqueRunId(cwd: string, now: Date, sha: string): string {
   let id = base;
   for (let k = 2; existsSync(runDir(cwd, id)); k++) id = `${base}-${k}`;
   return id;
+}
+
+/** Its loop still runs on this host. */
+export function runIsLive(m: RunReport): boolean {
+  if (m.finished_at !== null || m.pid === undefined || m.host !== hostname()) return false;
+  try {
+    process.kill(m.pid, 0);
+  } catch (e) {
+    // EPERM: alive, but not ours to signal.
+    if ((e as NodeJS.ErrnoException).code !== "EPERM") return false;
+  }
+  try {
+    return readFileSync(`/proc/${m.pid}/cmdline`, "utf8").includes("main.ts");
+  } catch {
+    return true; // No /proc: trust the pid.
+  }
 }
 
 export function listRuns(cwd: string): RunReport[] {
@@ -534,16 +680,22 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     model: opts.model,
     max_iters: opts.maxIters,
     timeout_s: opts.timeoutS,
+    budget: { max_cost_usd: opts.maxCost, max_tokens: opts.maxTokens, max_wall_s: opts.maxWallS, unenforced: [] },
     prompt_sha: sha,
     prompt,
     baseline,
     head: baseline,
     started_at: now().toISOString(),
     finished_at: null,
+    pid: process.pid,
+    host: hostname(),
     thresholds,
+    scorer_hashes: hashFiles(opts.cwd, scorerPaths(opts.cwd)),
+    supervise: opts.supervise,
     iterations: [],
     committed: [],
     interventions: 0,
+    detections: 0,
     tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
     cost_usd: null,
     stopped: "max-iters",
@@ -567,6 +719,172 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
   return await iterate(opts, deps, report, template, prompt);
 }
 
+/** A no-op needs HEAD unmoved: a self-committing turn leaves a clean tree too. */
+const isIdle = (it: Iteration): boolean => it.decision?.action === "noop" && it.head_after === it.head_before;
+
+function trailingNoops(its: readonly Iteration[]): number {
+  let n = 0;
+  for (let k = its.length - 1; k >= 0 && isIdle(its[k] as Iteration); k--) n++;
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+// resume, clean
+// ---------------------------------------------------------------------------
+
+/**
+ * Continues a killed run from its manifest: same prompt, agent, model and budget, from the next
+ * iteration, with the last outcome and directive in the turn prompt. Only an unfinished run
+ * (`finished_at: null`) resumes; a run that stopped for a reason has nothing left to continue.
+ *
+ * HEAD may have moved since — an operator commit, another loop. Every turn reads `P_t` afresh, so a
+ * descendant of the manifest's head is fine and only warned about. A head that is no longer an
+ * ancestor of HEAD (a reset, another branch) means the versions this run committed are gone, and
+ * the carried-over outcome would describe history the agent cannot see: refused.
+ */
+export async function resumeRun(opts: RunOptions, deps: RunDeps): Promise<RunReport | { error: string }> {
+  const { runner, env } = deps;
+  const manifest = readRunManifest(opts.cwd, opts.target);
+  if ("error" in manifest) return manifest;
+  if (manifest.finished_at !== null) {
+    return { error: `run '${manifest.run_id}' already finished (${manifest.stopped})` };
+  }
+  if (runIsLive(manifest)) return { error: `run '${manifest.run_id}' is still running (pid ${manifest.pid})` };
+
+  // A resume spawns agents, so the guards apply unchanged.
+  const guards = checkGuards(env, manifest.prompt_sha);
+  if (!guards.ok) return { error: guards.error };
+
+  const loaded = loadConfig(opts.cwd);
+  const template = resolveTemplate(manifest.agent, loaded.config.agent);
+  if ("error" in template) return { error: `run '${manifest.run_id}' used ${template.error}` };
+
+  const current = await head(runner, opts.cwd);
+  if (current === "") return { error: `no HEAD in ${opts.cwd}` };
+  if (current !== manifest.head) {
+    const kept = await git(runner, opts.cwd, ["merge-base", "--is-ancestor", manifest.head, current]);
+    if (kept.code !== 0) return { error: "HEAD lost this run's versions; start a new run" };
+    manifest.warnings.push(`HEAD moved from ${manifest.head.slice(0, 8)} to ${current.slice(0, 8)}`);
+    manifest.head = current;
+  }
+
+  const next = manifest.iterations.length + 1;
+  manifest.warnings.push(...guards.warnings, ...loaded.warnings, `resumed at iteration ${next} of ${manifest.max_iters}`);
+  manifest.stopped = "max-iters";
+  manifest.stop_reason = "";
+  manifest.pid = process.pid;
+  manifest.host = hostname();
+  // Older manifests predate budgets and pins.
+  manifest.budget ??= { max_cost_usd: null, max_tokens: null, max_wall_s: null, unenforced: [] };
+  manifest.scorer_hashes ??= hashFiles(opts.cwd, scorerPaths(opts.cwd));
+  const resumed: RunOptions = {
+    ...opts,
+    agent: manifest.agent,
+    model: manifest.model,
+    maxIters: manifest.max_iters,
+    timeoutS: manifest.timeout_s,
+    stall: manifest.thresholds.stall,
+    thrash: manifest.thresholds.thrash,
+    supervise: manifest.supervise ?? "on",
+  };
+  ensureTrajectoryIgnored(opts.cwd);
+  writeRunManifest(opts.cwd, manifest);
+  return await iterate(resumed, deps, manifest, template, manifest.prompt);
+}
+
+export interface RunCleanResult {
+  ok: boolean;
+  removed: string[];
+  errors: string[];
+}
+
+/** Only a directory with a readable manifest goes: the id is never a free path. */
+export function cleanRuns(cwd: string, target: string): RunCleanResult {
+  const ids = target === "all" ? listRuns(cwd).map((m) => m.run_id) : [target];
+  const out: RunCleanResult = { ok: true, removed: [], errors: [] };
+  for (const id of ids) {
+    const read = readRunManifest(cwd, id);
+    const m = "error" in read || !runIsLive(read) ? read : { error: `run '${id}' is still running (pid ${read.pid})` };
+    if ("error" in m) {
+      out.errors.push(m.error);
+      out.ok = false;
+      continue;
+    }
+    try {
+      rmSync(runDir(cwd, id), { recursive: true, force: true });
+      out.removed.push(id);
+    } catch (e) {
+      out.errors.push(`could not remove ${join(RUNS_DIR, id)} — ${(e as Error).message}`);
+      out.ok = false;
+    }
+  }
+  return out;
+}
+
+/** The `--list --json` row: no prompt, no turns. */
+const listEntry = (r: RunReport) => ({
+  run_id: r.run_id,
+  started_at: r.started_at,
+  finished_at: r.finished_at,
+  agent: r.agent,
+  iterations: r.iterations.length,
+  max_iters: r.max_iters,
+  committed: r.committed,
+  stopped: r.finished_at === null ? null : r.stopped,
+  running: runIsLive(r),
+});
+
+/** One line per run; the unfinished ones say how to resume. */
+export function renderRunList(runs: readonly RunReport[]): string {
+  if (runs.length === 0) return `no runs in ${RUNS_DIR}\n`;
+  const lines = runs.map((r) => {
+    const state = runIsLive(r)
+      ? `running (pid ${r.pid})`
+      : r.finished_at === null
+        ? `unfinished — 'avo run --resume ${r.run_id}'`
+        : `stopped: ${r.stopped}`;
+    const committed = r.committed.length === 0 ? "nothing committed" : r.committed.map((v) => `v${v}`).join(", ");
+    return `${r.run_id}  ${r.agent.padEnd(8)} ${r.iterations.length}/${r.max_iters} iteration(s), ${committed}, ${state}`;
+  });
+  return `${lines.join("\n")}\n`;
+}
+
+/** Hides supervisor state unless steering is on. */
+function shownTo(mode: SuperviseMode, prev: Iteration | null): Iteration | null {
+  return mode === "on" || prev === null ? prev : { ...prev, supervision: null };
+}
+
+/** Every token the run sent or got. */
+export function totalTokens(t: AgentTokens): number {
+  return t.input + t.output + (t.cache_read ?? 0) + (t.cache_write ?? 0);
+}
+
+/** Why the run must stop now, or `null`. */
+export function budgetCrossed(r: RunReport, nowMs: number): string | null {
+  const b = r.budget;
+  if (b.max_cost_usd !== null && r.cost_usd !== null && r.cost_usd >= b.max_cost_usd) {
+    return `--max-cost $${b.max_cost_usd} reached: $${r.cost_usd.toFixed(2)} spent`;
+  }
+  const tok = totalTokens(r.tokens);
+  if (b.max_tokens !== null && tok >= b.max_tokens) return `--max-tokens ${b.max_tokens} reached: ${tok} used`;
+  const wall = (nowMs - Date.parse(r.started_at)) / 1000;
+  if (b.max_wall_s !== null && wall >= b.max_wall_s) return `--max-wall ${b.max_wall_s}s reached: ${Math.round(wall)}s elapsed`;
+  return null;
+}
+
+/** Marks budgets this turn could not count. */
+export function markUnenforced(r: RunReport, turn: AgentTurn): void {
+  const b = r.budget;
+  const missed: UsageBudget[] = [];
+  if (b.max_cost_usd !== null && turn.cost_usd === null) missed.push("cost");
+  if (b.max_tokens !== null && turn.tokens === null) missed.push("tokens");
+  const fresh = missed.filter((k) => !b.unenforced.includes(k));
+  if (fresh.length === 0) return;
+  // Warn once per budget, not per turn.
+  b.unenforced.push(...fresh);
+  r.warnings.push(`the agent reported no ${fresh.join(" or ")}; budget unenforced`);
+}
+
 async function iterate(
   opts: RunOptions,
   deps: RunDeps,
@@ -576,16 +894,31 @@ async function iterate(
 ): Promise<RunReport> {
   const { runner, now } = deps;
   const guards = checkGuards(deps.env, report.prompt_sha);
-  const childEnv = guards.ok ? probeEnv(guards, report.prompt_sha, report.run_id, 0) : {};
+  // The outer run's pins win when nested.
+  const outer = parsePins(deps.env[SCORER_ENV]);
+  const pins = JSON.stringify(outer ?? report.scorer_hashes);
+  const childEnv = {
+    ...(guards.ok ? probeEnv(guards, report.prompt_sha, report.run_id, 0) : {}),
+    [SCORER_ENV]: pins,
+  };
 
-  let directive: string | null = null;
-  let prev: Iteration | null = null;
-  let noops = 0;
+  const mode = opts.supervise;
+  // Empty on a new run; a resume continues.
+  let prev: Iteration | null = report.iterations.at(-1) ?? null;
+  let directive: string | null = prev?.directive ?? null;
+  let noops = trailingNoops(report.iterations);
 
-  for (let iter = 1; iter <= opts.maxIters; iter++) {
+  for (let iter = report.iterations.length + 1; iter <= opts.maxIters; iter++) {
     if (existsSync(join(opts.cwd, STOP_FILE))) {
       report.stopped = "stop-file";
       report.stop_reason = `${STOP_FILE} exists; the loop stopped before iteration ${iter}`;
+      break;
+    }
+    // Checked before the turn: spend is known after.
+    const over = budgetCrossed(report, now().getTime());
+    if (over !== null) {
+      report.stopped = "budget";
+      report.stop_reason = `${over}; stopped before iteration ${iter}`;
       break;
     }
 
@@ -594,13 +927,13 @@ async function iterate(
     const turn = await driveAgent(
       runner,
       template,
-      { prompt: turnPrompt(base, iter, opts.maxIters, prev, directive), model: opts.model },
+      { prompt: turnPrompt(base, iter, opts.maxIters, shownTo(mode, prev), directive), model: opts.model },
       {
         cwd: opts.cwd,
         logPath,
         logFile: join(opts.cwd, logPath),
         timeoutS: opts.timeoutS,
-        env: { ...childEnv, AVO_FAN_PROBE: String(iter) },
+        env: { ...childEnv, AVO_FAN_PROBE: String(iter), [SUPERVISE_ENV]: mode },
       },
       now,
     );
@@ -617,6 +950,7 @@ async function iterate(
       supervision: null,
       directive: null,
       intervention: null,
+      ...(mode === "detect" ? { withheld: null } : {}),
       warnings: [],
     };
     report.iterations.push(it);
@@ -628,11 +962,30 @@ async function iterate(
       cache_write: report.tokens.cache_write + (turn.tokens?.cache_write ?? 0),
     };
     if (turn.cost_usd !== null) report.cost_usd = (report.cost_usd ?? 0) + turn.cost_usd;
+    // A turn that never ran reports nothing.
+    if (!turn.spawn_failed) markUnenforced(report, turn);
 
     // It will not start next iteration either; retrying is spinning.
     if (turn.spawn_failed) {
       report.stopped = "agent-unavailable";
       report.stop_reason = turn.error ?? `could not execute '${template.command}'`;
+      report.errors.push(report.stop_reason);
+      writeRunManifest(opts.cwd, report);
+      break;
+    }
+
+    // An edited `f` scores nothing honestly (#38).
+    const changed = scorerChanges(opts.cwd, report.scorer_hashes);
+    if (changed.length > 0) {
+      it.head_after = await head(runner, opts.cwd);
+      report.head = it.head_after;
+      // Versions from before the edit still count.
+      const own = await agentVersions(runner, opts.cwd, it.head_before, it.head_after, null);
+      it.agent_versions = own.versions;
+      it.warnings.push(...own.warnings);
+      for (const v of own.versions) report.committed.push(v.version);
+      report.stopped = "scorer-changed";
+      report.stop_reason = `iteration ${iter} changed ${changed.join(", ")}; avo run committed nothing`;
       report.errors.push(report.stop_reason);
       writeRunManifest(opts.cwd, report);
       break;
@@ -654,9 +1007,11 @@ async function iterate(
       cwd: opts.cwd,
       why: why === "" ? null : why,
       dryRun: false,
+      pins: outer,
     };
     const decision = await decideCommit(commitOpts, runner, now);
     it.warnings.push(...(await recordDecisionMemory(commitOpts, decision, runner, now)));
+    it.warnings.push(...(await indexNewVersion(commitOpts, decision, runner)));
     it.decision = compact(decision);
     it.head_after = await head(runner, opts.cwd);
     report.head = it.head_after;
@@ -667,25 +1022,47 @@ async function iterate(
     for (const v of own.versions) report.committed.push(v.version);
     if (decision.action === "committed" && decision.version !== null) report.committed.push(decision.version);
 
-    // A no-op needs HEAD unmoved: a self-committing turn leaves a clean tree too.
-    const idle = decision.action === "noop" && it.head_after === it.head_before;
-    noops = idle ? noops + 1 : 0;
+    noops = isIdle(it) ? noops + 1 : 0;
 
-    const s = await supervise({ json: true, cwd: opts.cwd, stall: opts.stall, thrash: opts.thrash }, { runner });
-    it.warnings.push(...s.warnings);
-    it.supervision = { triggered: s.triggered, signals: s.signals, since_best: s.state.since_best, repeat: s.state.repeat };
+    // `off` is the ablation arm: no detector call.
+    if (mode !== "off") {
+      const s = await supervise({ json: true, cwd: opts.cwd, stall: opts.stall, thrash: opts.thrash }, { runner });
+      it.warnings.push(...s.warnings);
+      it.supervision = {
+        triggered: s.triggered,
+        signals: s.signals,
+        since_best: s.state.since_best,
+        variations_since_best: s.state.variations_since_best,
+        repeat: s.state.repeat,
+      };
 
-    // Injected into the NEXT turn, but recorded here: it belongs to the state that produced it.
-    directive = s.directive;
-    it.directive = s.directive;
-    if (s.triggered && s.directive !== null) {
-      it.intervention = await recordIntervention(deps, opts.cwd, report.run_id, iter, s.signals, s.directive);
-      it.warnings.push(...it.intervention.warnings);
-      report.interventions++;
+      if (mode === "detect") {
+        // No memory record: the agent reads memory.
+        it.withheld = s.directive;
+        if (s.triggered) report.detections = (report.detections ?? 0) + 1;
+      } else {
+        // Injected into the NEXT turn, but recorded here: it belongs to the state that produced it.
+        directive = s.directive;
+        it.directive = s.directive;
+        if (s.triggered && s.directive !== null) {
+          it.intervention = await recordIntervention(deps, opts.cwd, report.run_id, iter, s.signals, s.directive);
+          it.warnings.push(...it.intervention.warnings);
+          report.interventions++;
+        }
+      }
     }
 
     prev = it;
     writeRunManifest(opts.cwd, report);
+
+    // The next turn gets the same mode.
+    if (turn.approval_refused) {
+      report.stopped = "approval-refused";
+      report.stop_reason = turn.error ?? `${template.command} refused its approval mode`;
+      report.errors.push(report.stop_reason);
+      writeRunManifest(opts.cwd, report);
+      break;
+    }
 
     if (noops >= MAX_CONSECUTIVE_NOOPS) {
       report.stopped = "no-progress";
@@ -709,8 +1086,35 @@ async function iterate(
 // rendering
 // ---------------------------------------------------------------------------
 
+/** Steps 3 and 4 of the plan. */
+function superviseSteps(r: RunReport, mode: SuperviseMode): string[] {
+  if (mode === "off") return ["  3. no avo supervise (--supervise off); nothing is injected"];
+  const detect = [
+    `  3. avo supervise — ${r.thresholds.stall} attempts with no improvement, or ${r.thresholds.thrash} failures`,
+    "     with the same signature, emits a steering directive that cites P_t and K",
+  ];
+  if (mode === "detect") {
+    return [...detect, "  4. record that directive as withheld; inject nothing, write no memory"];
+  }
+  return [...detect, "  4. inject that directive into the next turn's prompt and record it as an intervention"];
+}
+
+/** `$5, 100000 tokens, 600s wall`, or `none`. */
+export function describeBudget(b: RunBudget | undefined): string {
+  if (b === undefined) return "none";
+  const parts = [
+    ...(b.max_cost_usd === null ? [] : [`$${b.max_cost_usd}`]),
+    ...(b.max_tokens === null ? [] : [`${b.max_tokens} tokens`]),
+    ...(b.max_wall_s === null ? [] : [`${b.max_wall_s}s wall`]),
+  ];
+  if (parts.length === 0) return "none";
+  const loose = b.unenforced.length === 0 ? "" : ` (unenforced: ${b.unenforced.join(", ")})`;
+  return `${parts.join(", ")}${loose}`;
+}
+
 /** The plan `--dry-run` prints: everything resolved, and the sequence each iteration will follow. */
 export function renderPlan(r: RunReport): string {
+  const mode = r.supervise ?? "on";
   const lines = ["avo run (--dry-run: nothing is spawned, nothing is committed)", ""];
   for (const w of r.warnings) lines.push(`warning: ${w}`);
   if (r.warnings.length > 0) lines.push("");
@@ -721,7 +1125,10 @@ export function renderPlan(r: RunReport): string {
     `  model        ${r.model ?? "— (the agent's own default)"}`,
     `  iterations   up to ${r.max_iters}`,
     `  timeout      ${r.timeout_s === 0 ? "none" : `${r.timeout_s}s per turn`}`,
+    `  budget       ${describeBudget(r.budget)}`,
     `  thresholds   stall ${r.thresholds.stall}, thrash ${r.thresholds.thrash}`,
+    `  scorer       ${Object.keys(r.scorer_hashes).length} file(s) hashed; a change stops the run`,
+    `  supervise    ${mode}`,
     `  baseline     ${r.baseline.slice(0, 8)}`,
     `  run dir      ${join(RUNS_DIR, r.run_id)} (not created)`,
     `  stop file    ${STOP_FILE} (${existsSync(join(r.cwd, STOP_FILE)) ? "present — a real run would stop at once" : "absent"})`,
@@ -730,12 +1137,11 @@ export function renderPlan(r: RunReport): string {
     `  1. spawn the agent in ${r.cwd} with the turn prompt`,
     "  2. avo commit — score the tree, compare against the best version, persist only if it wins",
     "     (a turn that ran avo commit itself leaves nothing here; its version is still recorded)",
-    `  3. avo supervise — ${r.thresholds.stall} attempts with no improvement, or ${r.thresholds.thrash} failures`,
-    "     with the same signature, emits a steering directive that cites P_t and K",
-    "  4. inject that directive into the next turn's prompt and record it as an intervention",
+    ...superviseSteps(r, mode),
     "",
     `stops on: --max-iters ${r.max_iters}, ${STOP_FILE}, ${MAX_CONSECUTIVE_NOOPS} unchanged iterations in a row,`,
-    "          or an agent binary that cannot be started",
+    "          a crossed budget, an agent binary that cannot be started, a refused permission mode,",
+    "          or a changed scorer",
     "",
     "turn prompt (iteration 1):",
     "",
@@ -777,6 +1183,7 @@ export function renderRun(r: RunReport): string {
     if (it.warnings.includes(NO_SUMMARY)) lines.push(`       ${" ".repeat(7)}  ↳ ${NO_SUMMARY}`);
     for (const s of it.supervision?.signals ?? []) lines.push(`       ${" ".repeat(7)}  ↳ ${s.kind}: ${s.detail}`);
     if (it.intervention !== null) lines.push(`       ${" ".repeat(7)}  ↳ steered; recorded as ${it.intervention.key}`);
+    if (it.withheld) lines.push(`       ${" ".repeat(7)}  ↳ detected only; nothing injected`);
   }
   lines.push("");
 
@@ -790,6 +1197,9 @@ export function renderRun(r: RunReport): string {
     `  iterations   ${r.iterations.length} of ${r.max_iters}`,
     `  committed    ${r.committed.length === 0 ? "nothing" : r.committed.map((v) => `v${v}`).join(", ")}${byAgent === 0 ? "" : ` (${byAgent} by the agent itself)`}`,
     `  interventions ${r.interventions}`,
+    ...(r.supervise === undefined || r.supervise === "on" ? [] : [`  supervise    ${r.supervise}`]),
+    ...(r.supervise === "detect" ? [`  detections   ${r.detections ?? 0} (withheld, not injected)`] : []),
+    ...(describeBudget(r.budget) === "none" ? [] : [`  budget       ${describeBudget(r.budget)}`]),
     ...(tok > 0 ? [tokenLine] : []),
     ...(r.cost_usd === null || r.cost_usd === undefined ? [] : [`  cost         $${r.cost_usd.toFixed(2)} (as the agent reported it)`]),
     `  manifest     ${join(RUNS_DIR, r.run_id, RUN_MANIFEST)}`,
@@ -813,7 +1223,22 @@ export async function runCommand(
     io.err(`${opts.error}\n`);
     return 2;
   }
-  const result = await runLoop(opts, { runner, now, env });
+  if (opts.mode === "list") {
+    const runs = listRuns(opts.cwd);
+    io.out(opts.json ? `${JSON.stringify({ ok: true, runs: runs.map(listEntry) })}\n` : renderRunList(runs));
+    return 0;
+  }
+  if (opts.mode === "clean") {
+    const r = cleanRuns(opts.cwd, opts.target);
+    if (opts.json) io.out(`${JSON.stringify(r)}\n`);
+    else {
+      io.out(`removed ${r.removed.length} run(s)\n`);
+      for (const e of r.errors) io.err(`error: ${e}\n`);
+    }
+    return r.ok ? 0 : 2;
+  }
+  const deps = { runner, now, env };
+  const result = opts.mode === "resume" ? await resumeRun(opts, deps) : await runLoop(opts, deps);
   if ("error" in result) {
     io.err(`avo run: ${result.error}\n`);
     return 1;

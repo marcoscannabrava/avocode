@@ -21,13 +21,17 @@ nobody has solved, where the candidate is a policy rather than a pure function �
 **Prerequisites.** `git`, `jq`, Node ≥ 22, and — for `arcagi3` only — Python ≥ 3.12. Plus a coding
 agent (`claude`, `pi` or `codex`) for step 4. `avo doctor` tells you what is missing.
 
-**`avo` must resolve as `avo`, not `./bin/avo`** — every wired skill calls it by bare name (#41).
-From an uninstalled checkout, export it once per shell:
+**Every wired skill calls `avo` by its bare name.** `avo run` and `avo fan` put their own `bin/`
+first on the agent's `PATH`, so an agent they start always finds `avo` (#41). You start these
+commands yourself, so they must also resolve. From an uninstalled checkout, use `./bin/avo`, or
+export it once per shell:
 
 ```sh
 cd /path/to/avocode
 export PATH="$PWD/bin:$PATH"      # or run ./install.sh once, which links it into ~/.local/bin
 ```
+
+You need the export for an agent that you start by hand in the target.
 
 ## fuzzysearch — the fast one (no setup, seconds per score)
 
@@ -91,7 +95,9 @@ avo lineage --cwd <target>                   # P_t, the versions that survived
 touch <target>/.avo/STOP                     # stop the loop cleanly after this turn
 ```
 
-There is no `--max-cost` yet (#28). The cost knobs are `--max-iters`, `--timeout`, and `.avo/STOP`.
+To limit the cost, use `--max-cost <usd>`, `--max-tokens <n>` and `--max-wall <s>` (#28), together
+with `--max-iters`, `--timeout` and `.avo/STOP`. A budget stops the loop before the next turn, not
+during a turn.
 
 ## Troubleshooting
 
@@ -103,7 +109,7 @@ There is no `--max-cost` yet (#28). The cost knobs are `--max-iters`, `--timeout
 | `ok:false`, `jq not found` | install `jq`; the scorers pipe through it |
 | `correct:false`, `a protected file changed` | something edited `f`. `git checkout -- <the named path>` |
 | `correct:false`, `the game corpus does not match` | `bench/setup.sh --games-only` restores it |
-| `avo: command not found` inside an agent turn | the `PATH` export above, or `./install.sh` |
+| `avo: command not found` inside an agent turn | you started the agent by hand. Use the `PATH` export above, or `./install.sh` |
 | `avo run` exits having done nothing | no agent on `PATH`, or one that asks for permission — `avo doctor` |
 | the curve is flat | that is the agent, not `f`: both targets ship a measured ladder proving headroom |
 
@@ -145,8 +151,10 @@ corpus over 1000 words; only gate 3 sees it. A unit suite runs on small fixtures
 full-scale check, special-casing those fixtures buys a real score.
 
 The hash gate is not oversold: it covers `.avo/score` itself, but an agent that edits the scorer *and*
-the hash file defeats it from inside. `./bench/init.sh --verify <dest>` is the external audit that
-does not, and it is the last thing to run after any loop:
+the hash file defeats it from inside. `avo run` closes most of that gap during a loop: it hashes
+`.avo/score` and every path in `.avo/protected.txt` at start, and stops with `scorer-changed` when a
+turn changes one (#38). `./bench/init.sh --verify <dest>` is the external audit that does not trust
+the repo at all, and it is the last thing to run after any loop:
 
 ```sh
 ./bench/init.sh --verify ~/work/fuzzysearch    # exit 1 if f was edited — the curve means nothing
@@ -237,19 +245,31 @@ Three properties were required of every config, and each disqualified a game wor
 | exact reproducibility | `wm01` | Whack-a-Mole is real-time: 0.483, 0.533, 0.483 on three runs of identical code. A config that moves on its own lets the loop commit noise |
 | not saturated | `ic02` (1.000) | no headroom is no gradient |
 
-### Anti-gaming, in three layers
+### Anti-gaming, in four layers
 
 A policy has cheaper routes to a high score than playing well, so:
 
-1. **the hash gate**, as fuzzysearch has, over `bench/run.py`, the contract suite, `bench/games.lock`
-   and `.avo/protected.txt` itself;
-2. **a sandbox** armed only while `act` runs, which refuses a policy that reads a game's source out of
-   `bench/games/` or touches the network. It raises a `BaseException` *and* sets a flag the harness
-   checks afterwards — an earlier version raised a plain `Exception`, and a policy wrapping its body
-   in `except Exception: pass` swallowed the violation and scored a clean 0.26;
-3. **the game's identity is withheld.** ARC-AGI-3 is about games you have not seen, so `bench/run.py`
+1. **the hash gate**, as fuzzysearch has, over `bench/run.py`, `bench/child.py`, the contract suite,
+   `bench/games.lock` and `.avo/protected.txt` itself;
+2. **a separate process.** `bench/child.py` runs the policy in a new Python process. The engine stays
+   in `bench/run.py`. The child gets observations and sends back actions over a pipe, as JSON, and
+   the parent checks each action. Before this change, `act` ran in the engine's process. A test policy
+   (`test/fixtures/arcagi3/policy-escape.py`) found the live game with `gc.get_objects()` and called
+   its `next_level()`, or wrote the harness's `best` local through `sys._getframe()`. It scored 5.0
+   "of 1.0". In the child process it finds nothing and scores the baseline, bit for bit;
+3. **a sandbox** in the child, armed for its whole life, which refuses a policy that reads a game's
+   source out of `bench/games/`, touches the network, or starts or signals a process. It raises a
+   `BaseException` *and* sets a flag the child checks after each call — an earlier version raised a
+   plain `Exception`, and a policy wrapping its body in `except Exception: pass` swallowed the
+   violation and scored a clean 0.26. It also refuses reads under `/proc/<parent>/`, because the
+   parent's command line names the game. The child gets an allow-listed environment, so it does not
+   see `ARC_API_KEY` or other secrets. The hook is a tripwire, not a wall: policy code in the same
+   process can turn it off. It then cannot get to the engine's state, but it can read the game
+   sources. An OS-level wall (Landlock, seccomp, a user namespace) is follow-up work;
+4. **the game's identity is withheld.** ARC-AGI-3 is about games you have not seen, so `bench/run.py`
    never tells the policy which game it is playing. Recognising one from its frames is fair; keying on
-   an id is a lookup table.
+   an id is a lookup table. The engine's frame object has a `game_id` field, so `act` gets a plain
+   object with the five documented fields only. Before AVO-21, `frame.game_id` was there to read.
 
 Memorisation is the one thing `f` cannot catch from inside, because the training games live in the
 target repo. Hence:

@@ -24,6 +24,7 @@ Useful things to know before guessing:
 - The frames are numpy `(64, 64)` `int8` arrays, so `a == b` is an array, not a bool. Use
   `np.array_equal`.
 - You are not told which game you are playing. You may work it out from the frames.
-- Reading the game sources under `bench/games/`, or touching the network, fails the run outright.
+- Reading the game sources under `bench/games/`, touching the network, starting a process, or reading
+  the harness's `/proc` entry fails the run outright.
 - `.avo/score --config <game>` scores one game — much faster than the full vector while you iterate on
   a single mechanic.

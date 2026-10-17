@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   compareVectors,
   formatDelta,
@@ -9,20 +9,29 @@ import {
   type Scored,
   type Vector,
 } from "./compare.ts";
-import { loadConfig, type AvoConfig } from "./config.ts";
+import { LINEAGE_DIR, loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
-import { MEMORY_PATH, remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
-import { runScore, spawnRunner, type Attempt, type RunResult, type Runner, type ScoreOptions } from "./score.ts";
+import { HARNESS_PATHS, TRAJECTORY_IGNORE, TRAJECTORY_PATHS, withoutTrajectory } from "./harness.ts";
+import { reindex, resolveKnowledge } from "./knowledge.ts";
+import { remember, resolveBackend, shortHash, type MemoryInput } from "./mem.ts";
+import {
+  parsePins,
+  runScore,
+  SCORER_ENV,
+  scorerChanges,
+  spawnRunner,
+  type Attempt,
+  type RunResult,
+  type Runner,
+  type ScoreOptions,
+} from "./score.ts";
 
-/** Rendered, human- and qmd-readable record of each committed version. */
-export const LINEAGE_DIR = "lineage";
-/**
- * Trajectory, not population. Written *by* the harness during a variation step, so they must never
- * enter the lineage: committing them puts the log of how a version was reached inside it, and leaves
- * the tree permanently dirty — which defeats the no-op check below.
- */
-export const TRAJECTORY_PATHS: readonly string[] = [".avo/attempts.jsonl", ".avo/worktrees", ".avo/runs"];
-const TRAJECTORY_IGNORE = ".avo/.gitignore";
+// Moved to harness.ts; re-exported for callers.
+export { HARNESS_PATHS, TRAJECTORY_PATHS, withoutTrajectory };
+// Lives in config.ts; knowledge.ts imports it.
+export { LINEAGE_DIR };
+/** Where `rescore_best` checks out the incumbent. */
+const RESCORE_PARENT = ".avo/worktrees";
 /**
  * `.avo/.gitignore`'s contents: one entry per trajectory path, relative to `.avo/`, directories with
  * a trailing slash. A test asserts every TRAJECTORY_PATH has one, because drift is silent — the path
@@ -36,16 +45,6 @@ const IGNORE_ENTRIES: readonly string[] = ["attempts.jsonl", "worktrees/", "runs
  */
 const IGNORE_MARKER = "# written by avo";
 const IGNORE_HEADER = `${IGNORE_MARKER}: trajectory, not lineage`;
-/**
- * Everything avo writes *by itself*, none of which may read as a candidate change: the trajectory
- * log, the harness gitignore, and the memory log `avo commit` appends *after* committing. Without
- * this, v1's memory makes the next run see a change the agent never made — scoring an unchanged
- * tree, refusing it, and remembering that refusal, which dirties the tree again.
- *
- * Unlike TRAJECTORY_PATHS these stay staged: they belong in the repo, they are just not evidence of
- * a variation.
- */
-export const HARNESS_PATHS: readonly string[] = [...TRAJECTORY_PATHS, TRAJECTORY_IGNORE, MEMORY_PATH];
 /** `git notes --ref=avo` carries the full attempt; trailers carry only what the comparator needs. */
 export const NOTES_REF = "avo";
 export const VERSION_TRAILER = "Avo-Version";
@@ -136,19 +135,6 @@ export async function git(runner: Runner, cwd: string, args: readonly string[]):
   return await runner("git", args, { cwd, timeoutMs: 60_000 });
 }
 
-/** Drops what avo wrote itself, so a repo the agent did not touch still reads as clean. */
-export function withoutTrajectory(porcelain: string): string[] {
-  return porcelain
-    .split("\n")
-    .filter((l) => l.trim() !== "")
-    .filter((l) => {
-      // porcelain v1: XY <path>, where a rename is "XY old -> new".
-      const path = l.slice(3).split(" -> ").pop() ?? "";
-      const clean = path.replace(/^"|"$/g, "");
-      return !HARNESS_PATHS.some((t) => clean === t || clean.startsWith(`${t}/`));
-    });
-}
-
 /**
  * Idempotent and *additive*: a file we wrote gains any missing entry, so a repo predating
  * `.avo/runs/` still stops tracking it. Returning early on an existing file — the original bug —
@@ -194,7 +180,9 @@ export async function isGitRepo(runner: Runner, cwd: string): Promise<boolean> {
  * one span of the loop — how `avo run` learns the agent committed for itself (#42).
  */
 export async function readLineage(runner: Runner, cwd: string, rev = "HEAD"): Promise<Lineage> {
-  const log = await git(runner, cwd, ["log", `--format=%H${US}%aI${US}%B${RS}`, rev]);
+  // git filters; the parse below still validates.
+  const grep = `--grep=^[[:space:]]*${VERSION_TRAILER}:`;
+  const log = await git(runner, cwd, ["log", "--extended-regexp", grep, `--format=%H${US}%aI${US}%B${RS}`, rev]);
   if (log.code !== 0 || log.spawnError !== null) return { versions: [], warnings: [] };
 
   const warnings: string[] = [];
@@ -248,6 +236,19 @@ export function bestVersion(versions: readonly Version[]): Version | null {
   return versions.length === 0 ? null : (versions.reduce((a, b) => (b.version > a.version ? b : a)) as Version);
 }
 
+/** Both vectors of a re-measured incumbent. */
+export interface Rescore {
+  version: number;
+  sha: string;
+  /** Configs whose stored delta was within 2·floor. */
+  near: string[];
+  /** From the `Avo-Score` trailer. */
+  stored: Record<string, number>;
+  /** Measured now; `null` when re-scoring failed. */
+  fresh: Record<string, number> | null;
+  error: string | null;
+}
+
 export interface CommitDecision {
   action: "committed" | "refused" | "noop" | "would-commit";
   version: number | null;
@@ -257,6 +258,8 @@ export interface CommitDecision {
   attempt: Attempt | null;
   best: { version: number; sha: string } | null;
   lineage_file: string | null;
+  /** Set when `rescore_best` re-measured the best version. */
+  rescore: Rescore | null;
   warnings: string[];
   errors: string[];
 }
@@ -271,6 +274,7 @@ export function renderLineageFile(
   diffstat: string,
   ts: string,
   best: Version | null,
+  rescore: Rescore | null = null,
 ): string {
   const dir = score.higher_is_better ? "higher is better" : "lower is better";
   const sign = score.higher_is_better ? 1 : -1;
@@ -280,6 +284,7 @@ export function renderLineageFile(
     `- **scored** ${fmt(score.primary, score.unit)} (${dir})`,
     `- **parent** ${best === null ? "— (first version)" : `v${best.version} \`${best.sha.slice(0, 7)}\``}`,
     `- **decision** ${cmp.decision} — ${cmp.reason}`,
+    ...(rescore === null ? [] : [`- **rescored** ${renderRescore(rescore)}`]),
     `- **committed** ${ts}`,
     "",
     "## scores",
@@ -317,6 +322,18 @@ export function renderLineageFile(
   return lines.join("\n");
 }
 
+const vec = (v: Record<string, number> | null): string =>
+  v === null
+    ? "—"
+    : Object.entries(v)
+        .map(([k, n]) => `${k}=${n}`)
+        .join(" ");
+
+/** One line: stored versus fresh. */
+function renderRescore(r: Rescore): string {
+  return `v${r.version} stored ${vec(r.stored)}, fresh ${vec(r.fresh)}`;
+}
+
 export function renderDecision(d: CommitDecision): string {
   const lines: string[] = ["avo commit", ""];
   for (const w of d.warnings) lines.push(`warning: ${w}`);
@@ -327,6 +344,7 @@ export function renderDecision(d: CommitDecision): string {
     lines.push(`  scored       ${fmt(a.primary, a.unit)}${a.pass ? "" : "  (correctness gate: FAILED)"}`);
   }
   if (d.best !== null) lines.push(`  best         v${d.best.version} (${d.best.sha.slice(0, 7)})`);
+  if (d.rescore !== null) lines.push(`  rescored     ${renderRescore(d.rescore)}`);
   const sign = d.attempt?.higher_is_better === false ? -1 : 1;
   for (const delta of d.comparison?.deltas ?? []) {
     lines.push(
@@ -345,9 +363,14 @@ export function renderDecision(d: CommitDecision): string {
 export interface CommitOptions extends ScoreOptions {
   why: string | null;
   dryRun: boolean;
+  /** `f`'s hashes pinned by `avo run`, if any. */
+  pins?: Record<string, string | null> | null;
 }
 
-export function parseCommitArgs(argv: readonly string[]): CommitOptions | { error: string } {
+export function parseCommitArgs(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): CommitOptions | { error: string } {
   const opts: CommitOptions = {
     json: false,
     parallel: false,
@@ -358,6 +381,7 @@ export function parseCommitArgs(argv: readonly string[]): CommitOptions | { erro
     cwd: process.cwd(),
     why: null,
     dryRun: false,
+    pins: parsePins(env[SCORER_ENV]),
   };
   const need = (i: number, flag: string): string | { error: string } => {
     const v = argv[i + 1];
@@ -421,6 +445,7 @@ function refusal(reason: string, extra: Partial<CommitDecision> = {}): CommitDec
     attempt: null,
     best: null,
     lineage_file: null,
+    rescore: null,
     warnings: [],
     errors: [],
     ...extra,
@@ -456,6 +481,10 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
     };
   }
 
+  // An edited `f` must not judge (#38).
+  const moved = opts.pins ? scorerChanges(opts.cwd, opts.pins) : [];
+  if (moved.length > 0) return refusal(`f changed since avo run started: ${moved.join(", ")}`);
+
   const { config, warnings: configWarnings } = loadConfig(opts.cwd);
   const { attempt, error } = await runScore(opts, runner, now);
   if (attempt === null) {
@@ -487,21 +516,112 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
   }
 
   const candidate: Vector = scoreVector(attempt);
-  const bestVec: Vector | null = best === null ? null : scoreVector(best.score);
-  const cmp = compareVectors(candidate, bestVec, config, {
-    candidateHigherIsBetter: attempt.higher_is_better,
-    bestHigherIsBetter: best?.score.higher_is_better,
-    candidateStderr: stderrVector(attempt),
-    bestStderr: best === null ? undefined : stderrVector(best.score),
-  });
-  const common = { attempt, best: bestRef, comparison: cmp, warnings };
+  const candidateStderr = stderrVector(attempt);
+  // dominate-z keeps its noise bar here.
+  const against = (b: Scored | null, bestStderr?: Vector): Comparison =>
+    compareVectors(candidate, b === null ? null : scoreVector(b), config, {
+      candidateHigherIsBetter: attempt.higher_is_better,
+      bestHigherIsBetter: b?.higher_is_better,
+      candidateStderr,
+      bestStderr: b === null ? undefined : (bestStderr ?? stderrVector(b)),
+    });
+  let cmp = against(best?.score ?? null);
+
+  // Close call: measure the incumbent here.
+  let rescore: Rescore | null = null;
+  const near = best !== null && config.rescore_best === "near" ? nearConfigs(cmp, config.floor) : [];
+  if (best !== null && near.length > 0) {
+    const fresh = await rescoreBest(opts, best.sha, runner, now, config.rescore_links);
+    const stored = best.score.scores;
+    // Re-measuring must not drop a config.
+    const freshKeys = fresh.attempt === null ? [] : Object.keys(scoreVector(fresh.attempt));
+    const lost = Object.keys(scoreVector(best.score)).filter((k) => !freshKeys.includes(k));
+    const error = fresh.error ?? (lost.length > 0 ? `the re-measure lost configs: ${lost.join(", ")}` : null);
+    rescore = { version: best.version, sha: best.sha, near, stored, fresh: null, error };
+    if (fresh.attempt === null || error !== null) {
+      return refusal("could not re-measure the best version", {
+        attempt,
+        best: bestRef,
+        comparison: cmp,
+        rescore,
+        warnings,
+        errors: [`rescore of v${best.version} failed: ${error}`, RESCORE_HINT],
+      });
+    }
+    rescore.fresh = toVersionScore(fresh.attempt).scores;
+    // Fresh stderr if the re-measure has one.
+    const freshStderr = stderrVector(fresh.attempt);
+    cmp = against(fresh.attempt, Object.keys(freshStderr).length > 0 ? freshStderr : stderrVector(best.score));
+  }
+  const common = { attempt, best: bestRef, comparison: cmp, rescore, warnings };
 
   if (!cmp.commit) return refusal(cmp.reason, common);
   if (opts.dryRun) {
     const would = `${cmp.reason} — would commit v${(best?.version ?? 0) + 1} (--dry-run, nothing written)`;
     return { ...refusal(would, common), action: "would-commit", version: (best?.version ?? 0) + 1 };
   }
-  return await writeCommit(opts, runner, now, attempt, cmp, best, warnings);
+  return await writeCommit(opts, runner, now, attempt, cmp, best, rescore, warnings);
+}
+
+/** Shared configs within 2·floor, inclusive. */
+export function nearConfigs(cmp: Comparison, floor: number): string[] {
+  return cmp.deltas.filter((d) => Math.abs(d.rel) <= 2 * floor).map((d) => d.config);
+}
+
+/** What to do when the re-measure fails. */
+export const RESCORE_HINT =
+  'hint: list untracked inputs in "rescore_links", or set "rescore_best": "off"';
+
+/** Scores `sha` in a throwaway worktree. */
+export async function rescoreBest(
+  opts: ScoreOptions,
+  sha: string,
+  runner: Runner,
+  now: () => Date,
+  links: readonly string[] = [],
+): Promise<{ attempt: Attempt | null; error: string | null }> {
+  const parent = join(opts.cwd, RESCORE_PARENT);
+  mkdirSync(parent, { recursive: true });
+  const dir = mkdtempSync(join(parent, "rescore-"));
+  try {
+    const add = await git(runner, opts.cwd, ["worktree", "add", "--detach", dir, sha]);
+    if (add.code !== 0) return { attempt: null, error: `git worktree add failed: ${add.stderr.trim()}` };
+    const linkError = linkUntracked(opts.cwd, dir, links);
+    if (linkError !== null) return { attempt: null, error: linkError };
+    const run = await runScore({ ...opts, json: true, init: null, force: false, record: false, cwd: dir }, runner, now);
+    const a = run.attempt;
+    if (a === null) return { attempt: null, error: run.error };
+    if (a.errors.length > 0) return { attempt: null, error: a.errors.join("; ") };
+    if (!a.pass) return { attempt: null, error: "the best version did not pass here" };
+    return { attempt: a, error: null };
+  } finally {
+    await git(runner, opts.cwd, ["worktree", "remove", "--force", dir]);
+    rmSync(dir, { recursive: true, force: true });
+    await git(runner, opts.cwd, ["worktree", "prune"]);
+  }
+}
+
+/** Symlinks root paths into the worktree. */
+export function linkUntracked(root: string, dir: string, links: readonly string[]): string | null {
+  for (const p of links) {
+    const src = join(root, p);
+    const dst = join(dir, p);
+    if (!existsSync(src)) return `rescore_links: ${p} does not exist`;
+    if (exists(dst)) return `rescore_links: ${p} is tracked, so do not link it`;
+    mkdirSync(dirname(dst), { recursive: true });
+    symlinkSync(src, dst);
+  }
+  return null;
+}
+
+/** Like existsSync, but sees dangling links. */
+function exists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Everything that touches the repository, split out so the decision above stays readable. */
@@ -512,13 +632,14 @@ async function writeCommit(
   attempt: Attempt,
   cmp: Comparison,
   best: Version | null,
+  rescore: Rescore | null,
   warnings: string[],
 ): Promise<CommitDecision> {
   const version = (best?.version ?? 0) + 1;
   const score = toVersionScore(attempt);
   const bestRef = best === null ? null : { version: best.version, sha: best.sha };
   const fail = (msg: string): CommitDecision =>
-    refusal(msg, { attempt, comparison: cmp, best: bestRef, warnings, errors: [msg] });
+    refusal(msg, { attempt, comparison: cmp, best: bestRef, rescore, warnings, errors: [msg] });
 
   const add = await git(runner, opts.cwd, ["add", "-A"]);
   if (add.code !== 0) return fail(`git add failed: ${add.stderr.trim() || add.stdout.trim()}`);
@@ -533,7 +654,7 @@ async function writeCommit(
   const absPath = join(opts.cwd, relPath);
   try {
     mkdirSync(join(opts.cwd, LINEAGE_DIR), { recursive: true });
-    writeFileSync(absPath, renderLineageFile(version, score, cmp, opts.why, diffstat, now().toISOString(), best));
+    writeFileSync(absPath, renderLineageFile(version, score, cmp, opts.why, diffstat, now().toISOString(), best, rescore));
   } catch (e) {
     return fail(`could not write ${relPath} — ${(e as Error).message}`);
   }
@@ -561,7 +682,7 @@ async function writeCommit(
     "add",
     "-f",
     "-m",
-    JSON.stringify({ version, attempt, comparison: cmp, why: opts.why }),
+    JSON.stringify({ version, attempt, comparison: cmp, rescore, why: opts.why }),
     sha,
   ]);
   if (note.code !== 0) {
@@ -577,6 +698,7 @@ async function writeCommit(
     attempt,
     best: bestRef,
     lineage_file: relPath,
+    rescore,
     warnings,
     errors: [],
   };
@@ -638,6 +760,18 @@ export async function recordDecisionMemory(
   return [...backend.warnings, ...w.warnings, ...(w.error === null ? [] : [w.error])];
 }
 
+/** Cold qmd embed must not block commits. */
+export const COMMIT_REINDEX_TIMEOUT_MS = 60_000;
+
+/** Puts a new lineage file into qmd. */
+export async function indexNewVersion(opts: CommitOptions, d: CommitDecision, runner: Runner): Promise<string[]> {
+  if (!opts.record || opts.dryRun || d.action !== "committed") return [];
+  // Without qmd, the local scan reads live.
+  if ((await resolveKnowledge(runner, opts.cwd)).kind !== "qmd") return [];
+  const { warnings } = await reindex(runner, opts.cwd, "lineage", COMMIT_REINDEX_TIMEOUT_MS);
+  return warnings.length === 0 ? [] : [...warnings, "run 'avo know reindex' to finish the index"];
+}
+
 /** Exit codes mirror `avo score`: 0 committed or no-op, 1 refused, 2 harness error. */
 export async function commitCommand(
   argv: readonly string[],
@@ -652,7 +786,10 @@ export async function commitCommand(
   }
   const decision = await decideCommit(parsed, runner, now);
   decision.warnings.push(...(await recordDecisionMemory(parsed, decision, runner, now)));
-  io.out(parsed.json ? `${JSON.stringify(decision)}\n` : renderDecision(decision));
+  decision.warnings.push(...(await indexNewVersion(parsed, decision, runner)));
+  // `ok`: the command ran, like score.
+  const ok = decision.errors.length === 0;
+  io.out(parsed.json ? `${JSON.stringify({ ok, ...decision })}\n` : renderDecision(decision));
   if (decision.errors.length > 0) return 2;
   return decision.action === "refused" ? 1 : 0;
 }

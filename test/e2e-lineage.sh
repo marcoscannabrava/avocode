@@ -63,7 +63,7 @@ out="$(avo commit --cwd "$fixture" --why "baseline: adds the scorer" --json)"
 code=$?
 say "\$ avo commit (v1) -> exit $code"
 say "  $(printf '%s' "$out" | jq -c '{action,version,reason}')"
-if [[ $code -eq 0 ]] && printf '%s' "$out" | jq -e '.action == "committed" and .version == 1' >/dev/null; then
+if [[ $code -eq 0 ]] && printf '%s' "$out" | jq -e '.ok == true and .action == "committed" and .version == 1' >/dev/null; then
   ok "the first passing candidate becomes v1"
 else
   bad "v1 was not committed"
@@ -108,7 +108,7 @@ out="$(avo commit --cwd "$fixture" --json)"
 code=$?
 say "\$ avo commit (bigger file) -> exit $code"
 say "  $(printf '%s' "$out" | jq -c '{action,reason}')"
-if [[ $code -eq 1 ]] && printf '%s' "$out" | jq -e '.action == "refused" and (.reason | test("regressed"))' >/dev/null; then
+if [[ $code -eq 1 ]] && printf '%s' "$out" | jq -e '.ok == true and .action == "refused" and (.reason | test("regressed"))' >/dev/null; then
   ok "a regression is refused with a reason that names the config"
 else
   bad "a regression was not refused"
@@ -208,11 +208,60 @@ else
   bad "trailer count and lineage length disagree"
 fi
 
-# ---------------------------------------------------------------- 10. dominate-z (AVO-15)
+# ---------------------------------------------------------------- 10. rescore_best (AVO-14)
+# Score = impl.txt x a machine speed outside the repo. A slower box after v1 is drift.
+say ""
+say "# rescore_best: a second fixture; the machine slows to 0.9 after v1"
+drift="$(mktemp -d)"
+trap 'rm -rf "$fixture" "$drift"' EXIT
+indrift() { git -C "$drift/repo" "$@"; }
+mkdir -p "$drift/repo/.avo"
+echo 1 > "$drift/speed"
+indrift init -q
+indrift config user.email avo@example.com
+indrift config user.name avo
+indrift config commit.gpgsign false
+echo 100 > "$drift/repo/impl.txt"
+indrift add -A
+indrift commit -qm "drift baseline"
+cat > "$drift/repo/.avo/score" <<SCORER
+#!/usr/bin/env bash
+v=\$(awk -v a="\$(cat impl.txt)" -v m="\$(cat $drift/speed)" 'BEGIN{print a*m}')
+printf '{"ok":true,"correct":true,"primary":%s,"unit":"ops","higher_is_better":true}\n' "\$v"
+SCORER
+chmod +x "$drift/repo/.avo/score"
+printf '{"floor":0.05,"rescore_best":"near"}\n' > "$drift/repo/.avo/config.json"
+avo commit --cwd "$drift/repo" --json >/dev/null
+
+echo 0.9 > "$drift/speed"
+echo 110 > "$drift/repo/impl.txt"
+out="$(avo commit --cwd "$drift/repo" --json)"
+code=$?
+say "\$ avo commit (110 on a 0.9 box: 99 vs stored 100) -> exit $code"
+say "  $(printf '%s' "$out" | jq -c '{action,version,rescore:(.rescore|{near,stored,fresh})}')"
+if [[ $code -eq 0 ]] && printf '%s' "$out" |
+  jq -e '.action == "committed" and .rescore.stored["*"] == 100 and .rescore.fresh["*"] == 90' >/dev/null; then
+  ok "rescore_best ranks a close call against the fresh incumbent"
+else
+  bad "rescore_best did not use the fresh vector"
+fi
+if grep -q '^- \*\*rescored\*\* v1 stored \*=100, fresh \*=90' "$drift/repo/lineage/v002.md" &&
+  indrift notes --ref=avo show HEAD | jq -e '.rescore.fresh["*"] == 90' >/dev/null 2>&1; then
+  ok "the lineage file and the note record both vectors"
+else
+  bad "the stored and fresh vectors were not both recorded"
+fi
+if [[ -z "$(ls -A "$drift/repo/.avo/worktrees" 2>/dev/null)" ]] && [[ "$(indrift worktree list | wc -l)" -eq 1 ]]; then
+  ok "the temp worktree is gone after the re-measure"
+else
+  bad "the re-measure left a worktree behind"
+fi
+
+# ---------------------------------------------------------------- 11. dominate-z (AVO-15)
 say ""
 say "# dominate-z: the scorer reads its score and stderr from files"
 zfix="$(mktemp -d)"
-trap 'rm -rf "$fixture" "$zfix"' EXIT
+trap 'rm -rf "$fixture" "$drift" "$zfix"' EXIT
 inz() { git -C "$zfix" "$@"; }
 inz init -q
 inz config user.email avo@example.com
