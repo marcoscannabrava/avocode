@@ -1,6 +1,14 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { compareVectors, formatRel, scoreVector, type Comparison, type Scored, type Vector } from "./compare.ts";
+import {
+  compareVectors,
+  formatDelta,
+  scoreVector,
+  stderrVector,
+  type Comparison,
+  type Scored,
+  type Vector,
+} from "./compare.ts";
 import { LINEAGE_DIR, loadConfig, type AvoConfig } from "./config.ts";
 import type { Io } from "./io.ts";
 import { HARNESS_PATHS, TRAJECTORY_IGNORE, TRAJECTORY_PATHS, withoutTrajectory } from "./harness.ts";
@@ -52,6 +60,8 @@ export interface VersionScore extends Scored {
   unit: string;
   higher_is_better: boolean;
   scores: Record<string, number>;
+  /** Absent on versions written before AVO-15. */
+  stderr?: Record<string, number>;
 }
 
 export interface Version {
@@ -72,8 +82,14 @@ export function isVersionScore(v: unknown): v is VersionScore {
     typeof o["unit"] === "string" &&
     typeof o["higher_is_better"] === "boolean" &&
     typeof o["scores"] === "object" &&
-    o["scores"] !== null
+    o["scores"] !== null &&
+    (o["stderr"] === undefined || isNumberMap(o["stderr"]))
   );
+}
+
+function isNumberMap(v: unknown): boolean {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  return Object.values(v).every((x) => typeof x === "number" && Number.isFinite(x) && x >= 0);
 }
 
 export function toVersionScore(a: Attempt): VersionScore {
@@ -84,6 +100,8 @@ export function toVersionScore(a: Attempt): VersionScore {
     // Persist the comparator's own vector, so keys match whether or not the scorer sent
     // `scores` (PLAN §6 Q1).
     scores: Object.keys(a.scores).length > 0 ? a.scores : a.primary === null ? {} : { "*": a.primary },
+    // The next comparison needs the best's σ.
+    ...(a.stderr !== undefined ? { stderr: a.stderr } : {}),
   };
 }
 
@@ -276,7 +294,7 @@ export function renderLineageFile(
     lines.push(
       `| config | v${best?.version ?? "—"} | v${version} | delta |`,
       "| --- | ---: | ---: | ---: |",
-      ...cmp.deltas.map((d) => `| \`${d.config}\` | ${d.best * sign} | ${d.candidate * sign} | ${formatRel(d.rel)} |`),
+      ...cmp.deltas.map((d) => `| \`${d.config}\` | ${d.best * sign} | ${d.candidate * sign} | ${formatDelta(d, cmp.z)} |`),
     );
   } else {
     lines.push(
@@ -331,7 +349,7 @@ export function renderDecision(d: CommitDecision): string {
   for (const delta of d.comparison?.deltas ?? []) {
     lines.push(
       `  ${delta.config.padEnd(12)} ${delta.best * sign} -> ${delta.candidate * sign}  ` +
-        `${formatRel(delta.rel)}  ${delta.verdict}`,
+        `${formatDelta(delta, d.comparison?.z)}  ${delta.verdict}`,
     );
   }
   lines.push("");
@@ -498,10 +516,14 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
   }
 
   const candidate: Vector = scoreVector(attempt);
-  const against = (b: Scored | null): Comparison =>
+  const candidateStderr = stderrVector(attempt);
+  // dominate-z keeps its noise bar here.
+  const against = (b: Scored | null, bestStderr?: Vector): Comparison =>
     compareVectors(candidate, b === null ? null : scoreVector(b), config, {
       candidateHigherIsBetter: attempt.higher_is_better,
       bestHigherIsBetter: b?.higher_is_better,
+      candidateStderr,
+      bestStderr: b === null ? undefined : (bestStderr ?? stderrVector(b)),
     });
   let cmp = against(best?.score ?? null);
 
@@ -527,7 +549,9 @@ export async function decideCommit(opts: CommitOptions, runner: Runner, now: () 
       });
     }
     rescore.fresh = toVersionScore(fresh.attempt).scores;
-    cmp = against(fresh.attempt);
+    // Fresh stderr if the re-measure has one.
+    const freshStderr = stderrVector(fresh.attempt);
+    cmp = against(fresh.attempt, Object.keys(freshStderr).length > 0 ? freshStderr : stderrVector(best.score));
   }
   const common = { attempt, best: bestRef, comparison: cmp, rescore, warnings };
 
@@ -834,7 +858,8 @@ export function renderLineage(l: Lineage, cfg: AvoConfig): string {
     );
   }
   const best = bestVersion(l.versions);
-  lines.push("", `best: v${best?.version} (${best?.sha.slice(0, 7)}); reduce: ${cfg.reduce}, floor: ${cfg.floor}`, "");
+  const z = cfg.reduce === "dominate-z" ? `, z: ${cfg.z}` : "";
+  lines.push("", `best: v${best?.version} (${best?.sha.slice(0, 7)}); reduce: ${cfg.reduce}, floor: ${cfg.floor}${z}`, "");
   return `${lines.join("\n")}\n`;
 }
 
@@ -845,7 +870,10 @@ export function renderVersion(v: Version): string {
     `  date     ${v.date}`,
     `  subject  ${v.subject}`,
     `  primary  ${fmt(v.score.primary, v.score.unit)} (${dir})`,
-    ...Object.entries(v.score.scores).map(([k, s]) => `  ${k.padEnd(8)} ${s}`),
+    ...Object.entries(v.score.scores).map(([k, s]) => {
+      const e = v.score.stderr?.[k];
+      return `  ${k.padEnd(8)} ${s}${e === undefined ? "" : ` ±${e}`}`;
+    }),
     "",
     v.why ?? "(no rationale recorded)",
     "",
@@ -896,6 +924,8 @@ export async function lineageCommand(argv: readonly string[], io: Io, runner: Ru
   const cmp = compareVectors(scoreVector(to.score), scoreVector(from.score), config, {
     candidateHigherIsBetter: to.score.higher_is_better,
     bestHigherIsBetter: from.score.higher_is_better,
+    candidateStderr: stderrVector(to.score),
+    bestStderr: stderrVector(from.score),
   });
   const patch = await git(runner, opts.cwd, ["diff", `${from.sha}..${to.sha}`]);
   if (opts.json) {
@@ -905,7 +935,7 @@ export async function lineageCommand(argv: readonly string[], io: Io, runner: Ru
   const sign = to.score.higher_is_better ? 1 : -1;
   const lines = [`avo lineage diff v${from.version} -> v${to.version}`, ""];
   for (const d of cmp.deltas) {
-    lines.push(`  ${d.config.padEnd(12)} ${d.best * sign} -> ${d.candidate * sign}  ${formatRel(d.rel)}  ${d.verdict}`);
+    lines.push(`  ${d.config.padEnd(12)} ${d.best * sign} -> ${d.candidate * sign}  ${formatDelta(d, cmp.z)}  ${d.verdict}`);
   }
   lines.push("", cmp.reason, "", patch.stdout);
   io.out(`${lines.join("\n")}\n`);

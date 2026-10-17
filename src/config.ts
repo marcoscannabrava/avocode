@@ -20,8 +20,11 @@ export const ConfigSchema = Type.Object(
      * `dominate` (default) — no config may regress and at least one must improve.
      * `mean` — the weighted mean must improve. Use only when configs genuinely trade off; a mean
      * lets a large win on one config pay for a regression on another.
+     * `dominate-z` — `dominate`, with a `z·σ` bar.
      */
-    reduce: Type.Optional(Type.Union([Type.Literal("dominate"), Type.Literal("mean")])),
+    reduce: Type.Optional(Type.Union([Type.Literal("dominate"), Type.Literal("mean"), Type.Literal("dominate-z")])),
+    /** The σ multiple for `dominate-z`. */
+    z: Type.Optional(Type.Number({ minimum: 0 })),
     /** Relative noise band: a change smaller than this counts as neither better nor worse. */
     floor: Type.Optional(Type.Number({ minimum: 0 })),
     /** Per-config weights for `reduce: "mean"`. Unlisted configs weigh 1. */
@@ -66,8 +69,10 @@ export const ConfigSchema = Type.Object(
 export type ConfigFile = Static<typeof ConfigSchema>;
 
 export interface AvoConfig {
-  reduce: "dominate" | "mean";
+  reduce: "dominate" | "mean" | "dominate-z";
   floor: number;
+  /** Only read by `reduce: "dominate-z"`. */
+  z: number;
   weights: Record<string, number>;
   /** `null` = not declared; probe the scorer instead. */
   configs: string[] | null;
@@ -86,9 +91,13 @@ export const DEFAULT_STALL = 5;
 /** Consecutive same-signature failures before it calls it thrash. */
 export const DEFAULT_THRASH = 3;
 
+/** Two σ, the usual 95% band. */
+export const DEFAULT_Z = 2;
+
 export const DEFAULT_CONFIG: AvoConfig = {
   reduce: "dominate",
   floor: 0,
+  z: DEFAULT_Z,
   weights: {},
   configs: null,
   rescore_best: "off",
@@ -148,6 +157,7 @@ export function loadConfig(cwd: string): LoadedConfig {
   const config: AvoConfig = {
     reduce: file.reduce ?? DEFAULT_CONFIG.reduce,
     floor: file.floor ?? DEFAULT_CONFIG.floor,
+    z: file.z ?? DEFAULT_Z,
     weights: file.weights ?? {},
     configs: null,
     rescore_best: file.rescore_best ?? DEFAULT_CONFIG.rescore_best,

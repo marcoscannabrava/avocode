@@ -49,6 +49,7 @@ turns it into a failing attempt, but the JSON is where the diagnosis has to live
 | `unit` | non-empty string | yes | `"s"`, `"TFLOPS"`, `"pass-rate"`, `"bytes"`, … humans read this. |
 | `higher_is_better` | boolean | yes | direction of `primary`. |
 | `scores` | object of numbers | no | the vector form of `f`, one entry per config. **This is what `avo commit` compares.** |
+| `stderr` | object of numbers ≥ 0 | no | the standard error of each config, keyed like `scores` (`*` with no `scores`). Only `reduce: "dominate-z"` reads it. |
 | `log` | string | no | diagnosis for the agent: the failing test name, the compiler error, the timing table. |
 | `duration_s` | number ≥ 0 | no | how long scoring took. |
 
@@ -90,6 +91,19 @@ The scorer's line is validated, then normalized into an **attempt** (appended to
 Exit codes: `0` pass, `1` ran but failed, `2` harness error (no scorer, malformed output, timeout,
 mixed directions). So `avo score >/dev/null || echo "no improvement"` behaves as a shell reader expects, and
 `avo score --json` is parseable in all three cases.
+
+## Noisy scorers
+
+A scorer with fresh seeds gives a different number on each run. A fixed `floor` is then too wide
+or too narrow. Instead, run each config several times, send the mean in `scores` and the standard
+error (sample standard deviation / √n) in `stderr`, and set this in `.avo/config.json`:
+
+```json
+{ "reduce": "dominate-z", "z": 2 }
+```
+
+A config then improves only when `Δ > z·σ` and regresses only when `Δ < −z·σ`, with
+`σ = sqrt(σ_candidate² + σ_best²)`. avo stores the best version's `stderr` in its commit.
 
 ## Cost and honesty
 

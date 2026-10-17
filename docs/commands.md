@@ -103,6 +103,10 @@ the commit — you cannot improve by measuring less. Tune it in `.avo/config.jso
 
 - `floor` — a symmetric relative noise band.
 - `reduce: "mean"` — opts into letting configs trade off.
+- `reduce: "dominate-z"` and `z` (default `2`) — for a noisy scorer that sends `stderr`. A config
+  moves only when `|Δ| > z·σ`, with `σ = sqrt(σ_candidate² + σ_best²)`. A config with no `stderr`
+  uses `floor`, as in `dominate`. `Δ` is an absolute change, not a percent. `reduce: "mean"` ignores
+  `stderr`.
 - `configs` — declares the scorer's config names, so `avo score --parallel` skips the discovery probe.
 - `rescore_best: "near"` — re-measures the best version on close calls. The default is `"off"`.
 - `rescore_links` — untracked paths (for example `.venv`) that the re-measure links in.

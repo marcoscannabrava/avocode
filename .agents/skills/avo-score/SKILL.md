@@ -42,6 +42,7 @@ gitignored trajectory, not lineage.
 | `unit` | yes | non-empty string, e.g. `TFLOPS`, `s`, `%` |
 | `higher_is_better` | yes | direction of `primary` and of every entry in `scores`; all configs must agree (exit `2` if not) |
 | `scores` | no | per-config vector — **this is what the commit rule compares** |
+| `stderr` | no | per-config standard error, keyed like `scores`; read by `dominate-z` |
 | `log` | no | build/test output, for diagnosis |
 | `duration_s` | no | wall-clock of the scoring run |
 
@@ -87,7 +88,9 @@ Declaring `configs` in `.avo/config.json` skips the probe entirely, saving a sco
 - **Make `correct` strict and cheap.** It runs on every attempt and it is the only thing standing
   between the loop and a fast wrong answer.
 - **Be deterministic, or set a `floor`.** Noise commits noise. `.avo/config.json`'s `floor` is a
-  symmetric relative band: a change inside it counts as neither better nor worse.
+  symmetric relative band: a change inside it counts as neither better nor worse. If the bench
+  must stay random, send `stderr` per config and set `"reduce": "dominate-z"`: a config then moves
+  only when `|Δ| > z·σ` (`z` defaults to 2, `σ = sqrt(σ_candidate² + σ_best²)`).
 - **Never print anything but the JSON line to stdout.** Put diagnostics in `log`, or on stderr.
 - **Keep it fast enough to run every iteration.** A scorer that takes an hour caps the loop at 24
   variations a day.

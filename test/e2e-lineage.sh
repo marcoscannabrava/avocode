@@ -257,6 +257,55 @@ else
   bad "the re-measure left a worktree behind"
 fi
 
+# ---------------------------------------------------------------- 11. dominate-z (AVO-15)
+say ""
+say "# dominate-z: the scorer reads its score and stderr from files"
+zfix="$(mktemp -d)"
+trap 'rm -rf "$fixture" "$drift" "$zfix"' EXIT
+inz() { git -C "$zfix" "$@"; }
+inz init -q
+inz config user.email avo@example.com
+inz config user.name avo
+inz config commit.gpgsign false
+inz commit -q --allow-empty -m "z fixture baseline"
+mkdir -p "$zfix/.avo"
+cat > "$zfix/.avo/score" <<'SCORER'
+#!/usr/bin/env bash
+printf '{"ok":true,"correct":true,"primary":%s,"unit":"pts","higher_is_better":true,"scores":{"a":%s},"stderr":{"a":%s}}\n' \
+  "$(cat value)" "$(cat value)" "$(cat stderr)"
+SCORER
+chmod +x "$zfix/.avo/score"
+printf '{"reduce":"dominate-z","z":2}\n' > "$zfix/.avo/config.json"
+echo 100 > "$zfix/value"
+echo 3 > "$zfix/stderr"
+avo commit --cwd "$zfix" --why "baseline" --json >/dev/null
+
+if inz log -1 --format=%B | grep -q '^Avo-Score: {.*"stderr":{"a":3}'; then
+  ok "the Avo-Score trailer stores the best version's stderr"
+else
+  bad "the trailer lost the stderr"
+fi
+
+# σ = sqrt(3² + 4²) = 5; z·σ = 10
+echo 110 > "$zfix/value"
+echo 4 > "$zfix/stderr"
+out="$(avo commit --cwd "$zfix" --json)"
+say "\$ avo commit (Δ = z·σ = 10) -> $(printf '%s' "$out" | jq -c '{action,reason,sigma:.comparison.deltas[0].sigma}')"
+if printf '%s' "$out" | jq -e '.action == "refused" and .comparison.decision == "tie" and .comparison.deltas[0].sigma == 5' >/dev/null; then
+  ok "a gain equal to z·σ is noise, not progress"
+else
+  bad "a gain inside z·σ was not refused as a tie"
+fi
+
+echo 111 > "$zfix/value"
+out="$(avo commit --cwd "$zfix" --why "past the bar" --json)"
+say "\$ avo commit (Δ = 11 > z·σ) -> $(printf '%s' "$out" | jq -c '{action,version,reason}')"
+if printf '%s' "$out" | jq -e '.action == "committed" and .version == 2' >/dev/null; then
+  ok "a gain past z·σ becomes v2"
+else
+  bad "a gain past z·σ was not committed"
+fi
+
 say ""
 if [[ $fails -eq 0 ]]; then
   say "all checks passed"

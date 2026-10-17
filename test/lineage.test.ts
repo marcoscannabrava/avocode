@@ -58,6 +58,20 @@ test("toVersionScore persists the vector the comparator will read back, not the 
   assert.deepEqual(toVersionScore({ ...ATTEMPT, primary: null }).scores, {});
 });
 
+test("toVersionScore keeps stderr only when the scorer sent it", () => {
+  assert.equal("stderr" in toVersionScore(ATTEMPT), false);
+  assert.deepEqual(toVersionScore({ ...ATTEMPT, stderr: { "*": 0.4 } }).stderr, { "*": 0.4 });
+});
+
+test("isVersionScore reads old trailers and checks a new stderr", () => {
+  const old = { primary: 1, unit: "s", higher_is_better: false, scores: { a: 1 } };
+  assert.equal(isVersionScore(old), true);
+  assert.equal(isVersionScore({ ...old, stderr: { a: 0.1 } }), true);
+  assert.equal(isVersionScore({ ...old, stderr: { a: -0.1 } }), false);
+  assert.equal(isVersionScore({ ...old, stderr: { a: "x" } }), false);
+  assert.equal(isVersionScore({ ...old, stderr: null }), false);
+});
+
 test("isVersionScore rejects a trailer that is not a score", () => {
   assert.equal(isVersionScore({ primary: 1, unit: "s", higher_is_better: false, scores: {} }), true);
   assert.equal(isVersionScore({ primary: null, unit: "s", higher_is_better: false, scores: {} }), true);
@@ -704,6 +718,40 @@ printf '{"ok":true,"correct":true,"primary":%s,"unit":"ops","higher_is_better":t
   const r = await commit(dir);
   assert.equal(r.code, 2, JSON.stringify(r.json));
   assert.match((r.json["errors"] as string[])[0] as string, /lost configs: b/);
+});
+
+test("a rescored close call under dominate-z keeps the z·σ bar, with the fresh stderr", async (t) => {
+  const { dir } = driftFixture(t);
+  // Speed and stderr live outside the repo.
+  const ext = mkdtempSync(join(tmpdir(), "avo-noise-"));
+  t.after(() => rmSync(ext, { recursive: true, force: true }));
+  const speed = join(ext, "speed");
+  const noise = join(ext, "stderr");
+  writeFileSync(speed, "1\n");
+  writeFileSync(noise, "0.1\n");
+  writeFileSync(
+    join(dir, ".avo/score"),
+    `#!/usr/bin/env bash
+v=$(awk -v a="$(cat impl.txt)" -v m="$(cat ${speed})" 'BEGIN{print a*m}')
+printf '{"ok":true,"correct":true,"primary":%s,"unit":"ops","higher_is_better":true,"scores":{"a":%s},"stderr":{"a":%s}}\\n' "$v" "$v" "$(cat ${noise})"
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(dir, ".avo/config.json"), JSON.stringify({ floor: 0.05, reduce: "dominate-z", z: 2, rescore_best: "near" }));
+  assert.equal((await commit(dir)).json["version"], 1);
+
+  // 110 on a 0.9 box reads 99 vs stored 100: a close call. Fresh incumbent: 90.
+  writeFileSync(speed, "0.9\n");
+  writeFileSync(noise, "5\n");
+  writeFileSync(join(dir, "impl.txt"), "110\n");
+  const r = await commit(dir);
+  const cmp = r.json["comparison"] as { decision: string; deltas: { best: number; sigma?: number }[] };
+  assert.deepEqual((r.json["rescore"] as Record<string, unknown>)["fresh"], { a: 90 });
+  assert.equal(cmp.deltas[0]?.best, 90);
+  // Fresh σ = hypot(5, 5), not hypot(5, 0.1); Δ 9 < z·σ 14.1.
+  assert.ok(Math.abs((cmp.deltas[0]?.sigma ?? 0) - Math.hypot(5, 5)) < 1e-9, JSON.stringify(cmp.deltas));
+  assert.equal(r.json["action"], "refused", JSON.stringify(r.json));
+  assert.equal(cmp.decision, "tie");
 });
 
 test("readLineage lets git filter yet reads only real trailers (#8)", async (t) => {
