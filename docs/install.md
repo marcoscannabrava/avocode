@@ -110,3 +110,6 @@ managed block in its `AGENTS.md`. None of it depends on avocode staying installe
 just git commits. The skill and extension links that `avo install` made point at the removed
 checkout, so they break. They are not in the lineage (`.git/info/exclude` keeps them out), so you
 can delete them, or run `avo install` again from a new checkout.
+
+To remove avo's links, its `.git/info/exclude` block and the `AGENTS.md` block from such a repo,
+run `avo install --uninstall` in it before you delete the checkout. See [agents.md](agents.md).

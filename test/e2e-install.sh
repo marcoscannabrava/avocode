@@ -216,6 +216,30 @@ avo install --cwd "$lin" >/dev/null 2>&1
 if [[ "$(cat "$lin/.git/info/exclude")" == "$before" ]]; then ok "a re-run leaves .git/info/exclude byte-identical"; else bad "a re-run changed .git/info/exclude"; fi
 rm -rf "$lin" "$clone"
 
+# ------------------------------------------------- 9. prune and --uninstall (#18)
+say ""
+say "## 9. prune and --uninstall"
+gone="$(mktemp -d)"; git -C "$gone" init -q
+printf '# Our rules\n\nkeep me\n' > "$gone/AGENTS.md"
+avo install --cwd "$gone" >/dev/null 2>&1
+ln -s "$root/.agents/skills/avo-renamed" "$gone/.agents/skills/avo-renamed"
+avo install --cwd "$gone" >"$work/prune.txt" 2>&1
+say "$ avo install (with a dangling avo-renamed link) -> $(grep 'avo-renamed' "$work/prune.txt" | xargs)"
+if [[ ! -L $gone/.agents/skills/avo-renamed ]]; then ok "a dangling link to a skill avo no longer ships is pruned"; else bad "the dangling avo-renamed link survived avo install"; fi
+avo install --uninstall --cwd "$gone" >"$work/uninstall.txt" 2>&1; rc=$?
+say "$ avo install --uninstall -> exit $rc"
+while IFS= read -r line; do say "    $line"; done < "$work/uninstall.txt"
+if [[ $rc == 0 ]]; then ok "avo install --uninstall exits 0"; else bad "avo install --uninstall exited $rc"; fi
+left="$(cd "$gone" && find . -path ./.git -prune -o -print | sort | xargs)"
+if [[ $left == ". ./AGENTS.md" ]]; then ok "--uninstall removes every link, dir and settings file avo made"; else bad "--uninstall left: $left"; fi
+if [[ "$(cat "$gone/AGENTS.md")" == "$(printf '# Our rules\n\nkeep me')" ]]; then ok "AGENTS.md is back to the operator's own content"; else bad "AGENTS.md was not restored: $(cat "$gone/AGENTS.md")"; fi
+if [[ -f $root/.agents/skills/avo-vary/SKILL.md ]]; then ok "avocode's own skills are untouched"; else bad "--uninstall reached into avocode's checkout"; fi
+# The #32 exclude block goes too.
+excl="$gone/.git/info/exclude"
+if grep -qF '# BEGIN avo install' "$excl"; then bad "--uninstall left avo's block in .git/info/exclude"; else ok "--uninstall removes avo's block from .git/info/exclude"; fi
+if grep -qF 'exclude-from=.git/info/exclude' "$excl"; then ok "the rest of .git/info/exclude stays"; else bad "--uninstall removed git's own exclude lines"; fi
+rm -rf "$gone"
+
 say ""
 say "# ${fails} failure(s)"
 [[ $fails == 0 ]] || exit 1

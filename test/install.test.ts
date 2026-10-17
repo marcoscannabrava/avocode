@@ -27,10 +27,14 @@ import {
   piExtensionSrc,
   PI_SETTINGS,
   renderAgentsBlock,
+  removeBlock,
   renderInstall,
   runInstall,
+  runUninstall,
+  dropExclude,
   spliceBlock,
   spliceExclude,
+  unmergePiSettings,
   type InstallOptions,
   type InstallResult,
 } from "../src/install.ts";
@@ -643,6 +647,182 @@ test("renderInstall shows every step and ends with what an agent can now do", ()
     assert.match(text, /avo install --agent pi,claude,codex/);
     assert.match(text, /avo-vary/);
     assert.match(text, /skill\(s\) wired for pi, claude, codex/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// pruning and --uninstall (#18)
+// ---------------------------------------------------------------------------
+
+test("runInstall prunes a dangling link to a skill avo no longer ships, and only that", () => {
+  const cwd = repo();
+  try {
+    mkdirSync(join(cwd, SKILLS_DIR), { recursive: true });
+    symlinkSync(join(bundledSkillsDir(), "avo-renamed"), join(cwd, SKILLS_DIR, "avo-renamed"), "dir");
+    symlinkSync(join(cwd, "nowhere"), join(cwd, SKILLS_DIR, "their-broken"), "dir");
+    const r = runInstall(opts(cwd, { agents: ["pi"] }));
+    assert.ok(r.ok, r.errors.join("; "));
+    assert.equal(step(r, join(SKILLS_DIR, "avo-renamed"))?.action, "removed");
+    assert.equal(linkState(join(cwd, SKILLS_DIR, "avo-renamed"), "x"), "absent");
+    assert.equal(linkState(join(cwd, SKILLS_DIR, "their-broken"), "x"), "other-link", "not avo's: left alone");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runInstall prunes the matching dangling link inside a real .claude/skills", () => {
+  const cwd = repo();
+  try {
+    mkdirSync(join(cwd, CLAUDE_SKILLS, "their-skill"), { recursive: true });
+    symlinkSync("../../.agents/skills/avo-renamed", join(cwd, CLAUDE_SKILLS, "avo-renamed"), "dir");
+    const r = runInstall(opts(cwd, { agents: ["claude"] }));
+    assert.equal(step(r, join(CLAUDE_SKILLS, "avo-renamed"))?.action, "removed");
+    assert.ok(existsSync(join(cwd, CLAUDE_SKILLS, "their-skill")));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("parseInstallArgs takes --uninstall alone, not with --agent or --force", () => {
+  const r = parseInstallArgs(["--uninstall"]);
+  assert.ok(!("error" in r) && r.uninstall === true);
+  for (const extra of [["--agent", "pi"], ["--force"]]) {
+    const bad = parseInstallArgs(["--uninstall", ...extra]);
+    assert.ok("error" in bad);
+    assert.match(bad.error, /--uninstall takes no --agent or --force/);
+  }
+});
+
+test("removeBlock is the inverse of spliceBlock", () => {
+  const block = renderAgentsBlock([]);
+  for (const mine of ["# My rules\n\nkeep me\n", "# My rules\n"]) {
+    assert.equal(removeBlock(spliceBlock(mine, block).text), mine);
+  }
+  assert.equal(removeBlock(spliceBlock(null, block).text), "");
+  assert.equal(removeBlock(`${block}\n\n# after\n`), "# after\n");
+  assert.equal(removeBlock("no markers\n"), null);
+});
+
+test("unmergePiSettings drops only keys that still hold avo's values", () => {
+  const { settings } = mergePiSettings({ theme: "dark" });
+  assert.deepEqual(unmergePiSettings(settings), { settings: { theme: "dark" }, removed: ["defaultTools", "enableSkillCommands"] });
+  const theirs = { defaultTools: ["read"], enableSkillCommands: false };
+  assert.deepEqual(unmergePiSettings(theirs), { settings: theirs, removed: [] });
+});
+
+test("install then --uninstall leaves the repo as it was", () => {
+  const cwd = repo();
+  try {
+    writeFileSync(join(cwd, AGENTS_FILE), "# My rules\n\nkeep me\n");
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(join(cwd, PI_SETTINGS), `${JSON.stringify({ theme: "dark" }, null, 2)}\n`);
+    const before = { top: readdirSync(cwd).sort(), files: snapshot(cwd) };
+    assert.ok(runInstall(opts(cwd)).ok);
+    const merged = readFileSync(join(cwd, PI_SETTINGS), "utf8");
+
+    const io = bufferIo();
+    assert.equal(installCommand(["--uninstall", "--cwd", cwd], io), 0, io.stderr);
+    assert.match(io.stdout, /avo wiring removed/);
+    // avo cannot tell who set the keys, so they stay.
+    assert.equal(readFileSync(join(cwd, PI_SETTINGS), "utf8"), merged);
+    assert.match(io.stdout, /kept defaultTools, enableSkillCommands/);
+    const after = snapshot(cwd);
+    after[PI_SETTINGS] = before.files[PI_SETTINGS] as string;
+    assert.deepEqual({ top: readdirSync(cwd).sort(), files: after }, before);
+    assert.ok(existsSync(join(avocodeRoot(), SKILLS_DIR)), "never touches avocode's checkout");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("--uninstall removes a fresh install completely, AGENTS.md included", () => {
+  const cwd = repo();
+  try {
+    assert.ok(runInstall(opts(cwd)).ok);
+    const r = runUninstall(opts(cwd, { uninstall: true }));
+    assert.ok(r.ok, r.errors.join("; "));
+    assert.deepEqual(readdirSync(cwd), []);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("dropExclude removes only avo's block", () => {
+  const text = spliceExclude("*.log\n", ["a"]);
+  assert.equal(dropExclude(`${text}tail\n`), "*.log\ntail\n");
+  assert.equal(dropExclude("*.log\n"), null);
+});
+
+test("--uninstall removes avo's block from the git exclude file (#32)", () => {
+  const cwd = gitRepo();
+  try {
+    assert.ok(runInstall(opts(cwd)).ok);
+    const exclude = gitExcludePath(cwd);
+    assert.ok(exclude !== null);
+    const before = readFileSync(exclude, "utf8");
+    assert.ok(before.includes(EXCLUDE_BEGIN), "install wrote the block");
+    const r = runUninstall(opts(cwd, { uninstall: true }));
+    assert.ok(r.ok, r.errors.join("; "));
+    const after = readFileSync(exclude, "utf8");
+    assert.ok(!after.includes(EXCLUDE_BEGIN) && !after.includes(EXCLUDE_END), after);
+    assert.equal(after, dropExclude(before), "git's own lines stay");
+    assert.equal(step(r, ".git/info/exclude")?.action, "removed");
+    assert.equal(runUninstall(opts(cwd, { uninstall: true })).steps.some((s) => s.name === ".git/info/exclude"), false, "a re-run is a no-op");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("--uninstall in an avocode checkout removes nothing", () => {
+  const cwd = repo();
+  try {
+    // A real copy of avo's skills, as in avocode.
+    mkdirSync(join(cwd, SKILLS_DIR, "avo-vary"), { recursive: true });
+    const block = `${BEGIN_MARKER}\nrules\n${END_MARKER}\n`;
+    writeFileSync(join(cwd, AGENTS_FILE), block);
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    const settings = `${JSON.stringify(mergePiSettings(null).settings, null, 2)}\n`;
+    writeFileSync(join(cwd, PI_SETTINGS), settings);
+    const r = runUninstall(opts(cwd, { uninstall: true }));
+    assert.ok(r.ok);
+    assert.deepEqual(r.steps.map((s) => s.action), ["skipped"]);
+    assert.equal(readFileSync(join(cwd, AGENTS_FILE), "utf8"), block);
+    assert.equal(readFileSync(join(cwd, PI_SETTINGS), "utf8"), settings);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("removeBlock finds the end marker after the begin marker", () => {
+  const text = `${END_MARKER}\n\n${BEGIN_MARKER}\nx\n${END_MARKER}\n`;
+  assert.equal(removeBlock(text), `${END_MARKER}\n`);
+});
+
+test("--uninstall keeps the repo's own skills and the link that serves them", () => {
+  const cwd = repo();
+  try {
+    mkdirSync(join(cwd, SKILLS_DIR, "their-skill"), { recursive: true });
+    writeFileSync(join(cwd, SKILLS_DIR, "their-skill", "SKILL.md"), "---\nname: their-skill\ndescription: theirs\n---\nbody\n");
+    assert.ok(runInstall(opts(cwd, { agents: ["claude"] })).ok);
+    const r = runUninstall(opts(cwd, { uninstall: true }));
+    assert.deepEqual(readdirSync(join(cwd, SKILLS_DIR)), ["their-skill"]);
+    assert.equal(step(r, CLAUDE_SKILLS)?.action, "skipped");
+    assert.equal(readlinkSync(join(cwd, CLAUDE_SKILLS)), "../.agents/skills");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("--uninstall empties a real .claude/skills of avo's links only", () => {
+  const cwd = repo();
+  try {
+    mkdirSync(join(cwd, CLAUDE_SKILLS, "their-skill"), { recursive: true });
+    assert.ok(runInstall(opts(cwd, { agents: ["claude"] })).ok);
+    runUninstall(opts(cwd, { uninstall: true }));
+    assert.deepEqual(readdirSync(join(cwd, CLAUDE_SKILLS)), ["their-skill"]);
+    assert.equal(existsSync(join(cwd, ".agents")), false);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

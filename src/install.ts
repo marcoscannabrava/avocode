@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Io } from "./io.ts";
 import { avocodeRoot, bundledSkillsDir, readSkills, SKILL_FILE, SKILLS_DIR, type Skill } from "./skills.ts";
@@ -55,6 +55,8 @@ export interface InstallOptions {
   agents: AgentName[];
   /** Replace a symlink or file that is in the way. Never recurses into a real directory. */
   force: boolean;
+  /** Remove avo's wiring instead of adding it. */
+  uninstall?: boolean;
 }
 
 export function parseInstallArgs(argv: readonly string[]): InstallOptions | { error: string } {
@@ -64,6 +66,7 @@ export function parseInstallArgs(argv: readonly string[]): InstallOptions | { er
     const a = argv[i] as string;
     if (a === "--json") opts.json = true;
     else if (a === "--force") opts.force = true;
+    else if (a === "--uninstall") opts.uninstall = true;
     else if (a === "--cwd" || a === "--agent") {
       const v = argv[i + 1];
       if (v === undefined) return { error: `avo install: ${a} needs a value` };
@@ -83,6 +86,8 @@ export function parseInstallArgs(argv: readonly string[]): InstallOptions | { er
       i++;
     } else return { error: `avo install: unknown option '${a}'` };
   }
+  // Uninstall removes all of avo's wiring.
+  if (opts.uninstall === true && (sawAgent || opts.force)) return { error: "avo install: --uninstall takes no --agent or --force" };
   return opts;
 }
 
@@ -121,7 +126,7 @@ function ensureLink(linkPath: string, wantTarget: string, force: boolean): { act
   const state = linkState(linkPath, wantTarget);
   if (state === "match") return { action: "unchanged", detail: `already links to ${wantTarget}` };
   if (state === "directory") {
-    return { action: "skipped", detail: "a real directory is already there; refusing to replace it (nothing is deleted by avo install)" };
+    return { action: "skipped", detail: "a real directory is already there; refusing to replace it (avo install never deletes one)" };
   }
   if ((state === "other-link" || state === "file") && !force) {
     const what = state === "file" ? "a file" : `a symlink to ${readlinkSync(linkPath)}`;
@@ -157,6 +162,17 @@ function linkEachSkill(cwd: string, intoDir: string, sourceDir: string, skills: 
     const r = ensureLink(linkPath, want, force);
     steps.push({ name: relative(cwd, linkPath), action: r.action, detail: r.detail });
     noteLocal(cwd, linkPath, want, r.action, local);
+  }
+}
+
+/** Raw target, so dangling links still count. */
+export function ownedLink(linkPath: string, roots: readonly string[]): boolean {
+  try {
+    if (!lstatSync(linkPath).isSymbolicLink()) return false;
+    const target = resolve(dirname(linkPath), readlinkSync(linkPath));
+    return roots.some((r) => target === r || target.startsWith(`${r}/`));
+  } catch {
+    return false;
   }
 }
 
@@ -206,11 +222,61 @@ export function spliceExclude(existing: string | null, paths: readonly string[])
   return [...lines.slice(0, begin), block, ...lines.slice(end + 1)].join("\n");
 }
 
+/** Drops avo's exclude block, or `null`. */
+export function dropExclude(existing: string): string | null {
+  const lines = existing.split("\n");
+  const begin = lines.indexOf(EXCLUDE_BEGIN);
+  const end = lines.indexOf(EXCLUDE_END, begin);
+  if (begin === -1 || end === -1) return null;
+  return [...lines.slice(0, begin), ...lines.slice(end + 1)].join("\n");
+}
+
 function isLink(path: string): boolean {
   try {
     return lstatSync(path).isSymbolicLink();
   } catch {
     return false;
+  }
+}
+
+/** A root and its realpath. */
+function rootsOf(dir: string): string[] {
+  try {
+    const real = realpathSync(dir);
+    return real === dir ? [dir] : [dir, real];
+  } catch {
+    return [dir];
+  }
+}
+
+/** Removes avo's links, or only dangling ones. */
+function removeOwnedLinks(cwd: string, dir: string, roots: readonly string[], dangling: boolean, steps: InitStep[]): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const n of names.sort()) {
+    const linkPath = join(dir, n);
+    if (!ownedLink(linkPath, roots) || (dangling && existsSync(linkPath))) continue;
+    try {
+      rmSync(linkPath, { force: true });
+      steps.push({ name: relative(cwd, linkPath), action: "removed", detail: dangling ? "a dangling link to a skill avo no longer ships" : "avo's link" });
+    } catch (e) {
+      steps.push({ name: relative(cwd, linkPath), action: "failed", detail: (e as Error).message });
+    }
+  }
+}
+
+/** Removes empty dirs up to `cwd`. */
+function removeEmptyDirs(cwd: string, dir: string): void {
+  for (let d = dir; d !== cwd && d.startsWith(`${cwd}/`); d = dirname(d)) {
+    try {
+      rmdirSync(d);
+    } catch {
+      return;
+    }
   }
 }
 
@@ -326,6 +392,17 @@ export function spliceBlock(existing: string | null, block: string): { text: str
   return { text, action: text === existing ? "unchanged" : "updated" };
 }
 
+/** Inverse of `spliceBlock`; null without markers. */
+export function removeBlock(existing: string): string | null {
+  const begin = existing.indexOf(BEGIN_MARKER);
+  const end = begin === -1 ? -1 : existing.indexOf(END_MARKER, begin);
+  if (begin === -1 || end === -1) return null;
+  const head = existing.slice(0, begin).replace(/\n+$/, "");
+  const tail = existing.slice(end + END_MARKER.length).replace(/^\n+/, "");
+  if (head === "") return tail;
+  return tail === "" ? `${head}\n` : `${head}\n\n${tail}`;
+}
+
 // ---------------------------------------------------------------------------
 // .pi/settings.json
 // ---------------------------------------------------------------------------
@@ -354,6 +431,22 @@ export function mergePiSettings(existing: unknown): { settings: Record<string, u
     changed.push("enableSkillCommands");
   }
   return { settings, changed, warnings };
+}
+
+/** Drops keys still holding avo's values. */
+export function unmergePiSettings(existing: Record<string, unknown>): { settings: Record<string, unknown>; removed: string[] } {
+  const settings = { ...existing };
+  const removed: string[] = [];
+  const tools = settings.defaultTools;
+  if (Array.isArray(tools) && tools.length === PI_DEFAULT_TOOLS.length && tools.every((t, i) => t === PI_DEFAULT_TOOLS[i])) {
+    delete settings.defaultTools;
+    removed.push("defaultTools");
+  }
+  if (settings.enableSkillCommands === true) {
+    delete settings.enableSkillCommands;
+    removed.push("enableSkillCommands");
+  }
+  return { settings, removed };
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +493,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
     try {
       mkdirSync(target, { recursive: true });
       linkEachSkill(cwd, target, source, skills, opts.force, steps, local);
+      removeOwnedLinks(cwd, target, rootsOf(source), true, steps);
     } catch (e) {
       errors.push(`could not create ${SKILLS_DIR} in ${cwd} — ${(e as Error).message}`);
       steps.push({ name: SKILLS_DIR, action: "failed", detail: (e as Error).message });
@@ -436,6 +530,136 @@ export function runInstall(opts: InstallOptions): InstallResult {
   excludeLocalLinks(cwd, local, steps, warnings);
 
   return result();
+}
+
+/** Removes only what is surely avo's. */
+export function runUninstall(opts: InstallOptions): InstallResult {
+  const steps: InitStep[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const cwd = resolve(opts.cwd);
+  const source = bundledSkillsDir();
+  const result = (): InstallResult => ({ ok: errors.length === 0, cwd, agents: [...AGENT_NAMES], skills: [], steps, warnings, errors });
+
+  const target = join(cwd, SKILLS_DIR);
+  // An avocode checkout tracks its wiring.
+  if ((existsSync(target) && sameDir(target, source)) || holdsOwnSkills(target, source)) {
+    steps.push({ name: SKILLS_DIR, action: "skipped", detail: "this repo holds avo's skills; nothing removed" });
+    return result();
+  }
+  removeOwnedLinks(cwd, target, rootsOf(source), false, steps);
+  removeEmptyDirs(cwd, target);
+
+  // One link, or a real directory.
+  const claude = join(cwd, CLAUDE_SKILLS);
+  const want = linkTargetFor(cwd, join(cwd, dirname(CLAUDE_SKILLS)), target);
+  const state = linkState(claude, want);
+  if (state === "directory") {
+    removeOwnedLinks(cwd, claude, rootsOf(source), false, steps);
+    removeOwnedLinks(cwd, claude, [target], true, steps);
+  } else if (ownedLink(claude, [target]) && !existsSync(target)) {
+    rmSync(claude, { force: true });
+    steps.push({ name: CLAUDE_SKILLS, action: "removed", detail: `avo's link to ${SKILLS_DIR}` });
+    removeEmptyDirs(cwd, dirname(claude));
+  } else if (state === "match") {
+    steps.push({ name: CLAUDE_SKILLS, action: "skipped", detail: `${SKILLS_DIR} still holds this repo's own skills` });
+  }
+
+  for (const name of PI_EXTENSION_NAMES) {
+    const linkPath = join(cwd, piExtension(name));
+    if (!ownedLink(linkPath, rootsOf(join(avocodeRoot(), piExtensionSrc(name))))) continue;
+    rmSync(linkPath, { force: true });
+    steps.push({ name: piExtension(name), action: "removed", detail: "avo's link" });
+    removeEmptyDirs(cwd, dirname(linkPath));
+  }
+
+  uninstallPiSettings(cwd, steps, warnings);
+  unexcludeLinks(cwd, steps, errors);
+
+  const agentsPath = join(cwd, AGENTS_FILE);
+  try {
+    const existing = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : null;
+    const rest = existing === null ? null : removeBlock(existing);
+    if (rest === null) steps.push({ name: AGENTS_FILE, action: "unchanged", detail: "no avo block" });
+    else if (rest.trim() === "") {
+      rmSync(agentsPath);
+      steps.push({ name: AGENTS_FILE, action: "removed", detail: "it held only the avo block" });
+    } else {
+      writeFileSync(agentsPath, rest);
+      steps.push({ name: AGENTS_FILE, action: "removed", detail: "the avo block; your own content stays" });
+    }
+  } catch (e) {
+    errors.push(`could not edit ${AGENTS_FILE} — ${(e as Error).message}`);
+    steps.push({ name: AGENTS_FILE, action: "failed", detail: (e as Error).message });
+  }
+  return result();
+}
+
+/** Drops exclude entries for removed links. */
+function unexcludeLinks(cwd: string, steps: InitStep[], errors: string[]): void {
+  const git = gitExclude(cwd);
+  if (git === null || !existsSync(git.file)) return;
+  const name = relative(cwd, git.file);
+  try {
+    const existing = readFileSync(git.file, "utf8");
+    const before = excludedLinks(existing);
+    // A link uninstall kept keeps its entry.
+    const keep = before.filter((p) => isLink(join(git.top, p)));
+    const text = keep.length === 0 ? dropExclude(existing) : spliceExclude(existing, keep);
+    if (text === null || text === existing) return;
+    writeFileSync(git.file, text);
+    const detail = keep.length === 0 ? "avo's block of local links" : `${before.length - keep.length} entry(ies) for removed links`;
+    steps.push({ name, action: "removed", detail });
+  } catch (e) {
+    errors.push(`could not edit ${name} — ${(e as Error).message}`);
+    steps.push({ name, action: "failed", detail: (e as Error).message });
+  }
+}
+
+/** A real copy of an avo skill. */
+function holdsOwnSkills(target: string, source: string): boolean {
+  try {
+    return readdirSync(source).some((n) => {
+      try {
+        return lstatSync(join(target, n)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+function uninstallPiSettings(cwd: string, steps: InitStep[], warnings: string[]): void {
+  const path = join(cwd, PI_SETTINGS);
+  if (!existsSync(path)) return;
+  let existing: unknown;
+  try {
+    existing = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    steps.push({ name: PI_SETTINGS, action: "skipped", detail: "not valid JSON; left alone" });
+    return;
+  }
+  if (existing === null || typeof existing !== "object" || Array.isArray(existing)) return;
+  const { settings, removed } = unmergePiSettings(existing as Record<string, unknown>);
+  if (removed.length === 0) {
+    steps.push({ name: PI_SETTINGS, action: "unchanged", detail: "no keys with avo's values" });
+    return;
+  }
+  // Other keys: avo may not own these.
+  if (Object.keys(settings).length > 0) {
+    steps.push({ name: PI_SETTINGS, action: "skipped", detail: `kept ${removed.join(", ")}; you may have set them` });
+    return;
+  }
+  try {
+    rmSync(path);
+    removeEmptyDirs(cwd, dirname(path));
+    steps.push({ name: PI_SETTINGS, action: "removed", detail: "it held only avo's settings" });
+  } catch (e) {
+    steps.push({ name: PI_SETTINGS, action: "failed", detail: (e as Error).message });
+    warnings.push(`could not write ${PI_SETTINGS} — ${(e as Error).message}`);
+  }
 }
 
 function sameDir(a: string, b: string): boolean {
@@ -521,6 +745,8 @@ function installClaude(cwd: string, skillsDir: string, skills: readonly Skill[],
     // A real .claude/skills holds the repo's own skills. Link ours inside rather than replace it.
     steps.push({ name: CLAUDE_SKILLS, action: "unchanged", detail: "already a real directory with its own skills; linking avo's inside it instead" });
     linkEachSkill(cwd, linkPath, skillsDir, skills, force, steps, local);
+    // A dangling link holds no data.
+    removeOwnedLinks(cwd, linkPath, [...rootsOf(bundledSkillsDir()), join(cwd, SKILLS_DIR)], true, steps);
     return;
   }
   const r = ensureLink(linkPath, want, force);
@@ -531,14 +757,15 @@ function installClaude(cwd: string, skillsDir: string, skills: readonly Skill[],
   });
 }
 
-export function renderInstall(r: InstallResult): string {
-  const lines = [`avo install --agent ${r.agents.join(",")}`, ""];
+export function renderInstall(r: InstallResult, uninstall = false): string {
+  const lines = [uninstall ? "avo install --uninstall" : `avo install --agent ${r.agents.join(",")}`, ""];
   for (const s of r.steps) lines.push(`  ${s.action.padEnd(10)} ${s.name.padEnd(22)} ${s.detail}`);
   lines.push("");
   for (const w of r.warnings) lines.push(`warning: ${w}`);
   for (const e of r.errors) lines.push(`error: ${e}`);
   if (r.warnings.length > 0 || r.errors.length > 0) lines.push("");
-  lines.push(r.ok ? `${r.skills.length} skill(s) wired for ${r.agents.join(", ")} — ${r.skills.map((s) => s.name).join(", ")}` : "avo install incomplete");
+  if (uninstall) lines.push(r.ok ? "avo wiring removed" : "avo uninstall incomplete");
+  else lines.push(r.ok ? `${r.skills.length} skill(s) wired for ${r.agents.join(", ")} — ${r.skills.map((s) => s.name).join(", ")}` : "avo install incomplete");
   return `${lines.join("\n")}\n`;
 }
 
@@ -548,10 +775,11 @@ export function installCommand(argv: readonly string[], io: Io): number {
     io.err(`${parsed.error}\n`);
     return 2;
   }
-  const r = runInstall(parsed);
+  const uninstall = parsed.uninstall === true;
+  const r = uninstall ? runUninstall(parsed) : runInstall(parsed);
   if (parsed.json) io.out(`${JSON.stringify(r)}\n`);
   else {
-    io.out(renderInstall(r));
+    io.out(renderInstall(r, uninstall));
     for (const e of r.errors) io.err(`avo install: ${e}\n`);
   }
   return r.ok ? 0 : 2;

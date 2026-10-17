@@ -704,6 +704,14 @@ match (`src/install.ts:95-113`). `ensureLink` never replaces a real directory, a
 foreign symlink only with `--force` (`:116-134`). Links are relative inside one repo and absolute
 when they reach out of it, so they survive clones and `avo fan` worktrees (`:143-146`).
 
+Removal (#18): `ownedLink` reads a link's raw target, so a dangling link into avocode's checkout
+is still known as avo's. `avo install` removes such dangling skill links. `avo install
+--uninstall` (`runUninstall`) removes avo's links and the marked `AGENTS.md` block (`removeBlock`).
+It deletes `.pi/settings.json` only when the file holds nothing but avo's keys with avo's values
+(`unmergePiSettings`); otherwise the keys stay, because avo cannot prove it wrote them. In a repo
+with a real copy of avo's skills (avocode itself), it removes nothing. It also drops the entries of
+removed links from the exclude block, and the block itself when no entry is left (`unexcludeLinks`).
+
 **Absolute links stay out of the lineage (#32).** An absolute link names a path on this machine.
 `avo install` lists each one in a managed block in the repo's local ignore file, which
 `git rev-parse --git-path info/exclude` finds (`excludeLocalLinks`). The entries are anchored at the
@@ -730,7 +738,7 @@ accept `--cwd <dir>`.
 | Command | Purpose | Key flags | Exit codes |
 | --- | --- | --- | --- |
 | `avo init` | scaffold `.avo/`, `knowledge/`, `lineage/`, qmd, beads | `--scorer <t>`, `--prefix <p>` | 0 ok, 2 error |
-| `avo install` | wire skills + `AGENTS.md` for agents | `--agent pi\|claude\|codex\|all` (repeatable, comma list), `--force` | 0, 2 |
+| `avo install` | wire skills + `AGENTS.md` for agents | `--agent pi\|claude\|codex\|all` (repeatable, comma list), `--force`, `--uninstall` | 0, 2 |
 | `avo doctor` | dependency + key presence report | `--json` only | 0 ok, 1 missing required/agent, 2 usage |
 | `avo score` | run `f`, validate, record attempt | `--parallel`, `--timeout <s>` (0 = none), `--init <t>`, `--force`, `--no-record` | 0 pass, 1 fail, 2 harness |
 | `avo commit` | score, compare, persist iff better | `--why <text>`, `--dry-run`, `--parallel`, `--timeout <s>`, `--no-record` | 0 committed/noop/would-commit, 1 refused, 2 harness |
