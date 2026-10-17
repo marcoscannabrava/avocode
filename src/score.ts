@@ -1,11 +1,26 @@
 import { spawn } from "node:child_process";
-import { accessSync, appendFileSync, constants, createWriteStream, mkdirSync, readdirSync, readFileSync, writeFileSync, type WriteStream } from "node:fs";
-import { availableParallelism } from "node:os";
+import { createHash } from "node:crypto";
+import {
+  accessSync,
+  appendFileSync,
+  constants,
+  copyFileSync,
+  createWriteStream,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  type WriteStream,
+} from "node:fs";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { CONFIG_NAME, CONFIG_PATH, loadConfig } from "./config.ts";
+import { HARNESS_PATHS, isHarnessPath } from "./harness.ts";
 import type { Io } from "./io.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -14,6 +29,10 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 export const SCORER_PATH = ".avo/score";
 /** Append-only log of every `avo score` run. Attempts are not commits (PLAN §3). */
 export const ATTEMPTS_PATH = ".avo/attempts.jsonl";
+/** Optional list of `f`'s files, one per line. */
+export const PROTECTED_LIST = ".avo/protected.txt";
+/** `avo run` pins `f`'s hashes here for its turns. */
+export const SCORER_ENV = "AVO_SCORER_HASHES";
 /** A child's output beyond this is elided; a runaway scorer must not exhaust memory. */
 const OUTPUT_CAP = 200_000;
 /** A turn log stops here; disks are finite. */
@@ -88,7 +107,16 @@ export interface Attempt {
   warnings: string[];
   log: string | null;
   exit_code: number;
-  git: { head: string | null; dirty: boolean };
+  git: AttemptGit;
+}
+
+export interface AttemptGit {
+  head: string | null;
+  dirty: boolean;
+  /** Working-tree hash; one tree, one variation. */
+  tree?: string | null;
+  /** Changed paths vs HEAD, harness excluded; absent when unknown. */
+  paths?: string[];
 }
 
 export interface RunResult {
@@ -128,8 +156,6 @@ export const spawnRunner: Runner = (cmd, args, opts) =>
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
-    let stdout = "";
-    let stderr = "";
     let timedOut = false;
     let spawnError: string | null = null;
     const timer =
@@ -239,6 +265,11 @@ export function isParseFailure(r: ParseSuccess | ParseFailure): r is ParseFailur
   return "errors" in r;
 }
 
+/** JSON.stringify(Infinity) is "null"; say Infinity. */
+function shown(v: unknown): string {
+  return typeof v === "number" && !Number.isFinite(v) ? String(v) : JSON.stringify(v);
+}
+
 /**
  * Validates one line of scorer output. The contract says stdout is one JSON line, but a scorer that
  * also echoes build noise is too common to reject: take the last line that parses, warn about the
@@ -281,7 +312,7 @@ export function parseScoreOutput(stdout: string): ParseSuccess | ParseFailure {
 
   const errors: string[] = [];
   for (const e of Value.Errors(ScoreOutputSchema, parsed)) {
-    errors.push(`field '${fieldName(e.path)}': ${e.message.toLowerCase()} (got ${JSON.stringify(e.value)})`);
+    errors.push(`field '${fieldName(e.path)}': ${e.message.toLowerCase()} (got ${shown(e.value)})`);
   }
   if (errors.length > 0) return { errors };
 
@@ -293,11 +324,11 @@ export function parseScoreOutput(stdout: string): ParseSuccess | ParseFailure {
   // Semantics the schema cannot express.
   if (output.ok && output.correct && !Number.isFinite(output.primary)) {
     errors.push(
-      `field 'primary': must be a finite number when ok and correct are true (got ${JSON.stringify(output.primary)})`,
+      `field 'primary': must be a finite number when ok and correct are true (got ${shown(output.primary)})`,
     );
   }
   for (const [cfg, v] of Object.entries(output.scores ?? {})) {
-    if (!Number.isFinite(v)) errors.push(`field 'scores.${cfg}': must be a finite number (got ${JSON.stringify(v)})`);
+    if (!Number.isFinite(v)) errors.push(`field 'scores.${cfg}': must be a finite number (got ${shown(v)})`);
   }
   if (errors.length > 0) return { errors };
 
@@ -316,7 +347,7 @@ export function parseConfigList(stdout: string): string[] | null {
 
 /** Runs `tasks` with at most `limit` in flight, preserving input order. */
 export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
+  const results: R[] = [];
   let next = 0;
   const worker = async (): Promise<void> => {
     for (;;) {
@@ -357,8 +388,8 @@ export function normalize(
   parts: readonly { config: string; result: ParseSuccess | ParseFailure }[],
   meta: { ts: string; parallel: boolean; exitCode: number; git: Attempt["git"]; durationS: number },
 ): Attempt {
-  const errors = parts.flatMap((p) => (isParseFailure(p.result) ? p.result.errors : []));
   const good = parts.flatMap((p) => (isParseFailure(p.result) ? [] : [{ config: p.config, ...p.result }]));
+  const errors = [...parts.flatMap((p) => (isParseFailure(p.result) ? p.result.errors : [])), ...mixedDirection(good)];
   const warnings = good.flatMap((g) => g.warnings);
 
   const outputs = good.map((g) => g.output);
@@ -402,6 +433,14 @@ export function normalize(
     exit_code: meta.exitCode,
     git: meta.git,
   };
+}
+
+/** Configs must agree on one direction. */
+function mixedDirection(good: readonly { config: string; output: ScoreOutput }[]): string[] {
+  const higher = good.filter((g) => g.output.higher_is_better).map((g) => g.config);
+  const lower = good.filter((g) => !g.output.higher_is_better).map((g) => g.config);
+  if (higher.length === 0 || lower.length === 0) return [];
+  return [`configs disagree on higher_is_better: true for ${higher.join(", ")}; false for ${lower.join(", ")}`];
 }
 
 export function renderAttempt(a: Attempt): string {
@@ -551,11 +590,51 @@ export function parseScoreArgs(argv: readonly string[]): ScoreOptions | { error:
   return opts;
 }
 
-async function readGit(runner: Runner, cwd: string): Promise<Attempt["git"]> {
+export async function readGit(runner: Runner, cwd: string): Promise<AttemptGit> {
   const head = await runner("git", ["rev-parse", "HEAD"], { cwd, timeoutMs: 10_000 });
-  if (head.code !== 0 || head.spawnError !== null) return { head: null, dirty: false };
+  if (head.code !== 0 || head.spawnError !== null) return { head: null, dirty: false, tree: null };
   const status = await runner("git", ["status", "--porcelain"], { cwd, timeoutMs: 10_000 });
-  return { head: head.stdout.trim(), dirty: status.stdout.trim() !== "" };
+  const sha = head.stdout.trim();
+  const dirty = status.stdout.trim() !== "";
+  const tree = await candidateTree(runner, cwd);
+  // Unknown paths must stay unknown, not empty.
+  const paths = tree === null ? null : await changedPaths(runner, cwd, sha, tree);
+  return paths === null ? { head: sha, dirty, tree } : { head: sha, dirty, tree, paths };
+}
+
+/** Tree hash via a temporary index copy. */
+async function candidateTree(runner: Runner, cwd: string): Promise<string | null> {
+  const gitOpts = (env: Record<string, string>) => ({ cwd, timeoutMs: 60_000, env });
+  const dir = mkdtempSync(join(tmpdir(), "avo-tree-"));
+  try {
+    const index = join(dir, "index");
+    const real = await runner("git", ["rev-parse", "--git-path", "index"], gitOpts({}));
+    try {
+      if (real.code === 0) copyFileSync(resolvePath(cwd, real.stdout.trim()), index);
+    } catch {
+      // No index yet: start from an empty one.
+    }
+    const env = { GIT_INDEX_FILE: index };
+    const add = await runner("git", ["add", "-A", "--", "."], gitOpts(env));
+    if (add.code !== 0 || add.spawnError !== null) return null;
+    const rm = ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...HARNESS_PATHS];
+    const drop = await runner("git", rm, gitOpts(env));
+    if (drop.code !== 0 || drop.spawnError !== null) return null;
+    const tree = await runner("git", ["write-tree"], gitOpts(env));
+    const hash = tree.stdout.trim();
+    return tree.code === 0 && /^[0-9a-f]{40,64}$/.test(hash) ? hash : null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Paths `tree` changes against `head`, harness paths excluded. */
+async function changedPaths(runner: Runner, cwd: string, head: string, tree: string): Promise<string[] | null> {
+  // Relative to cwd, like HARNESS_PATHS.
+  const args = ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--relative", head, tree];
+  const diff = await runner("git", args, { cwd, timeoutMs: 60_000 });
+  if (diff.code !== 0 || diff.spawnError !== null) return null;
+  return diff.stdout.split("\0").filter((p) => p !== "" && !isHarnessPath(p));
 }
 
 export interface ScoreRun {
@@ -587,6 +666,8 @@ export async function runScore(
   }
 
   const timeoutMs = opts.timeoutS * 1000;
+  // Read before scoring; outputs are not candidates.
+  const git = await readGit(runner, opts.cwd);
   const started = Date.now();
   const warmupWarnings: string[] = [];
 
@@ -629,7 +710,7 @@ export async function runScore(
     ts: now().toISOString(),
     parallel: configs !== null,
     exitCode: parts.find((p) => p.run.code !== 0)?.run.code ?? 0,
-    git: await readGit(runner, opts.cwd),
+    git,
     durationS,
   });
   attempt.warnings.unshift(...warmupWarnings);
@@ -682,4 +763,58 @@ export async function scoreCommand(
   io.out(opts.json ? `${JSON.stringify(attempt)}\n` : renderAttempt(attempt));
   if (attempt.errors.length > 0) return 2;
   return attempt.pass ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// the scorer's own files
+// ---------------------------------------------------------------------------
+
+/** `.avo/score`, plus the protected list and its paths. */
+export function scorerPaths(cwd: string): string[] {
+  const paths = [SCORER_PATH];
+  let list: string;
+  try {
+    list = readFileSync(join(cwd, PROTECTED_LIST), "utf8");
+  } catch {
+    return paths;
+  }
+  paths.push(PROTECTED_LIST);
+  for (const raw of list.split("\n")) {
+    const line = raw.trim();
+    if (line !== "" && !line.startsWith("#")) paths.push(line);
+  }
+  return [...new Set(paths)];
+}
+
+/** sha256 per path; `null` when absent. */
+export function hashFiles(cwd: string, paths: readonly string[]): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const p of paths) {
+    try {
+      out[p] = createHash("sha256").update(readFileSync(join(cwd, p))).digest("hex");
+    } catch {
+      out[p] = null;
+    }
+  }
+  return out;
+}
+
+/** Start-time paths whose hash moved since. */
+export function scorerChanges(cwd: string, start: Record<string, string | null>): string[] {
+  // Start-time list: an edit cannot shrink it.
+  const now = hashFiles(cwd, Object.keys(start));
+  return Object.keys(start).filter((p) => now[p] !== start[p]);
+}
+
+/** Pins from `SCORER_ENV`, or `null`. */
+export function parsePins(raw: string | undefined): Record<string, string | null> | null {
+  if (raw === undefined || raw === "") return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+    const ok = Object.values(v).every((h) => h === null || typeof h === "string");
+    return ok && Object.keys(v).length > 0 ? (v as Record<string, string | null>) : null;
+  } catch {
+    return null;
+  }
 }
