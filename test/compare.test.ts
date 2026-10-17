@@ -216,6 +216,36 @@ test("invalid config names are dropped rather than handed to the scorer", () => 
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("rescore_best defaults to off, reads near, and rejects anything else", () => {
+  const near = repo({ [CONFIG_PATH]: JSON.stringify({ rescore_best: "near" }) });
+  assert.equal(loadConfig(near).config.rescore_best, "near");
+  assert.deepEqual(loadConfig(near).warnings, []);
+  rmSync(near, { recursive: true, force: true });
+
+  assert.equal(DEFAULT_CONFIG.rescore_best, "off");
+  const bad = repo({ [CONFIG_PATH]: JSON.stringify({ rescore_best: "always" }) });
+  const { config, warnings } = loadConfig(bad);
+  assert.equal(config.rescore_best, "off");
+  assert.match(warnings[0] as string, /'rescore_best'/);
+  rmSync(bad, { recursive: true, force: true });
+});
+
+test("rescore_links keeps repo-relative paths and drops the field on an escape", () => {
+  const good = repo({ [CONFIG_PATH]: JSON.stringify({ rescore_links: [".venv", "bench/games/", "./.venv"] }) });
+  assert.deepEqual(loadConfig(good).config.rescore_links, [".venv", "bench/games"]);
+  assert.deepEqual(loadConfig(good).warnings, []);
+  rmSync(good, { recursive: true, force: true });
+
+  assert.deepEqual(DEFAULT_CONFIG.rescore_links, []);
+  for (const p of ["/opt/venv", "../data", "a/../../b", ".", ".git", ".git/hooks"]) {
+    const bad = repo({ [CONFIG_PATH]: JSON.stringify({ rescore_links: [p] }) });
+    const { config, warnings } = loadConfig(bad);
+    assert.deepEqual(config.rescore_links, [], p);
+    assert.match(warnings[0] as string, /'rescore_links' has paths outside the repo/, p);
+    rmSync(bad, { recursive: true, force: true });
+  }
+});
+
 test("a negative floor is rejected — the noise band cannot be inverted", () => {
   const dir = repo({ [CONFIG_PATH]: JSON.stringify({ floor: -1 }) });
   const { config, warnings } = loadConfig(dir);

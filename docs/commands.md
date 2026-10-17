@@ -104,6 +104,40 @@ the commit — you cannot improve by measuring less. Tune it in `.avo/config.jso
 - `floor` — a symmetric relative noise band.
 - `reduce: "mean"` — opts into letting configs trade off.
 - `configs` — declares the scorer's config names, so `avo score --parallel` skips the discovery probe.
+- `rescore_best: "near"` — re-measures the best version on close calls. The default is `"off"`.
+- `rescore_links` — untracked paths (for example `.venv`) that the re-measure links in.
+
+### Re-measure the best version (`rescore_best`)
+
+By default, `avo commit` compares the candidate with the score that is stored in the best version's
+`Avo-Score` trailer. That score came from an earlier run, maybe on a faster or slower machine. A
+small drift can then decide a close call.
+
+Set `"rescore_best": "near"` to stop this. When a shared config of the candidate is within
+`2·floor` of the stored score (the limit counts), `avo commit` does these steps:
+
+1. It checks out the best version in a temporary, detached worktree under `.avo/worktrees/`.
+2. It runs that version's own `.avo/score` there, with the same `--parallel` and `--timeout`.
+3. It compares the candidate with this fresh vector, not with the stored one.
+4. It removes the worktree. It does this on every path: success, error, timeout.
+
+The output records the two vectors in `rescore` (`near`, `stored`, `fresh`). The JSON output, the
+`git notes --ref=avo` entry and `lineage/vNNN.md` all show them. With `floor: 0`, only an exact tie
+starts a re-measure.
+
+If the re-measure fails (no pass, bad output, timeout, a lost config), `avo commit` refuses with
+exit code `2`. The stored score cannot decide that call. The error line tells you how to fix it.
+
+The worktree holds only tracked files. If the scorer needs untracked files (for example a virtual
+environment or game data), list them in `rescore_links`:
+
+```json
+{ "rescore_best": "near", "rescore_links": [".venv", "bench/games"] }
+```
+
+Each path must be relative and inside the repo, and must not be in `.git`. `avo commit` links each
+path from the repo root into the worktree. The path must exist in the root. It must not be a
+tracked path of the best version. Cleanup removes the link only, not the files it points to.
 
 | Flag | |
 | --- | --- |

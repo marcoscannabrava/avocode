@@ -1,4 +1,4 @@
-# avo S2 e2e — 2026-10-16T21:54:32Z
+# avo S2 e2e — 2026-10-17T00:16:11Z
 # node v22.14.0, git version 2.55.0, jq jq-1.8.2
 # fixture: candidate must print 42; metric = code size in bytes, lower is better
 
@@ -37,10 +37,10 @@ $ avo lineage
 avo lineage
 
   ver  commit   primary                    *
-  v1   3137c90  34 bytes                  34
-  v2   78a421d  8 bytes                    8
+  v1   597015f  34 bytes                  34
+  v2   795766f  8 bytes                    8
 
-best: v2 (78a421d); reduce: dominate, floor: 0
+best: v2 (795766f); reduce: dominate, floor: 0
 
 PASS  avo best names the version a candidate is ranked against
 PASS  avo lineage diff shows the patch between two versions
@@ -49,5 +49,12 @@ PASS  avo lineage show exits non-zero for a version that does not exist
 
 Avo-Version trailers in git: 2; versions reported: 2
 PASS  invariant 1: every committed version came from avo commit, and none was lost
+
+# rescore_best: a second fixture; the machine slows to 0.9 after v1
+$ avo commit (110 on a 0.9 box: 99 vs stored 100) -> exit 0
+  {"action":"committed","version":2,"rescore":{"near":["*"],"stored":{"*":100},"fresh":{"*":90}}}
+PASS  rescore_best ranks a close call against the fresh incumbent
+PASS  the lineage file and the note record both vectors
+PASS  the temp worktree is gone after the re-measure
 
 all checks passed
