@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
+  CHECKOUT_BIN,
   BUILTIN_AGENT_NAMES,
   CLAUDE,
   CODEX,
@@ -13,8 +14,10 @@ import {
   driveAgent,
   parseAgentOutput,
   resolveTemplate,
+  withAvoBin,
   type CustomAgent,
 } from "../src/agents.ts";
+import { spawnRunner, type Runner } from "../src/score.ts";
 
 // The three flag assertions below are the whole reason this file exists. Each names a flag whose
 // absence fails *silently* — the agent starts, does nothing useful, exits 0 — so a test that only
@@ -358,4 +361,40 @@ test("driveAgent keeps the exit error first when the agent also crashed", async 
   );
   assert.match(turn.error ?? "", /exited 2/);
   assert.equal(turn.approval_refused, true, "the loop still stops on it");
+});
+
+// ------------------------------------------------------------- avo on the child PATH (#41)
+
+test("withAvoBin puts avo's bin first, once", () => {
+  assert.equal(withAvoBin("/usr/bin:/bin"), `${CHECKOUT_BIN}:/usr/bin:/bin`);
+  assert.equal(withAvoBin(`/usr/bin:${CHECKOUT_BIN}`), `${CHECKOUT_BIN}:/usr/bin`);
+  assert.equal(withAvoBin(undefined), CHECKOUT_BIN);
+  assert.equal(withAvoBin(""), CHECKOUT_BIN);
+});
+
+function turnOpts(dir: string, env: Record<string, string>) {
+  return { cwd: dir, logPath: "turn.log", logFile: join(dir, "turn.log"), timeoutS: 30, env };
+}
+
+test("driveAgent hands the child a PATH with avo on it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-path-"));
+  let seen: Record<string, string> | undefined;
+  const runner: Runner = async (_cmd, _args, opts) => {
+    seen = opts.env;
+    return { code: 0, stdout: "done", stderr: "", timedOut: false, spawnError: null };
+  };
+  const tpl = customTemplate({ name: "stub", command: "stub", args: ["{prompt}"] });
+  await driveAgent(runner, tpl, { prompt: "p", model: null }, turnOpts(dir, { AVO_FAN_PROBE: "1" }), () => new Date());
+  assert.equal(seen?.["PATH"]?.split(":")[0], CHECKOUT_BIN);
+  assert.equal(seen?.["AVO_FAN_PROBE"], "1", "the rest of the env survives");
+});
+
+test("a child with a stripped PATH still resolves avo", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "avo-path-"));
+  const stub = join(dir, "stub.sh");
+  writeFileSync(stub, "#!/bin/sh\ncommand -v avo || echo missing\n", { mode: 0o755 });
+  const tpl = customTemplate({ name: "stub", command: stub, args: ["{prompt}"] });
+  const env = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` };
+  const turn = await driveAgent(spawnRunner, tpl, { prompt: "p", model: null }, turnOpts(dir, env), () => new Date());
+  assert.equal(turn.summary, join(CHECKOUT_BIN, "avo"));
 });

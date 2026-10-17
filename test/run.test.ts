@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { CHAIN_ENV, DEFAULT_TIMEOUT_S, DEPTH_ENV, LEVEL_ENV, promptSha } from "../src/fan.ts";
 import { bufferIo } from "../src/io.ts";
-import { spawnRunner, type Runner } from "../src/score.ts";
-import { ensureTrajectoryIgnored, TRAJECTORY_PATHS } from "../src/lineage.ts";
+import { commitCommand, ensureTrajectoryIgnored, parseCommitArgs, TRAJECTORY_PATHS } from "../src/lineage.ts";
+import { hashFiles, parsePins, SCORER_ENV, scorerChanges, scorerPaths, spawnRunner, type Runner } from "../src/score.ts";
 import {
   DEFAULT_MAX_ITERS,
   MAX_CONSECUTIVE_NOOPS,
@@ -78,10 +78,38 @@ test("the supervisor thresholds are overridable per run and keep supervise's own
   assert.ok("error" in parseRunArgs(["--prompt", "x", "--stall", "0"], {}));
 });
 
+test("the run budgets are off by default and parse as numbers (#28)", () => {
+  const d = parseRunArgs(["--prompt", "x"], {});
+  assert.ok(!("error" in d));
+  assert.deepEqual([d.maxCost, d.maxTokens, d.maxWallS], [null, null, null]);
+  const o = parseRunArgs(["--prompt", "x", "--max-cost", "2.5", "--max-tokens", "100000", "--max-wall", "600"], {});
+  assert.ok(!("error" in o));
+  assert.deepEqual([o.maxCost, o.maxTokens, o.maxWallS], [2.5, 100000, 600]);
+  for (const [flag, bad] of [["--max-cost", "0"], ["--max-cost", "free"], ["--max-tokens", "1.5"], ["--max-tokens", "-3"], ["--max-wall", "0"]]) {
+    const e = parseRunArgs(["--prompt", "x", flag as string, bad as string], {});
+    assert.ok("error" in e, `${flag} ${bad} should be refused`);
+    assert.match(e.error, /positive/);
+  }
+});
+
 test("a flag with no value is named rather than silently swallowing the next one", () => {
   const o = parseRunArgs(["--prompt"], {});
   assert.ok("error" in o);
   assert.match(o.error, /--prompt needs a value/);
+});
+
+test("--supervise defaults to on and takes on, off or detect", () => {
+  const d = parseRunArgs(["--prompt", "x"], {});
+  assert.ok(!("error" in d));
+  assert.equal(d.supervise, "on");
+  for (const m of ["on", "off", "detect"] as const) {
+    const o = parseRunArgs(["--prompt", "x", "--supervise", m], {});
+    assert.ok(!("error" in o));
+    assert.equal(o.supervise, m);
+  }
+  const bad = parseRunArgs(["--prompt", "x", "--supervise", "maybe"], {});
+  assert.ok("error" in bad);
+  assert.match(bad.error, /on, off or detect/);
 });
 
 test("an unknown option is a usage error, not a prompt", () => {
@@ -113,7 +141,7 @@ const iteration = (over: Partial<Iteration> = {}): Iteration => ({
   log_path: ".avo/runs/r/logs/1.log",
   decision: { action: "committed", version: 1, sha: "bbbbbbbb", reason: "improved", primary: 2, unit: "lines", pass: true },
   agent_versions: [],
-  supervision: { triggered: false, signals: [], since_best: 0, repeat: 0 },
+  supervision: { triggered: false, signals: [], since_best: 0, variations_since_best: 0, repeat: 0 },
   directive: null,
   intervention: null,
   warnings: [],
@@ -246,6 +274,38 @@ case "$prompt" in
   *noop*)  echo "I considered it and changed nothing"; exit 0 ;;
   *crash*) echo "boom" >&2; exit 3 ;;
   *slow*)  sleep 60; exit 0 ;;
+  # Edits f itself (#38).
+  *tamper*)
+    echo "line" >> kernel.txt
+    echo "# tuned" >> .avo/score
+    echo "I improved the scorer"
+    exit 0 ;;
+  *guarded*)
+    echo "line" >> kernel.txt
+    echo "edited" >> bench.txt
+    echo "I edited a protected file"
+    exit 0 ;;
+  # Edits f, commits, then hides the edit.
+  *cheatrestore*)
+    echo "line" >> kernel.txt
+    echo "# tuned" >> .avo/score
+    "{{AVO}}" commit --why "scored by my scorer" > .git/avo-commit.out 2>&1
+    git checkout -q -- .avo/score
+    echo "I committed with my scorer, then put it back"
+    exit 0 ;;
+  *cheat*)
+    echo "line" >> kernel.txt
+    echo "# tuned" >> .avo/score
+    "{{AVO}}" commit --why "scored by my scorer" > .git/avo-commit.out 2>&1
+    echo "I committed with my scorer"
+    exit 0 ;;
+  *commitfirst*)
+    echo "line" >> kernel.txt
+    "{{AVO}}" commit --why "an honest version" >/dev/null 2>&1
+    echo "# tuned" >> .avo/score
+    echo "I committed, then edited the scorer"
+    exit 0 ;;
+  *nap*)   sleep 1 ;;
   *selfcommit*)
     echo "own commit" >> kernel.txt
     git add -A >/dev/null 2>&1
@@ -259,6 +319,10 @@ case "$prompt" in
     "{{AVO}}" commit --why "I measured it and committed this myself" >/dev/null 2>&1
     echo "I ran avo commit myself"
     exit 0 ;;
+esac
+# As the avo-vary skill tells it.
+case "$prompt" in
+  *selfsup*) "{{AVO}}" supervise --stall 1 >> "$PWD/selfsup.txt" 2>&1 ;;
 esac
 echo "line at iteration \${AVO_FAN_PROBE:-?}" >> kernel.txt
 echo "appended one line at depth \${AVO_FAN_LEVEL:-?}"
@@ -289,9 +353,9 @@ function fixture(name: string, opts: { scorer?: string | false } = {}): Fixture 
   git("config", "user.email", "avo@example.com");
   git("config", "user.name", "avo");
   mkdirSync(join(dir, ".avo"), { recursive: true });
-  writeFileSync(join(dir, ".gitignore"), ".avo/runs/\n.avo/worktrees/\n.avo/attempts.jsonl\nlast-prompt.txt\nall-prompts.txt\n");
+  writeFileSync(join(dir, ".gitignore"), ".avo/runs/\n.avo/worktrees/\n.avo/attempts.jsonl\nlast-prompt.txt\nall-prompts.txt\nselfsup.txt\n");
   writeFileSync(join(dir, "kernel.txt"), "baseline\n");
-  writeFileSync(join(dir, "stub.sh"), STUB.replace("{{AVO}}", AVO_BIN), { mode: 0o755 });
+  writeFileSync(join(dir, "stub.sh"), STUB.replaceAll("{{AVO}}", AVO_BIN), { mode: 0o755 });
   if (opts.scorer !== false) writeFileSync(join(dir, ".avo/score"), opts.scorer ?? SCORER, { mode: 0o755 });
   writeFileSync(
     join(dir, ".avo/config.json"),
@@ -438,17 +502,68 @@ test("an intervention is recorded so the trajectory can be read afterwards", asy
   assert.match(rec.text, /steered on/);
 });
 
+const interventionsIn = (dir: string): number => {
+  const p = join(dir, "lineage/memory.jsonl");
+  if (!existsSync(p)) return 0;
+  return readFileSync(p, "utf8").split("\n").filter((l) => l.includes('"kind":"intervention"')).length;
+};
+
+test("--supervise off never calls the supervisor and never steers", async () => {
+  const f = fixture("runoff", { scorer: FAILING_SCORER });
+  const { json } = await run(f, ["--prompt", "fix it", "--max-iters", "3", "--stall", "2", "--thrash", "2", "--supervise", "off"]);
+  assert.equal(json.supervise, "off");
+  assert.equal(json.interventions, 0);
+  for (const it of json.iterations) {
+    assert.equal(it.supervision, null, "off means no detector call");
+    assert.equal(it.directive, null);
+  }
+  const prompts = readFileSync(join(f.dir, "all-prompts.txt"), "utf8");
+  assert.doesNotMatch(prompts, /STEERING/);
+  assert.doesNotMatch(prompts, /since the best version/, "no supervisor state leaks into the prompt");
+  assert.equal(interventionsIn(f.dir), 0);
+  const m = readRunManifest(f.dir, json.run_id);
+  assert.ok(!("error" in m));
+  assert.equal(m.supervise, "off");
+});
+
+test("--supervise detect records what would have fired, and injects nothing", async () => {
+  const f = fixture("rundetect", { scorer: FAILING_SCORER });
+  const { json } = await run(f, ["--prompt", "fix it selfsup", "--max-iters", "3", "--stall", "2", "--thrash", "2", "--supervise", "detect"]);
+  assert.equal(json.supervise, "detect");
+  assert.equal(json.interventions, 0, "nothing was injected, so nothing intervened");
+  assert.ok((json.detections ?? 0) >= 1, "the stall is still visible in an unsteered arm");
+  const fired = json.iterations.find((i) => i.supervision?.triggered === true);
+  assert.ok(fired !== undefined);
+  assert.match(fired.withheld ?? "", /STEERING \(avo supervise\)/, "the held-back directive is kept");
+  assert.equal(fired.directive, null);
+  assert.equal(fired.intervention, null);
+
+  // The agent's view must match the off arm.
+  const prompts = readFileSync(join(f.dir, "all-prompts.txt"), "utf8");
+  assert.doesNotMatch(prompts, /STEERING/);
+  assert.doesNotMatch(prompts, /since the best version/);
+  assert.equal(interventionsIn(f.dir), 0, "no memory: the agent reads memory, so a record would leak");
+  const own = readFileSync(join(f.dir, "selfsup.txt"), "utf8");
+  assert.match(own, /off in this run \(--supervise detect\)/, "the agent's own avo supervise is off too");
+  assert.doesNotMatch(own, /STEERING/);
+  assert.match(renderRun(json), /detected only; nothing injected/);
+  assert.match(renderRun(json), /detections\s+\d+/);
+});
+
 test("an agent binary that cannot be started stops the loop instead of burning the budget", async () => {
   const f = fixture("runmissing");
   writeFileSync(
     join(f.dir, ".avo/config.json"),
     JSON.stringify({ agent: { name: "stub", command: join(f.dir, "not-a-binary"), args: ["{prompt}"], format: "text" } }),
   );
-  const { code, json } = await run(f, ["--prompt", "go", "--max-iters", "5"]);
+  const { code, json } = await run(f, ["--prompt", "go", "--max-iters", "5", "--max-cost", "1", "--max-tokens", "10"]);
   assert.equal(code, 1);
   assert.equal(json.iterations.length, 1, "it does not try nine more times");
   assert.equal(json.stopped, "agent-unavailable");
   assert.match(json.stop_reason, /could not execute/);
+  // A turn that never ran says nothing of usage.
+  assert.deepEqual(json.budget.unenforced, []);
+  assert.ok(!json.warnings.some((w) => /unenforced/.test(w)), JSON.stringify(json.warnings));
 });
 
 // #23: a managed setting can refuse bypassPermissions.
@@ -527,6 +642,71 @@ test("versions the agent commits itself are the run's output too (#42)", async (
   assert.match(renderRun(json), /committed {4}v1, v2, v3 \(3 by the agent itself\)/);
 });
 
+// Speaks claude's stream-json: every turn reports usage and cost.
+const PRICED_STUB = `#!/bin/sh
+echo "a line" >> kernel.txt
+echo '{"type":"result","result":"added a line","total_cost_usd":0.25,"usage":{"input_tokens":100,"output_tokens":900}}'
+`;
+
+function pricedFixture(name: string): Fixture {
+  const f = fixture(name);
+  writeFileSync(join(f.dir, "priced.sh"), PRICED_STUB, { mode: 0o755 });
+  writeFileSync(
+    join(f.dir, ".avo/config.json"),
+    JSON.stringify({ agent: { name: "stub", command: join(f.dir, "priced.sh"), args: ["{prompt}"], format: "claude" } }),
+  );
+  f.git("add", "-A");
+  f.git("commit", "-qm", "a stub that reports usage");
+  return f;
+}
+
+test("--max-cost stops the loop before the turn after it is crossed (#28)", async () => {
+  const f = pricedFixture("runcost");
+  const { code, json } = await run(f, ["--prompt", "make it longer", "--max-iters", "10", "--max-cost", "0.5"]);
+  assert.equal(code, 0, "a budget stop is a normal end, not a failure");
+  assert.equal(json.iterations.length, 2, "$0.25 a turn: the second turn reaches $0.50");
+  assert.equal(json.stopped, "budget");
+  assert.match(json.stop_reason, /--max-cost \$0\.5 reached: \$0\.50 spent; stopped before iteration 3/);
+  assert.deepEqual(json.budget.unenforced, []);
+  assert.equal(json.budget.max_cost_usd, 0.5);
+});
+
+test("--max-tokens counts every token the turn reported (#28)", async () => {
+  const f = pricedFixture("runtokens");
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "10", "--max-tokens", "2500"]);
+  assert.equal(json.iterations.length, 3, "1000 tokens a turn: the third turn crosses 2500");
+  assert.equal(json.stopped, "budget");
+  assert.match(json.stop_reason, /--max-tokens 2500 reached: 3000 used/);
+});
+
+test("--max-wall stops the loop once the run is older than it (#28)", async () => {
+  const f = fixture("runwall");
+  // Each nap turn takes one second.
+  const { code, json } = await run(f, ["--prompt", "nap, then make it longer", "--max-iters", "5", "--max-wall", "1"]);
+  assert.equal(code, 0);
+  assert.equal(json.iterations.length, 1);
+  assert.equal(json.stopped, "budget");
+  assert.match(json.stop_reason, /--max-wall 1s reached: \ds elapsed; stopped before iteration 2/);
+});
+
+test("an agent that reports no usage warns once and leaves its budgets unenforced (#28)", async () => {
+  const f = fixture("rununenforced");
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "3", "--max-cost", "0.01", "--max-tokens", "10"]);
+  assert.equal(json.iterations.length, 3, "nothing measured, so nothing stops the loop");
+  assert.equal(json.stopped, "max-iters");
+  assert.deepEqual(json.budget.unenforced, ["cost", "tokens"]);
+  const said = json.warnings.filter((w) => /budget unenforced/.test(w));
+  assert.equal(said.length, 1, `one warning, not one per turn: ${JSON.stringify(json.warnings)}`);
+  assert.match(renderRun(json), /budget {7}\$0\.01, 10 tokens \(unenforced: cost, tokens\)/);
+});
+
+test("a budget the operator did not set is never called unenforced", async () => {
+  const f = fixture("runnobudget");
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "1", "--max-wall", "3600"]);
+  assert.deepEqual(json.budget.unenforced, [], "wall time is always measured");
+  assert.ok(!json.warnings.some((w) => /unenforced/.test(w)));
+});
+
 test(".avo/STOP halts the loop before the next turn", async () => {
   const f = fixture("runstop");
   writeFileSync(join(f.dir, STOP_FILE), "operator said so\n");
@@ -535,6 +715,117 @@ test(".avo/STOP halts the loop before the next turn", async () => {
   assert.equal(json.stopped, "stop-file");
   assert.equal(code, 1, "a loop that never ran a turn did not get anywhere");
   assert.equal(f.git("log", "--format=%s").trim(), "baseline", "nothing was committed");
+});
+
+// --------------------------------------------- the scorer is fixed for a run (#38)
+
+test("the scorer's files are .avo/score plus the protected list and its paths", () => {
+  const f = fixture("runpaths");
+  assert.deepEqual(scorerPaths(f.dir), [".avo/score"], "no protected list: the scorer alone");
+  writeFileSync(join(f.dir, ".avo/protected.txt"), "# comment\n\nbench.txt\n.avo/score\n  data/x.txt  \n");
+  assert.deepEqual(scorerPaths(f.dir), [".avo/score", ".avo/protected.txt", "bench.txt", "data/x.txt"]);
+});
+
+test("a hash change, a new file and a deleted file all count as a change", () => {
+  const f = fixture("runhash");
+  writeFileSync(join(f.dir, "bench.txt"), "v1\n");
+  const start = hashFiles(f.dir, [".avo/score", "bench.txt", "absent.txt"]);
+  assert.match(start[".avo/score"] ?? "", /^[0-9a-f]{64}$/);
+  assert.equal(start["absent.txt"], null);
+  assert.deepEqual(scorerChanges(f.dir, start), []);
+  writeFileSync(join(f.dir, "bench.txt"), "v2\n");
+  writeFileSync(join(f.dir, "absent.txt"), "now here\n");
+  assert.deepEqual(scorerChanges(f.dir, start), ["bench.txt", "absent.txt"]);
+});
+
+test("the manifest records the scorer's hash at start", async () => {
+  const f = fixture("runhashman");
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "1"]);
+  assert.deepEqual(Object.keys(json.scorer_hashes), [".avo/score"]);
+  const m = readRunManifest(f.dir, json.run_id);
+  assert.ok(!("error" in m));
+  assert.deepEqual(m.scorer_hashes, json.scorer_hashes);
+});
+
+test("a turn that edits the scorer stops the run and commits nothing", async () => {
+  const f = fixture("runtamper");
+  const { code, json } = await run(f, ["--prompt", "tamper", "--max-iters", "5"]);
+  assert.equal(code, 1, "a tampered run is an error");
+  assert.equal(json.stopped, "scorer-changed");
+  assert.equal(json.iterations.length, 1, "it stops at the first turn");
+  assert.equal(json.iterations[0]?.decision, null, "avo commit never ran");
+  assert.match(json.stop_reason, /\.avo\/score/);
+  assert.deepEqual(json.committed, []);
+  assert.equal(f.git("log", "--format=%s").trim(), "baseline", "nothing was committed");
+  assert.equal(existsSync(join(f.dir, ".avo/attempts.jsonl")), false, "the edited f was never run");
+});
+
+test("a turn that edits a protected file stops the run too", async () => {
+  const f = fixture("runprotect");
+  writeFileSync(join(f.dir, "bench.txt"), "fixed\n");
+  writeFileSync(join(f.dir, ".avo/protected.txt"), "bench.txt\n");
+  f.git("add", "-A");
+  f.git("commit", "-qm", "protect bench.txt");
+  const { json } = await run(f, ["--prompt", "guarded", "--max-iters", "3"]);
+  assert.equal(json.stopped, "scorer-changed");
+  assert.match(json.stop_reason, /bench\.txt/);
+  assert.deepEqual(json.committed, []);
+});
+
+test("avo commit inside a turn refuses an edited scorer", async () => {
+  const f = fixture("runcheat");
+  const { code, json } = await run(f, ["--prompt", "cheat", "--max-iters", "3"]);
+  assert.equal(code, 1);
+  assert.equal(json.stopped, "scorer-changed");
+  assert.deepEqual(json.committed, []);
+  assert.deepEqual(json.iterations[0]?.agent_versions, []);
+  assert.equal(f.git("log", "--format=%s").trim(), "baseline", "the agent's own avo commit wrote nothing");
+  assert.match(readFileSync(join(f.dir, ".git/avo-commit.out"), "utf8"), /refused — f changed since avo run started: \.avo\/score/);
+});
+
+test("an edit undone before the turn ends still never commits", async () => {
+  const f = fixture("runcheatrestore");
+  const { json } = await run(f, ["--prompt", "cheatrestore", "--max-iters", "1"]);
+  // f is back, so the run goes on and scores with the real f.
+  assert.equal(json.stopped, "max-iters");
+  assert.deepEqual(json.iterations[0]?.agent_versions, [], "no version came from the edited f");
+  assert.match(readFileSync(join(f.dir, ".git/avo-commit.out"), "utf8"), /refused — f changed/);
+  assert.equal(json.iterations[0]?.decision?.action, "committed", "the real f judged the same change");
+  assert.deepEqual(json.committed, [1]);
+});
+
+test("a version committed before the scorer edit is still listed", async () => {
+  const f = fixture("runcommitfirst");
+  const { json } = await run(f, ["--prompt", "commitfirst", "--max-iters", "3"]);
+  assert.equal(json.stopped, "scorer-changed");
+  assert.deepEqual(json.committed, [1], "the honest v1 is the run's output");
+  assert.equal(json.iterations[0]?.agent_versions[0]?.version, 1);
+  assert.match(json.stop_reason, /avo run committed nothing/);
+});
+
+test("avo commit reads the pins avo run hands its turns", () => {
+  const pins = { ".avo/score": "a".repeat(64), "bench.txt": null };
+  const o = parseCommitArgs([], { [SCORER_ENV]: JSON.stringify(pins) });
+  assert.ok(!("error" in o));
+  assert.deepEqual(o.pins, pins);
+  const none = parseCommitArgs([], {});
+  assert.ok(!("error" in none));
+  assert.equal(none.pins, null, "outside avo run, nothing is pinned");
+  for (const bad of ["", "not json", "[]", "{}", '{"x":1}']) assert.equal(parsePins(bad), null, bad);
+});
+
+test("avo commit with no pins keeps today's behavior", async () => {
+  const f = fixture("commitnopins");
+  writeFileSync(join(f.dir, "kernel.txt"), "a\nb\nc\nd\n");
+  writeFileSync(join(f.dir, ".avo/score"), `${readFileSync(join(f.dir, ".avo/score"), "utf8")}# tuned\n`);
+  const prev = process.env[SCORER_ENV];
+  delete process.env[SCORER_ENV];
+  try {
+    const code = await commitCommand(["--cwd", f.dir, "--json", "--no-record"], bufferIo());
+    assert.equal(code, 0, "a human may change f outside a run");
+  } finally {
+    if (prev !== undefined) process.env[SCORER_ENV] = prev;
+  }
 });
 
 test("a turn that exceeds its timeout is killed and the loop carries on", async () => {
@@ -567,6 +858,24 @@ test("--dry-run resolves everything and writes nothing", async () => {
   assert.match(io.stdout, /avo supervise/);
   assert.match(io.stdout, /turn prompt \(iteration 1\)/);
   assert.match(io.stdout, /make it longer/);
+  assert.match(io.stdout, /budget {7}none/);
+
+  const b = bufferIo();
+  await runCommand(["--prompt", "go", "--max-cost", "5", "--max-wall", "600", "--dry-run", "--cwd", f.dir, "--agent", "stub"], b);
+  assert.match(b.stdout, /budget {7}\$5, 600s wall/);
+});
+
+test("--dry-run shows the supervise mode and what it changes", async () => {
+  const f = fixture("rundrymode");
+  const plan = async (mode: string): Promise<string> => {
+    const io = bufferIo();
+    await runCommand(["--prompt", "x", "--dry-run", "--supervise", mode, "--cwd", f.dir, "--agent", "stub"], io);
+    return io.stdout;
+  };
+  assert.match(await plan("on"), /supervise\s+on/);
+  assert.match(await plan("on"), /record it as an intervention/);
+  assert.match(await plan("off"), /no avo supervise \(--supervise off\)/);
+  assert.match(await plan("detect"), /record that directive as withheld; inject nothing/);
 });
 
 test("a repo with no scorer is warned once, not --max-iters times", async () => {
@@ -645,6 +954,7 @@ test("a report with no iterations still renders", () => {
     model: null,
     max_iters: 3,
     timeout_s: 900,
+    budget: { max_cost_usd: null, max_tokens: null, max_wall_s: null, unenforced: [] },
     prompt_sha: "abc",
     prompt: "go",
     baseline: "a".repeat(40),
@@ -652,6 +962,7 @@ test("a report with no iterations still renders", () => {
     started_at: "2026-08-24T00:00:00.000Z",
     finished_at: "2026-08-24T00:00:01.000Z",
     thresholds: { stall: 5, thrash: 3 },
+    scorer_hashes: {},
     iterations: [],
     committed: [],
     interventions: 0,

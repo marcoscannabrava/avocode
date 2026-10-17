@@ -30,7 +30,7 @@ commands:
   know [...]        K: 'init', 'query "<q>"', 'add <url|path>', 'search "<q>"', 'reindex'
   supervise [...]   detect a stall or a thrash and emit a steering directive that cites P_t and K
   version           print the version
-  help              print this message
+  help [<command>]  print this message, or one command's options (also: <command> --help)
 
 avo score:
   --json            emit the normalized attempt as one JSON line
@@ -64,7 +64,7 @@ avo know:
   -n <N>            max hits (default 5); -c <name> one collection; --min-score <s>
   add <url|path>    write knowledge/<slug>.md with provenance frontmatter, then qmd embed
   --name <slug>     name the doc; --force replace a differing one; --no-embed skip qmd embed
-  reindex           re-scan the collections into qmd; needed after files land in lineage/
+  reindex           re-scan the collections into qmd (avo commit does it for lineage/)
   search "<q>"      web search; --ingest also writes the pages into K (firecrawl only)
   --backend <b>     firecrawl (FIRECRAWL_API_KEY) | searxng (SEARXNG_URL) | ddgs (keyless)
   --json --cwd <dir> --timeout <s>
@@ -93,12 +93,17 @@ avo run:
                     (default: $AVO_AGENT, the config, then the first on PATH)
   --model <m>       the model each turn runs on (default: the agent's own)
   --timeout <s>     kill a turn's process group after s seconds (default 900, 0 = no limit)
+  --max-cost <usd> --max-tokens <n> --max-wall <s>
+                    run budgets, checked before each turn (default: none)
   --stall <n> --thrash <k>   the supervisor's thresholds, as for avo supervise
+  --supervise <m>   on (default) steers, off skips the supervisor, detect
+                    records what would fire and injects nothing
   --dry-run         print the resolved plan and the first turn prompt; spawn nothing
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
-  stops on          --max-iters, an .avo/STOP file, 3 unchanged iterations in a row, or an agent
-                    binary that cannot be started
+  stops on          --max-iters, a crossed budget, an .avo/STOP file, 3 unchanged iterations in
+                    a row, an agent binary that cannot be started, a refused permission mode,
+                    or a changed scorer
 
 avo supervise:
   --stall <n>       attempts with no committed improvement before it steers
@@ -107,6 +112,7 @@ avo supervise:
   --json --cwd <dir>
   exit codes        0 = no intervention needed, 1 = a signal fired and a directive was emitted,
                     2 = harness error
+  AVO_SUPERVISE     off or detect (set by avo run --supervise): print one line, exit 0
 
 avo commit:
   --why <text>      the agent's rationale; lands in the commit body and lineage/vNNN.md
@@ -114,18 +120,71 @@ avo commit:
   --json --parallel --timeout <s> --no-record --cwd <dir>   as for avo score
   exit codes        0 = committed or no-op, 1 = refused, 2 = harness error
 
+avo lineage:
+  show <n>          one version, with its rationale
+  diff <a> <b>      the score delta and the patch between two versions
+  --json --cwd <dir>
+  exit codes        0 = ok, 2 = harness error
+
+avo best:
+  --json --cwd <dir>
+  exit codes        0 = a best version exists, 1 = no version yet, 2 = harness error
+
+avo doctor:
+  --json            the report as one JSON line
+  exit codes        0 = ready, 1 = a required dependency is missing, 2 = bad option
+
 every command supports --json for agent consumption (invariant 3).
 `;
 
+/** One command's usage stanza, or null. */
+export function commandUsage(cmd: string): string | null {
+  const start = USAGE.indexOf(`\navo ${cmd}:\n`);
+  if (start < 0) return null;
+  const end = USAGE.indexOf("\n\n", start + 1);
+  return `${USAGE.slice(start + 1, end)}\n`;
+}
+
+/** A help flag, unless it is a value. */
+export function asksHelp(stanza: string, args: readonly string[]): boolean {
+  // Flags the stanza shows with a <value>.
+  const takesValue = new Set([...stanza.matchAll(/(-{1,2}[a-z][a-z-]*) "?</g)].map((m) => m[1]));
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--") return false;
+    if (a === "--help" || a === "-h") return true;
+    if (takesValue.has(a)) i++;
+  }
+  return false;
+}
+
 export async function main(argv: readonly string[], io: Io = processIo): Promise<number> {
   const [cmd, ...rest] = argv;
+  // Help wins before any option parser.
+  const stanza = cmd === undefined ? null : commandUsage(cmd);
+  if (stanza !== null && asksHelp(stanza, rest)) {
+    io.out(stanza);
+    return 0;
+  }
   switch (cmd) {
     case undefined:
-    case "help":
     case "-h":
     case "--help":
       io.out(USAGE);
       return 0;
+    case "help": {
+      if (rest[0] === undefined || rest[0] === "--help" || rest[0] === "-h") {
+        io.out(USAGE);
+        return 0;
+      }
+      const topic = commandUsage(rest[0]);
+      if (topic === null) {
+        io.err(`avo: no help for '${rest[0]}'\n\n${USAGE}`);
+        return 2;
+      }
+      io.out(topic);
+      return 0;
+    }
     case "version":
     case "-v":
     case "--version":

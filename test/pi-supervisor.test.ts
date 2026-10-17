@@ -187,9 +187,12 @@ const stateOf = (over: Partial<SuperviseState> = {}): SuperviseState => ({
   attempts: 6,
   analyzed: 6,
   since_best: 5,
+  variations_since_best: 5,
   failing_streak: 0,
   repeat: 0,
   signature: null,
+  region: [],
+  unedited: false,
   last_pass: null,
   ...over,
 });
@@ -225,11 +228,12 @@ test("a thrash episode is named by its signature and where the streak began", ()
 });
 
 test("the footer names the best, the distance from it, and whether anything is firing", () => {
-  const quiet = { triggered: false, state: stateOf({ since_best: 2 }), signals: [] } as unknown as Supervision;
+  // Distance is variations, not score calls.
+  const quiet = { triggered: false, state: stateOf({ since_best: 7, variations_since_best: 2 }), signals: [] } as unknown as Supervision;
   assert.equal(statusLine(quiet), "v1 · 8 bytes · 2 since best");
   const loud = { triggered: true, state: stateOf(), signals: [sig("stall"), sig("thrash")] } as unknown as Supervision;
   assert.match(statusLine(loud), /^v1 · 8 bytes · 5 since best · ! stall\+thrash$/);
-  const fresh = { triggered: false, state: stateOf({ best: null, since_best: 1 }), signals: [] } as unknown as Supervision;
+  const fresh = { triggered: false, state: stateOf({ best: null, since_best: 1, variations_since_best: 1 }), signals: [] } as unknown as Supervision;
   assert.equal(statusLine(fresh), "no version yet · 1 since best");
 });
 
@@ -386,8 +390,9 @@ test("a thrash that appears during a stall is steered — it is a different prob
     assert.deepEqual(f.sent[0]?.details.kinds, ["stall"]);
 
     // Now break correctness the same way THRASH times running: a second, distinct signal.
-    writeFileSync(join(dir, "impl.sh"), "echo 43\n");
+    // Each try is a new tree: re-scores do not thrash.
     for (let i = 0; i < THRASH; i++) {
+      writeFileSync(join(dir, "impl.sh"), `echo 43\n# try ${i}\n`);
       await score(dir);
       await f.toolResult("avo_score");
     }
