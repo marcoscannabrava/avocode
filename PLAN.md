@@ -30,6 +30,14 @@ on `fuzzysearch` took 1810 ms to 0.231 ms (7837x) in 9 turns, 7 versions, 0 regr
 **Not proven:** the supervisor. It fired 0 times in 9 real turns, because every turn committed. The
 whole loop is untested at the point it exists for: a plateau.
 
+**Progress, 2026-10-17.** 32 PRs merged (#56-#86): 586 unit tests, `just e2e` green, main CI green.
+Done: AVO-1, 2, 4, 5, 6 of M1; AVO-13, 14, 15 of M4; AVO-16-19, 21 and most of the issue sweep (M5).
+Status per task is in [plan/tasks.md](plan/tasks.md#progress-2026-10-17).
+
+**Blocker found:** on this machine an org policy disables claude's bypass mode, so a headless
+`claude` turn edits nothing. `avo run` now stops with `approval-refused` instead of burning turns.
+BENCH-1 with `claude` waits on AVO-22. The ARC sandbox escape was real and is closed (AVO-21).
+
 ## 3. Phase 2 goal
 
 Run a bench that **plateaus**, so the supervisor fires with a real agent, and measure whether it
@@ -67,14 +75,14 @@ Specs and dependencies are in [plan/tasks.md](plan/tasks.md).
 
 | Milestone | Content | Spend |
 | --- | --- | --- |
-| **M1 — instrument** | AVO-1 budgets, AVO-2 scorer-hash stop, AVO-4 `--supervise off`, AVO-5 count variations, AVO-6 PATH, AVO-7 intervention effect, AVO-8 hypotheses, AVO-9 problem model + learning-loop skill, AVO-10 timeline, AVO-11 report | none |
-| **M2 — first real intervention** | BENCH-1: small model, resumed `fuzzysearch` v7, ≤ $10 | ≤ $10 |
+| **M1 — instrument** | done: AVO-1, AVO-2, AVO-4, AVO-5, AVO-6. Open: AVO-3 plateau stop, AVO-7 intervention effect, AVO-8 hypotheses, AVO-9 problem model + learning-loop skill, AVO-10 timeline, AVO-11 report | none |
+| **M2 — first real intervention** | BENCH-1: small model, resumed `fuzzysearch` v7, ≤ $10. Blocked for `claude` here by AVO-22 | ≤ $10 |
 | **M3 — main bench** | ARC-1..ARC-12, ARC-15 (and CFX-1..CFX-7 in parallel); BENCH-2 pilot; BENCH-3 ablation; BENCH-4 pi | campaign |
-| **M4 — upgrades from evidence** | AVO-12 agent-written directive, AVO-13 directed fan, AVO-14 re-measure best, AVO-15 noise-aware compare | as needed |
-| **M5 — hygiene** | AVO-16..AVO-21, issue sweep | none |
+| **M4 — upgrades from evidence** | done: AVO-13 directed fan, AVO-14 re-measure best, AVO-15 noise-aware compare. Open: AVO-12 agent-written directive | as needed |
+| **M5 — hygiene** | done: AVO-16..AVO-19, AVO-21, most of AVO-20. Open: rest of AVO-20, AVO-22..AVO-28 (review follow-ups and owner decisions) | none |
 
-Order inside M1: AVO-1, AVO-2, AVO-4, AVO-6 first (small, independent), then AVO-5 → AVO-10 →
-AVO-7, AVO-11, and AVO-8 → AVO-9.
+Next: AVO-10 → AVO-7 → AVO-3, AVO-10 → AVO-11, and AVO-8 → AVO-9. In parallel: decide AVO-22 (it
+gates every paid `claude` run here), then AVO-23 and AVO-24 before any bench pilot.
 
 ## 7. Invariants
 
