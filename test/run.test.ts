@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -21,6 +21,7 @@ import {
   readRunManifest,
   renderRun,
   runCommand,
+  runIsLive,
   turnPrompt,
   type Iteration,
   type RunReport,
@@ -986,4 +987,212 @@ test("a manifest that is not ours is reported rather than parsed as one", () => 
   assert.equal(listRuns(dir).length, 0, "an unreadable run is skipped, not fatal");
   assert.ok("error" in readRunManifest(dir, "nope"));
   assert.deepEqual(listRuns(mkdtempSync(join(tmpdir(), "avo-noruns-"))), []);
+});
+
+// ------------------------------------------------------- resume, list, clean (#27)
+
+test("--resume, --list and --clean are modes, and take no prompt", () => {
+  const r = parseRunArgs(["--resume", "abc"]);
+  assert.ok(!("error" in r));
+  assert.equal(r.mode, "resume");
+  assert.equal(r.target, "abc");
+  const l = parseRunArgs(["--list"]);
+  assert.ok(!("error" in l) && l.mode === "list");
+  const c = parseRunArgs(["--clean", "all"]);
+  assert.ok(!("error" in c) && c.mode === "clean" && c.target === "all");
+  assert.ok("error" in parseRunArgs(["--resume", "abc", "--prompt", "go"]), "the manifest holds the prompt");
+  assert.ok("error" in parseRunArgs(["--resume", "abc", "--list"]), "one mode at a time");
+  assert.ok("error" in parseRunArgs(["--resume", "abc", "--dry-run"]));
+  assert.match(
+    (parseRunArgs(["--resume", "abc", "--max-iters", "9"]) as { error: string }).error,
+    /--resume does not take --max-iters/,
+    "the manifest holds the budget; a flag is never ignored",
+  );
+  for (const flag of ["--max-cost", "--max-tokens", "--max-wall", "--supervise"]) {
+    assert.ok("error" in parseRunArgs(["--resume", "abc", flag, "1"]), `the manifest holds ${flag}`);
+  }
+  assert.ok("error" in parseRunArgs(["--clean", "all", "--agent", "pi"]));
+  assert.ok(!("error" in parseRunArgs(["--resume", "abc"], { AVO_AGENT: "pi" })), "the env is no flag");
+  assert.ok("error" in parseRunArgs(["--clean"]), "--clean needs a target");
+});
+
+/** A pid that has exited. */
+const deadPid = (): number => spawnSync("true").pid as number;
+
+/** A run killed after `done` iterations of `max`. */
+async function killedRun(f: Fixture, done: number, max: number, pid = deadPid()): Promise<string> {
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", String(done)]);
+  const m = readRunManifest(f.dir, json.run_id) as RunReport;
+  writeFileSync(
+    join(f.dir, RUNS_DIR, json.run_id, RUN_MANIFEST),
+    JSON.stringify({ ...m, max_iters: max, finished_at: null, stop_reason: "", pid }),
+  );
+  return json.run_id;
+}
+
+/** A live process that looks like avo. */
+function fakeLoop(): { pid: number; stop: () => void } {
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", "main.ts"], { stdio: "ignore" });
+  return { pid: child.pid as number, stop: () => child.kill("SIGKILL") };
+}
+
+async function resume(f: Fixture, id: string): Promise<{ code: number; out: string; err: string }> {
+  const io = bufferIo();
+  const code = await runCommand(["--resume", id, "--json", "--cwd", f.dir], io, undefined, undefined, process.env);
+  return { code, out: io.stdout, err: io.stderr };
+}
+
+test("a killed run resumes at the next iteration, with the last outcome in the prompt", async () => {
+  const f = fixture("runresume");
+  const id = await killedRun(f, 1, 3);
+  const { code, out } = await resume(f, id);
+  assert.equal(code, 0);
+  const json = JSON.parse(out) as RunReport;
+  assert.equal(json.run_id, id, "the same run, not a new one");
+  assert.deepEqual(
+    json.iterations.map((i) => i.iter),
+    [1, 2, 3],
+  );
+  assert.deepEqual(json.committed, [1, 2, 3]);
+  assert.notEqual(json.finished_at, null);
+  assert.ok(json.warnings.some((w) => /resumed at iteration 2 of 3/.test(w)));
+  const prompts = readFileSync(join(f.dir, "all-prompts.txt"), "utf8");
+  assert.match(prompts, /iteration 2 of 3[\s\S]*committed v1 at 2 lines/, "the first resumed turn knows what v1 was");
+  assert.ok(existsSync(join(f.dir, RUNS_DIR, id, "logs", "3.log")));
+  assert.equal(listRuns(f.dir).length, 1);
+});
+
+test("a resume keeps the run's supervise mode and budget", async () => {
+  const f = fixture("runresumemode");
+  const id = await killedRun(f, 1, 2);
+  const path = join(f.dir, RUNS_DIR, id, RUN_MANIFEST);
+  const m = JSON.parse(readFileSync(path, "utf8")) as RunReport;
+  writeFileSync(path, JSON.stringify({ ...m, supervise: "off", budget: { ...m.budget, max_wall_s: 3600 } }));
+  const { code, out } = await resume(f, id);
+  assert.equal(code, 0);
+  const json = JSON.parse(out) as RunReport;
+  assert.equal(json.supervise, "off");
+  assert.equal(json.iterations[1]?.supervision, null, "off: no supervisor call after the resume");
+  assert.equal(json.budget.max_wall_s, 3600);
+});
+
+test("a finished run is not resumed", async () => {
+  const f = fixture("runresumedone");
+  const { json } = await run(f, ["--prompt", "make it longer", "--max-iters", "1"]);
+  const { code, err } = await resume(f, json.run_id);
+  assert.equal(code, 1);
+  assert.match(err, /already finished/);
+  assert.match((await resume(f, "nope")).err, /no run 'nope'/);
+});
+
+test("a resume refuses a HEAD that lost the run's versions, and warns on one that moved on", async () => {
+  const f = fixture("runresumehead");
+  const id = await killedRun(f, 1, 2);
+  const committedHead = f.git("rev-parse", "HEAD").trim();
+  f.git("reset", "-q", "--hard", "HEAD~1");
+  const lost = await resume(f, id);
+  assert.equal(lost.code, 1);
+  assert.match(lost.err, /lost this run's versions/);
+  const untouched = readRunManifest(f.dir, id) as RunReport;
+  assert.equal(untouched.iterations.length, 1, "a refusal leaves the manifest alone");
+
+  f.git("reset", "-q", "--hard", committedHead);
+  writeFileSync(join(f.dir, "notes.txt"), "an operator commit\n");
+  f.git("add", "notes.txt");
+  f.git("commit", "-qm", "operator");
+  const moved = await resume(f, id);
+  assert.equal(moved.code, 0);
+  assert.ok((JSON.parse(moved.out) as RunReport).warnings.some((w) => /HEAD moved from/.test(w)));
+});
+
+test("a resume re-checks the guards, since it spawns agents too", async () => {
+  const f = fixture("runresumeguard");
+  const id = await killedRun(f, 1, 2);
+  const io = bufferIo();
+  const code = await runCommand(["--resume", id, "--cwd", f.dir], io, undefined, undefined, {
+    ...process.env,
+    [LEVEL_ENV]: "3",
+    [DEPTH_ENV]: "3",
+  });
+  assert.equal(code, 1);
+  assert.match(io.stderr, /depth limit/);
+});
+
+test("--list names each run and how to resume an unfinished one; --clean removes it", async () => {
+  const f = fixture("runlist");
+  const id = await killedRun(f, 1, 3);
+  const io = bufferIo();
+  assert.equal(await runCommand(["--list", "--cwd", f.dir], io), 0);
+  assert.match(io.stdout, new RegExp(`${id}.*1/3 iteration\\(s\\), v1, unfinished — 'avo run --resume ${id}'`));
+  const j = bufferIo();
+  await runCommand(["--list", "--json", "--cwd", f.dir], j);
+  const listed = JSON.parse(j.stdout) as { runs: { run_id: string; stopped: string | null }[] };
+  assert.deepEqual(
+    listed.runs.map((r) => [r.run_id, r.stopped]),
+    [[id, null]],
+  );
+
+  const bad = bufferIo();
+  assert.equal(await runCommand(["--clean", "..", "--cwd", f.dir], bad), 2, "an id is never a free path");
+  assert.ok(existsSync(join(f.dir, RUNS_DIR)));
+
+  const c = bufferIo();
+  assert.equal(await runCommand(["--clean", "all", "--cwd", f.dir], c), 0);
+  assert.match(c.stdout, /removed 1 run/);
+  assert.ok(!existsSync(join(f.dir, RUNS_DIR, id)));
+  const e = bufferIo();
+  await runCommand(["--list", "--cwd", f.dir], e);
+  assert.match(e.stdout, /no runs in/);
+});
+
+test("a run that is still alive is neither resumed nor cleaned", async () => {
+  const f = fixture("runlive");
+  const loop = fakeLoop();
+  try {
+    const id = await killedRun(f, 1, 3, loop.pid);
+    const m = readRunManifest(f.dir, id) as RunReport;
+    assert.equal(m.host, hostname(), "a new run records where it runs");
+    assert.ok(runIsLive(m));
+    const r = await resume(f, id);
+    assert.equal(r.code, 1);
+    assert.match(r.err, new RegExp(`still running \\(pid ${loop.pid}\\)`));
+    assert.equal((readRunManifest(f.dir, id) as RunReport).iterations.length, 1, "a refusal changes nothing");
+
+    const l = bufferIo();
+    await runCommand(["--list", "--cwd", f.dir], l);
+    assert.match(l.stdout, new RegExp(`running \\(pid ${loop.pid}\\)`));
+    const c = bufferIo();
+    assert.equal(await runCommand(["--clean", "all", "--cwd", f.dir], c), 2);
+    assert.match(c.stderr, /still running/);
+    assert.ok(existsSync(join(f.dir, RUNS_DIR, id)), "a live run keeps its directory");
+  } finally {
+    loop.stop();
+  }
+});
+
+test("a dead pid, a reused pid, another host or no pid is not a live run", () => {
+  const base = { finished_at: null, host: hostname() } as unknown as RunReport;
+  assert.equal(runIsLive({ ...base, pid: deadPid() }), false);
+  assert.equal(runIsLive({ ...base, host: "elsewhere", pid: process.pid }), false);
+  assert.equal(runIsLive({ ...base }), false, "a manifest from before #27");
+  if (existsSync("/proc/self/cmdline")) {
+    const other = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      assert.equal(runIsLive({ ...base, pid: other.pid as number }), false, "a reused pid is not avo");
+    } finally {
+      other.kill("SIGKILL");
+    }
+  }
+});
+
+test("--resume and --clean read a run id, never a path", async () => {
+  const f = fixture("runid");
+  const id = await killedRun(f, 1, 2);
+  for (const bad of ["..", "../x", `${id}/..`, "/tmp"]) {
+    assert.match((await resume(f, bad)).err, /is not a run id/, bad);
+  }
+  // A copied manifest keeps its old id.
+  mkdirSync(join(f.dir, RUNS_DIR, "copy"));
+  writeFileSync(join(f.dir, RUNS_DIR, "copy", RUN_MANIFEST), readFileSync(join(f.dir, RUNS_DIR, id, RUN_MANIFEST)));
+  assert.ok("error" in readRunManifest(f.dir, "copy"));
 });

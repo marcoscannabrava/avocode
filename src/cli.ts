@@ -99,6 +99,8 @@ avo run:
   --supervise <m>   on (default) steers, off skips the supervisor, detect
                     records what would fire and injects nothing
   --dry-run         print the resolved plan and the first turn prompt; spawn nothing
+  --resume <id>     continue a killed run from its manifest
+  --list            the runs in .avo/runs; --clean <id|all> removes them
   --json --cwd <dir>
   exit codes        0 = the loop ran, 1 = a guard refused or no turn got anywhere, 2 = harness error
   stops on          --max-iters, a crossed budget, an .avo/STOP file, 3 unchanged iterations in

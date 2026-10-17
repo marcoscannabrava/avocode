@@ -8,7 +8,8 @@
  * *between*: every iteration is a fresh process, so the turn prompt is the only continuity.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import {
   capOutput,
@@ -176,6 +177,9 @@ export interface RunReport {
   head: string;
   started_at: string;
   finished_at: string | null;
+  /** The loop's process; absent in old manifests. */
+  pid?: number;
+  host?: string;
   thresholds: { stall: number; thrash: number };
   /** sha256 of each `f` file at start (#38). */
   scorer_hashes: Record<string, string | null>;
@@ -204,7 +208,12 @@ export interface RunReport {
 // arguments
 // ---------------------------------------------------------------------------
 
+export type RunMode = "run" | "resume" | "list" | "clean";
+
 export interface RunOptions {
+  mode: RunMode;
+  /** `--resume <id>` and `--clean <id|all>` land here. */
+  target: string;
   json: boolean;
   cwd: string;
   prompt: string | null;
@@ -224,8 +233,28 @@ export interface RunOptions {
   supervise: SuperviseMode;
 }
 
+/** Flags that only shape a new run. */
+const NEW_RUN_FLAGS = new Set([
+  "--prompt",
+  "--prompt-file",
+  "--agent",
+  "--model",
+  "-n",
+  "--max-iters",
+  "--timeout",
+  "--stall",
+  "--thrash",
+  "--dry-run",
+  "--max-cost",
+  "--max-tokens",
+  "--max-wall",
+  "--supervise",
+]);
+
 export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): RunOptions | { error: string } {
   const opts: RunOptions = {
+    mode: "run",
+    target: "",
     json: false,
     cwd: process.cwd(),
     prompt: null,
@@ -248,12 +277,25 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     if (v === undefined) return { error: `avo run: ${flag} needs a value` };
     return v;
   };
+  let sawMode = false;
+  const setMode = (m: RunMode, flag: string): { error: string } | null => {
+    if (sawMode) return { error: `avo run: ${flag} cannot be combined with another mode` };
+    sawMode = true;
+    opts.mode = m;
+    return null;
+  };
+
+  let newRunFlag: string | null = null;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
+    if (NEW_RUN_FLAGS.has(a)) newRunFlag ??= a;
     if (a === "--json") opts.json = true;
     else if (a === "--dry-run") opts.dryRun = true;
-    else {
+    else if (a === "--list") {
+      const e = setMode("list", a);
+      if (e !== null) return e;
+    } else {
       const v = value(i, a);
       if (typeof v !== "string") return v;
       switch (a) {
@@ -315,6 +357,13 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
           opts.thrash = n;
           break;
         }
+        case "--resume":
+        case "--clean": {
+          const e = setMode(a.slice(2) as RunMode, a);
+          if (e !== null) return e;
+          opts.target = v;
+          break;
+        }
         case "--supervise": {
           const m = SUPERVISE_MODES.find((k) => k === v);
           if (m === undefined) return { error: `avo run: --supervise needs on, off or detect` };
@@ -328,6 +377,11 @@ export function parseRunArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
     }
   }
 
+  if (opts.mode !== "run") {
+    // The manifest holds these; never ignore one.
+    if (newRunFlag !== null) return { error: `avo run: --${opts.mode} does not take ${newRunFlag}` };
+    return opts;
+  }
   if (opts.prompt === null && opts.promptFile === null) {
     return { error: 'avo run: needs --prompt-file <f> or --prompt "<text>" — a loop with no task is not a loop' };
   }
@@ -424,10 +478,16 @@ export function writeRunManifest(cwd: string, report: RunReport): void {
   }
 }
 
+/** Ids are names, never paths. */
+const RUN_ID = /^\w[\w.-]*$/;
+
 export function readRunManifest(cwd: string, runId: string): RunReport | { error: string } {
+  if (!RUN_ID.test(runId)) return { error: `'${runId}' is not a run id` };
   try {
     const m = JSON.parse(readFileSync(join(runDir(cwd, runId), RUN_MANIFEST), "utf8")) as RunReport;
-    if (m.version !== 1 || !Array.isArray(m.iterations)) return { error: `${runId}'s manifest is not a v1 run manifest` };
+    if (m.version !== 1 || !Array.isArray(m.iterations) || m.run_id !== runId) {
+      return { error: `${runId}'s manifest is not a v1 run manifest` };
+    }
     return m;
   } catch {
     return { error: `no run '${runId}' in ${RUNS_DIR}` };
@@ -440,6 +500,22 @@ function uniqueRunId(cwd: string, now: Date, sha: string): string {
   let id = base;
   for (let k = 2; existsSync(runDir(cwd, id)); k++) id = `${base}-${k}`;
   return id;
+}
+
+/** Its loop still runs on this host. */
+export function runIsLive(m: RunReport): boolean {
+  if (m.finished_at !== null || m.pid === undefined || m.host !== hostname()) return false;
+  try {
+    process.kill(m.pid, 0);
+  } catch (e) {
+    // EPERM: alive, but not ours to signal.
+    if ((e as NodeJS.ErrnoException).code !== "EPERM") return false;
+  }
+  try {
+    return readFileSync(`/proc/${m.pid}/cmdline`, "utf8").includes("main.ts");
+  } catch {
+    return true; // No /proc: trust the pid.
+  }
 }
 
 export function listRuns(cwd: string): RunReport[] {
@@ -611,6 +687,8 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
     head: baseline,
     started_at: now().toISOString(),
     finished_at: null,
+    pid: process.pid,
+    host: hostname(),
     thresholds,
     scorer_hashes: hashFiles(opts.cwd, scorerPaths(opts.cwd)),
     supervise: opts.supervise,
@@ -639,6 +717,136 @@ export async function runLoop(opts: RunOptions, deps: RunDeps): Promise<RunRepor
   ensureTrajectoryIgnored(opts.cwd);
   writeRunManifest(opts.cwd, report);
   return await iterate(opts, deps, report, template, prompt);
+}
+
+/** A no-op needs HEAD unmoved: a self-committing turn leaves a clean tree too. */
+const isIdle = (it: Iteration): boolean => it.decision?.action === "noop" && it.head_after === it.head_before;
+
+function trailingNoops(its: readonly Iteration[]): number {
+  let n = 0;
+  for (let k = its.length - 1; k >= 0 && isIdle(its[k] as Iteration); k--) n++;
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+// resume, clean
+// ---------------------------------------------------------------------------
+
+/**
+ * Continues a killed run from its manifest: same prompt, agent, model and budget, from the next
+ * iteration, with the last outcome and directive in the turn prompt. Only an unfinished run
+ * (`finished_at: null`) resumes; a run that stopped for a reason has nothing left to continue.
+ *
+ * HEAD may have moved since — an operator commit, another loop. Every turn reads `P_t` afresh, so a
+ * descendant of the manifest's head is fine and only warned about. A head that is no longer an
+ * ancestor of HEAD (a reset, another branch) means the versions this run committed are gone, and
+ * the carried-over outcome would describe history the agent cannot see: refused.
+ */
+export async function resumeRun(opts: RunOptions, deps: RunDeps): Promise<RunReport | { error: string }> {
+  const { runner, env } = deps;
+  const manifest = readRunManifest(opts.cwd, opts.target);
+  if ("error" in manifest) return manifest;
+  if (manifest.finished_at !== null) {
+    return { error: `run '${manifest.run_id}' already finished (${manifest.stopped})` };
+  }
+  if (runIsLive(manifest)) return { error: `run '${manifest.run_id}' is still running (pid ${manifest.pid})` };
+
+  // A resume spawns agents, so the guards apply unchanged.
+  const guards = checkGuards(env, manifest.prompt_sha);
+  if (!guards.ok) return { error: guards.error };
+
+  const loaded = loadConfig(opts.cwd);
+  const template = resolveTemplate(manifest.agent, loaded.config.agent);
+  if ("error" in template) return { error: `run '${manifest.run_id}' used ${template.error}` };
+
+  const current = await head(runner, opts.cwd);
+  if (current === "") return { error: `no HEAD in ${opts.cwd}` };
+  if (current !== manifest.head) {
+    const kept = await git(runner, opts.cwd, ["merge-base", "--is-ancestor", manifest.head, current]);
+    if (kept.code !== 0) return { error: "HEAD lost this run's versions; start a new run" };
+    manifest.warnings.push(`HEAD moved from ${manifest.head.slice(0, 8)} to ${current.slice(0, 8)}`);
+    manifest.head = current;
+  }
+
+  const next = manifest.iterations.length + 1;
+  manifest.warnings.push(...guards.warnings, ...loaded.warnings, `resumed at iteration ${next} of ${manifest.max_iters}`);
+  manifest.stopped = "max-iters";
+  manifest.stop_reason = "";
+  manifest.pid = process.pid;
+  manifest.host = hostname();
+  // Older manifests predate budgets and pins.
+  manifest.budget ??= { max_cost_usd: null, max_tokens: null, max_wall_s: null, unenforced: [] };
+  manifest.scorer_hashes ??= hashFiles(opts.cwd, scorerPaths(opts.cwd));
+  const resumed: RunOptions = {
+    ...opts,
+    agent: manifest.agent,
+    model: manifest.model,
+    maxIters: manifest.max_iters,
+    timeoutS: manifest.timeout_s,
+    stall: manifest.thresholds.stall,
+    thrash: manifest.thresholds.thrash,
+    supervise: manifest.supervise ?? "on",
+  };
+  ensureTrajectoryIgnored(opts.cwd);
+  writeRunManifest(opts.cwd, manifest);
+  return await iterate(resumed, deps, manifest, template, manifest.prompt);
+}
+
+export interface RunCleanResult {
+  ok: boolean;
+  removed: string[];
+  errors: string[];
+}
+
+/** Only a directory with a readable manifest goes: the id is never a free path. */
+export function cleanRuns(cwd: string, target: string): RunCleanResult {
+  const ids = target === "all" ? listRuns(cwd).map((m) => m.run_id) : [target];
+  const out: RunCleanResult = { ok: true, removed: [], errors: [] };
+  for (const id of ids) {
+    const read = readRunManifest(cwd, id);
+    const m = "error" in read || !runIsLive(read) ? read : { error: `run '${id}' is still running (pid ${read.pid})` };
+    if ("error" in m) {
+      out.errors.push(m.error);
+      out.ok = false;
+      continue;
+    }
+    try {
+      rmSync(runDir(cwd, id), { recursive: true, force: true });
+      out.removed.push(id);
+    } catch (e) {
+      out.errors.push(`could not remove ${join(RUNS_DIR, id)} — ${(e as Error).message}`);
+      out.ok = false;
+    }
+  }
+  return out;
+}
+
+/** The `--list --json` row: no prompt, no turns. */
+const listEntry = (r: RunReport) => ({
+  run_id: r.run_id,
+  started_at: r.started_at,
+  finished_at: r.finished_at,
+  agent: r.agent,
+  iterations: r.iterations.length,
+  max_iters: r.max_iters,
+  committed: r.committed,
+  stopped: r.finished_at === null ? null : r.stopped,
+  running: runIsLive(r),
+});
+
+/** One line per run; the unfinished ones say how to resume. */
+export function renderRunList(runs: readonly RunReport[]): string {
+  if (runs.length === 0) return `no runs in ${RUNS_DIR}\n`;
+  const lines = runs.map((r) => {
+    const state = runIsLive(r)
+      ? `running (pid ${r.pid})`
+      : r.finished_at === null
+        ? `unfinished — 'avo run --resume ${r.run_id}'`
+        : `stopped: ${r.stopped}`;
+    const committed = r.committed.length === 0 ? "nothing committed" : r.committed.map((v) => `v${v}`).join(", ");
+    return `${r.run_id}  ${r.agent.padEnd(8)} ${r.iterations.length}/${r.max_iters} iteration(s), ${committed}, ${state}`;
+  });
+  return `${lines.join("\n")}\n`;
 }
 
 /** Hides supervisor state unless steering is on. */
@@ -695,11 +903,12 @@ async function iterate(
   };
 
   const mode = opts.supervise;
-  let directive: string | null = null;
-  let prev: Iteration | null = null;
-  let noops = 0;
+  // Empty on a new run; a resume continues.
+  let prev: Iteration | null = report.iterations.at(-1) ?? null;
+  let directive: string | null = prev?.directive ?? null;
+  let noops = trailingNoops(report.iterations);
 
-  for (let iter = 1; iter <= opts.maxIters; iter++) {
+  for (let iter = report.iterations.length + 1; iter <= opts.maxIters; iter++) {
     if (existsSync(join(opts.cwd, STOP_FILE))) {
       report.stopped = "stop-file";
       report.stop_reason = `${STOP_FILE} exists; the loop stopped before iteration ${iter}`;
@@ -813,9 +1022,7 @@ async function iterate(
     for (const v of own.versions) report.committed.push(v.version);
     if (decision.action === "committed" && decision.version !== null) report.committed.push(decision.version);
 
-    // A no-op needs HEAD unmoved: a self-committing turn leaves a clean tree too.
-    const idle = decision.action === "noop" && it.head_after === it.head_before;
-    noops = idle ? noops + 1 : 0;
+    noops = isIdle(it) ? noops + 1 : 0;
 
     // `off` is the ablation arm: no detector call.
     if (mode !== "off") {
@@ -1016,7 +1223,22 @@ export async function runCommand(
     io.err(`${opts.error}\n`);
     return 2;
   }
-  const result = await runLoop(opts, { runner, now, env });
+  if (opts.mode === "list") {
+    const runs = listRuns(opts.cwd);
+    io.out(opts.json ? `${JSON.stringify({ ok: true, runs: runs.map(listEntry) })}\n` : renderRunList(runs));
+    return 0;
+  }
+  if (opts.mode === "clean") {
+    const r = cleanRuns(opts.cwd, opts.target);
+    if (opts.json) io.out(`${JSON.stringify(r)}\n`);
+    else {
+      io.out(`removed ${r.removed.length} run(s)\n`);
+      for (const e of r.errors) io.err(`error: ${e}\n`);
+    }
+    return r.ok ? 0 : 2;
+  }
+  const deps = { runner, now, env };
+  const result = opts.mode === "resume" ? await resumeRun(opts, deps) : await runLoop(opts, deps);
   if ("error" in result) {
     io.err(`avo run: ${result.error}\n`);
     return 1;

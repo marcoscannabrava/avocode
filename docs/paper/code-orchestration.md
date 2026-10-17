@@ -246,13 +246,21 @@ A timed-out turn does **not** stop the loop. Its process group is killed and the
 - **Trajectory, not lineage:** `.avo/runs/` is gitignored, so logs never dirty the tree that the next
   `avo commit` reasons about (test: `test/run.test.ts:393`).
 
-What "crash recovery" means here, precisely: there is **no** `avo run --resume`. Recovery is
-structural. (a) The lineage is in git, and each version is committed before the next turn starts.
-(b) The manifest holds every finished iteration. (c) A new `avo run` with the same prompt continues
-from HEAD, because the agent reads `P_t` at the start of each turn. S9b-2a did exactly this: "Same
-target repo, same prompt, resumed from v4 rather than re-materialized" (`PLAN.md:558`). PLAN.md §6
-Q4 keeps the option to adopt Postgres-backed durable execution ("absurd") if the loop proves fragile
-across days (`PLAN.md:666-667`). Only `avo fan` has a true `--resume` (§3.6).
+What "crash recovery" means here, precisely. Recovery is mostly structural. (a) The lineage is in
+git, and each version is committed before the next turn starts. (b) The manifest holds every
+finished iteration. (c) The agent reads `P_t` at the start of each turn, so a new `avo run` with the
+same prompt also continues from HEAD. S9b-2a did exactly this: "Same target repo, same prompt,
+resumed from v4 rather than re-materialized" (`PLAN.md:558`).
+
+`avo run --resume <run-id>` (`resumeRun` in `run.ts`, #27) adds the loop state on top. It keeps the
+run id, the budget and the iteration count. It gives the next turn the last outcome and directive.
+It refuses a finished run (`finished_at` set), and a run whose recorded pid is still alive on this
+host. It checks the guards again. It refuses when the
+manifest's `head` is not an ancestor of HEAD, because then the run's versions are not in the history
+the agent reads. A HEAD that only moved forward gives a warning. `--list` shows each run and the
+resume command for unfinished ones. `--clean <id|all>` removes run directories that hold a valid
+manifest. PLAN.md §6 Q4 keeps the option to adopt Postgres-backed durable execution ("absurd") if
+the loop proves fragile across days (`PLAN.md:666-667`). `avo fan --resume` is the model (§3.6).
 
 Timeout kills the whole process group: `spawnRunner` spawns `detached: true` and on timeout calls
 `process.kill(-pid, "SIGKILL")` (`src/score.ts:110-135`). Output is capped at 200 KB with a 50 KB
