@@ -12,7 +12,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint src test pi",
+    "lint": "oxlint --deny-warnings src test pi bench",
     "test": "tsx --test test/*.test.ts"
   },
   "devDependencies": {
