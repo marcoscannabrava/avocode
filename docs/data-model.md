@@ -1,6 +1,6 @@
 # Data Model
 
-This document gives the data types of avocode and the format of the run folder. The domain types are in `avocode/core/`. The event types are in `avocode/record/events.py`. The Pydantic event models are the one source of truth for the format. `./bench/arcagi3.py schema` prints the JSON schema from them.
+This document gives the data types of avocode and the format of the run folder. The domain types are in `avocode/core/`. The event types are in `avocode/core/events.py`. The session must make events, and it can not import `record`. So the event models are in `core`. `avocode/record/events.py` exports them again. The Pydantic event models are the one source of truth for the format. `./bench/arcagi3.py schema` prints the JSON schema from them.
 
 ## 1. Terms
 

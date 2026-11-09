@@ -1,0 +1,18 @@
+"""Make an LLM client by provider name."""
+
+from __future__ import annotations
+
+from avocode.ports import LLMClient
+
+
+def make_client(provider: str) -> LLMClient:
+    """Anthropic or OpenAI client."""
+    if provider == "openai":
+        from avocode.llm.openai import OpenAIClient
+
+        return OpenAIClient()
+    if provider == "anthropic":
+        from avocode.llm.anthropic import AnthropicClient
+
+        return AnthropicClient()
+    raise ValueError(f"unknown LLM provider: {provider}")

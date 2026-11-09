@@ -1,0 +1,126 @@
+[project]
+name = "avocode"
+version = "0.1.0"
+description = "An agent that plays ARC-AGI-3 games"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.11",
+    "python-dotenv>=1.0",
+    "arc-agi>=0.9.1",
+    "anthropic>=0.40",
+    "openai>=1.72",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.11",
+    "mypy>=1.15",
+    "import-linter>=2.1",
+    "jsonschema>=4.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["avocode"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["ARC-AGI-3-Agents"]
+
+[tool.ruff.lint]
+extend-select = ["I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["avocode"]
+
+[[tool.mypy.overrides]]
+module = ["arc_agi.*", "arcengine.*"]
+ignore_missing_imports = true
+
+[tool.importlinter]
+root_packages = ["avocode"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "core imports only stdlib and pydantic"
+type = "forbidden"
+source_modules = ["avocode.core"]
+forbidden_modules = [
+    "avocode.perception", "avocode.ports", "avocode.player", "avocode.scorer",
+    "avocode.session", "avocode.budget", "avocode.engine", "avocode.llm",
+    "avocode.record", "avocode.config",
+]
+
+[[tool.importlinter.contracts]]
+name = "perception imports only core"
+type = "forbidden"
+source_modules = ["avocode.perception"]
+forbidden_modules = [
+    "avocode.ports", "avocode.player", "avocode.scorer", "avocode.session",
+    "avocode.budget", "avocode.engine", "avocode.llm", "avocode.record", "avocode.config",
+]
+
+[[tool.importlinter.contracts]]
+name = "ports imports only core"
+type = "forbidden"
+source_modules = ["avocode.ports"]
+forbidden_modules = [
+    "avocode.perception", "avocode.player", "avocode.scorer", "avocode.session",
+    "avocode.budget", "avocode.engine", "avocode.llm", "avocode.record", "avocode.config",
+]
+
+[[tool.importlinter.contracts]]
+name = "services do not import adapters"
+type = "forbidden"
+source_modules = ["avocode.player", "avocode.scorer", "avocode.session"]
+forbidden_modules = ["avocode.engine", "avocode.llm", "avocode.record", "avocode.config"]
+
+[[tool.importlinter.contracts]]
+name = "player and scorer are independent"
+type = "independence"
+modules = ["avocode.player", "avocode.scorer"]
+
+[[tool.importlinter.contracts]]
+name = "adapters do not import services"
+type = "forbidden"
+source_modules = ["avocode.engine", "avocode.llm", "avocode.record"]
+forbidden_modules = [
+    "avocode.perception", "avocode.player", "avocode.scorer", "avocode.session",
+    "avocode.budget", "avocode.config",
+]
+
+[[tool.importlinter.contracts]]
+name = "adapters are independent"
+type = "independence"
+modules = ["avocode.engine", "avocode.llm", "avocode.record"]
+
+[[tool.importlinter.contracts]]
+name = "only engine.arc imports arc toolkit"
+type = "forbidden"
+source_modules = [
+    "avocode.core", "avocode.perception", "avocode.ports", "avocode.player",
+    "avocode.scorer", "avocode.session", "avocode.llm", "avocode.record", "avocode.engine.toy",
+]
+forbidden_modules = ["arc_agi", "arcengine"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "only llm providers import LLM SDKs"
+type = "forbidden"
+source_modules = [
+    "avocode.core", "avocode.perception", "avocode.ports", "avocode.player",
+    "avocode.scorer", "avocode.session", "avocode.engine", "avocode.record",
+    "avocode.llm.base", "avocode.llm.fake", "avocode.llm.recording", "avocode.llm.pricing",
+]
+forbidden_modules = ["anthropic", "openai"]
+allow_indirect_imports = true

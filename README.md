@@ -8,7 +8,7 @@ avocode is an agent that plays ARC-AGI-3 games. It uses two LLMs and one game en
 
 `ARCHITECTURE.md` gives the full design.
 
-> **Status: planning.** There is no code yet. This README tells how the tool will work. `PLAN.md` gives the build steps.
+> **Status: M0 to M7 and M9 are done.** M8 (tune on real games) needs API keys. `PLAN.md` gives the build steps.
 
 ## Requirements
 
@@ -116,9 +116,17 @@ It shows:
 
 ```bash
 uv run pytest
+uv run lint-imports
 ```
 
-The tests use a small grid game and a fake LLM. They do not use the network.
+The tests use a small grid game and a fake LLM. They do not use the network. `uv run pytest` also runs the viewer tests with `node --test` if Node is installed.
+
+To make the fixture run again, and to see it in the viewer:
+
+```bash
+uv run python -m tests.make_fixture
+./bench/arcagi3.py view tests/fixtures/runs/toy
+```
 
 ## Repository layout
 

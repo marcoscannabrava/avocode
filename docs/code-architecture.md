@@ -60,7 +60,8 @@ avocode/
 ├── core/
 │   ├── state.py             # Grid, State, Status, Outcome
 │   ├── action.py            # Action, short form
-│   └── model.py             # GameModel, FailedRound
+│   ├── model.py             # GameModel, FailedRound
+│   └── events.py            # Pydantic event models
 ├── perception/
 │   ├── encode.py            # grid to text for prompts
 │   ├── objects.py           # find_blobs()
@@ -85,9 +86,10 @@ avocode/
 │   ├── openai.py
 │   ├── fake.py              # FakeLLM
 │   ├── pricing.py           # cost per token, per model
+│   ├── factory.py           # make_client() by provider
 │   └── recording.py         # RecordingLLM wrapper
 └── record/
-    ├── events.py            # Pydantic event models
+    ├── events.py            # exports core/events.py
     ├── jsonl.py             # JsonlRecorder (game files)
     ├── run_log.py           # RunLog (run.jsonl, manifest)
     └── memory.py            # MemoryRecorder for tests
@@ -158,11 +160,13 @@ One step in `run()`:
 8. Emit `step`. Send the frames.
 9. Check the budget.
 
+`run()` uses four public methods: `begin()`, `decide()`, `observe()`, and `end()`. The submodule adapter calls the same methods, because the official `Agent` class owns its loop.
+
 The session catches each exception in a step. It emits `error`, ends the game with outcome `error`, and returns. One game crash does not stop the run.
 
 ### Step context and the LLM wrapper
 
-`RecordingLLM` wraps a real `LLMClient`. It emits `llm_start`, calls the inner client, writes the `llm.jsonl` line, and emits `llm_end`. It reads `round` and `step` from a small `StepContext` object. The session updates that object. So the Player and the Scorer take a plain `LLMClient` and know nothing about events.
+`RecordingLLM` wraps a real `LLMClient`. It emits `llm_start`, calls the inner client, writes the `llm.jsonl` line, and emits `llm_end`. It reads `round` and `step` from a small `StepContext` object in `ports.py`. The session updates that object. `RecordingLLM` adds the call ids, tokens, and cost to it. So the Player and the Scorer take a plain `LLMClient` and know nothing about events.
 
 ```
 Player ──► RecordingLLM ──► AnthropicClient
