@@ -10,9 +10,10 @@ from pydantic import BaseModel
 from avocode.core.action import Action
 from avocode.core.model import GameModel
 from avocode.core.state import State
-from avocode.perception.encode import background_color, encode_grid
+from avocode.perception.encode import background_color
 from avocode.perception.objects import find_blobs
-from avocode.perception.summary import summarize_state
+from avocode.perception.summary import state_header
+from avocode.perception.tracker import scene_text
 from avocode.player import prompts
 from avocode.ports import LLMClient, LLMRequest
 
@@ -38,10 +39,12 @@ class Player:
 
     def choose(
         self, model: GameModel, state: State, recent: list[Action] | None = None,
-        round_: int = 1, notes: list[str] | None = None,
+        round_: int = 1, notes: list[str] | None = None, view: str | None = None,
     ) -> Choice:
+        """View: objects text from a Tracker."""
         recent = recent or []
-        reply = self.llm.complete(self._request(model, state, recent, round_, notes or []))
+        view = view or scene_text(state.grid)
+        reply = self.llm.complete(self._request(model, state, recent, round_, notes or [], view))
         flags = ["json_retry"] if reply.retries else []
         problem = reply.error or "no reply"
         if reply.parsed is not None:
@@ -60,7 +63,7 @@ class Player:
 
     def _request(
         self, model: GameModel, state: State, recent: list[Action], round_: int,
-        notes: list[str],
+        notes: list[str], view: str,
     ) -> LLMRequest:
         failed = "\n".join(
             f"- round {f.round}: actions {' '.join(f.actions[-30:])}; why: {f.hypothesis}"
@@ -79,7 +82,7 @@ class Player:
             available=", ".join(state.available_actions),
             recent=" ".join(a.short for a in recent[-30:]) or "none",
             notes="".join(f"Note: {n}\n" for n in notes),
-            state=summarize_state(state) + "\n" + encode_grid(state.grid, crop=True),
+            state=state_header(state) + "\n" + view,
         )
         return LLMRequest(role="player", system=prompts.SYSTEM, user=user, schema=PlayerReply,
                           model=self.model_name, prompt_hash=prompts.PROMPT_HASH)

@@ -109,3 +109,12 @@ def test_failed_rounds_capped() -> None:
                                           Action("ACTION1")))
     assert len(result.model.failed_rounds) == 10
     assert result.model.failed_rounds[0].round == 2
+
+
+def test_prompt_has_object_changes() -> None:
+    llm = FakeLLM(default=scorer_reply())
+    Scorer(llm).score(ScoreInput(state(), state("000\n006\n000"), GameModel(), Action("ACTION4")))
+    user = llm.users[0]
+    assert "Changes from the previous State" in user
+    assert "sprite 6 moved (+1,+0) to x=2..2 y=1..1" in user
+    assert "Previous State" not in user

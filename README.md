@@ -140,6 +140,7 @@ avocode_v2/
 ├── docs/
 │   ├── data-model.md    # domain types and run folder format
 │   ├── code-architecture.md
+│   ├── perception.md
 │   └── viewer.md
 ├── avocode/             # agent package
 ├── bench/
@@ -155,4 +156,5 @@ avocode_v2/
 - `PLAN.md`: build steps and milestones
 - `docs/data-model.md`: domain types, events, and run folder format
 - `docs/code-architecture.md`: layers, modules, and dependency rules
+- `docs/perception.md`: objects, changes, HUD, and surroundings for prompts
 - `docs/viewer.md`: viewer screens, metrics, and charts

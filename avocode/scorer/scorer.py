@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field
 from avocode.core.action import Action
 from avocode.core.model import MAX_FAILED_ROUNDS, FailedRound, GameModel
 from avocode.core.state import State, Status
-from avocode.perception.diff import GridDiff, describe_diff, grid_diff
-from avocode.perception.encode import encode_grid
-from avocode.perception.summary import summarize_state
+from avocode.perception.diff import grid_diff
+from avocode.perception.summary import state_header, summarize_state
+from avocode.perception.tracker import Tracker
 from avocode.ports import LLMClient, LLMRequest
 from avocode.scorer import prompts
 from avocode.scorer.status import status_from_state
@@ -39,6 +39,8 @@ class ScoreInput:
     round_actions: list[Action] = field(default_factory=list)
     round: int = 1
     step: int = 0
+    view: str | None = None  # objects text from a Tracker
+    changes: str | None = None  # change text from a Tracker
 
 
 @dataclass
@@ -71,7 +73,7 @@ class Scorer:
         if (self.skip_noop and diff.noop and status is Status.ONGOING
                 and inp.prev is not None and inp.action is not None):
             return self._noop(inp, status)
-        reply = self.llm.complete(self._request(inp, status, diff))
+        reply = self.llm.complete(self._request(inp, status))
         flags = ["json_retry"] if reply.retries else []
         warnings: list[tuple[str, str]] = []
         if reply.parsed is None:
@@ -111,12 +113,12 @@ class Scorer:
             hypothesis = new.failed_rounds[-1].hypothesis
         return ScoreResult(new, status, changes, summary, hypothesis, flags, warnings)
 
-    def _request(self, inp: ScoreInput, status: Status, diff: GridDiff) -> LLMRequest:
+    def _request(self, inp: ScoreInput, status: Status) -> LLMRequest:
         actions = [a.short for a in inp.round_actions]
         failed = ""
         if status is Status.FAILED:
             failed = prompts.FAILED_NOTE.format(round=inp.round, actions_json=json.dumps(actions))
-        prev = "None. This is the first State." if inp.prev is None else _state_text(inp.prev)
+        view, changes = _perceive(inp)
         user = prompts.USER.format(
             version=inp.model.version,
             model=inp.model.model_dump_json(indent=1, exclude={"version"}),
@@ -125,8 +127,8 @@ class Scorer:
             status=status.value,
             actions=" ".join(actions[-30:]) or "none",
             action=_action_text(inp.action),
-            prev=prev, state=_state_text(inp.state),
-            diff=describe_diff(diff) if inp.prev else "first State, no diff",
+            state=state_header(inp.state) + "\n" + view,
+            changes=changes,
             failed_note=failed,
         )
         return LLMRequest(role="scorer", system=prompts.SYSTEM, user=user, schema=ScorerReply,
@@ -152,8 +154,16 @@ def _ensure_failed(new: GameModel, old: GameModel, inp: ScoreInput) -> None:
     ))
 
 
-def _state_text(state: State) -> str:
-    return summarize_state(state) + "\n" + encode_grid(state.grid, crop=True)
+def _perceive(inp: ScoreInput) -> tuple[str, str]:
+    """Objects and changes; build them if not given."""
+    if inp.view is not None and inp.changes is not None:
+        return inp.view, inp.changes
+    tracker = Tracker()
+    if inp.prev is not None:
+        tracker.update(inp.prev.grid)
+    tracker.update(inp.state.grid, inp.action.name if inp.action else None)
+    changes = tracker.changes_text() if inp.prev else "first State, no previous State"
+    return inp.view or tracker.objects_text(), inp.changes or changes
 
 
 def _action_text(action: Action | None) -> str:

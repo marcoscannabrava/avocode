@@ -12,6 +12,7 @@ from avocode.core.action import Action
 from avocode.core.model import GameModel
 from avocode.core.state import Outcome, State, Status
 from avocode.perception.diff import grid_diff
+from avocode.perception.tracker import Tracker
 from avocode.player.player import Choice, Player
 from avocode.ports import Clock, GameEngine, RunObserver, StepContext, SystemClock
 from avocode.scorer.scorer import ScoreInput, Scorer, ScoreResult
@@ -68,6 +69,7 @@ class GameSession:
         self.level_start_step = 0
         self.level_start_round = 1
         self.notes: list[str] = []
+        self.tracker = Tracker()
         self._start = self.clock.now()
         self._where = "session"
         self._t: list[float] = []
@@ -101,8 +103,12 @@ class GameSession:
                              max_rounds=self.budget.max_rounds),
         ))
         self._open_round(state, "initial")
+        self.tracker.update(state.grid)
         self._where = "scorer"
-        result = self.scorer.score(ScoreInput(None, state, self.model, round=1, step=0))
+        result = self.scorer.score(ScoreInput(
+            None, state, self.model, round=1, step=0,
+            view=self.tracker.objects_text(), changes="first State, no previous State",
+        ))
         self._where = "session"
         self._apply(result)
 
@@ -132,7 +138,7 @@ class GameSession:
         self.ctx.begin(rnd.number, self.step)
         self._where = "player"
         self._choice = self.player.choose(self.model, self.state, list(rnd.actions),
-                                          rnd.number, self.notes)
+                                          rnd.number, self.notes, self.tracker.objects_text())
         self._where = "session"
         self._t.append(self.clock.now())
         for code, message in self._choice.warnings:
@@ -150,9 +156,13 @@ class GameSession:
         assert rnd is not None and prev is not None
         rnd.actions.append(action)
         old_version = self.model.version
+        new_level = state.levels_completed > prev.levels_completed
+        self.tracker.update(state.grid, action.name, new_level)
         self._where = "scorer"
-        result = self.scorer.score(ScoreInput(prev, state, self.model, action,
-                                              list(rnd.actions), rnd.number, self.step))
+        result = self.scorer.score(ScoreInput(
+            prev, state, self.model, action, list(rnd.actions), rnd.number, self.step,
+            view=self.tracker.objects_text(), changes=self.tracker.changes_text(),
+        ))
         self._where = "session"
         t0, t1, t2 = self._t
         t3 = self.clock.now()
@@ -177,6 +187,7 @@ class GameSession:
         prev = self.state
         assert prev is not None
         self.state = state
+        self.tracker.update(state.grid)  # keep history; same level
         self.status = status_from_state(state)
         self._open_round(state, "failed")
         assert self.round is not None

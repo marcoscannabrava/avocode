@@ -57,3 +57,13 @@ def test_prompt_shows_failed_rounds_and_questions() -> None:
 def test_fallback_click_only() -> None:
     s = state("000\n060\n000", actions=("ACTION6",))
     assert fallback_action(s, 0) == Action("ACTION6", 1, 1, reason="fallback")
+
+
+def test_prompt_has_objects_not_grid() -> None:
+    llm = FakeLLM(default={"action": "ACTION1"})
+    Player(llm).choose(GameModel(), state())
+    user = llm.users[0]
+    assert "obj#0 sprite 6 size 1 at x=1..1 y=1..1" in user
+    assert "000" not in user  # no hex grid rows
+    Player(llm).choose(GameModel(), state(), view="custom view")
+    assert "custom view" in llm.users[1]

@@ -66,7 +66,12 @@ avocode/
 │   ├── encode.py            # grid to text for prompts
 │   ├── objects.py           # find_blobs()
 │   ├── diff.py              # grid_diff()
-│   └── summary.py           # short State text
+│   ├── summary.py           # short State text
+│   ├── scene.py             # objects with stable IDs
+│   ├── changes.py           # object events
+│   ├── layout.py            # tickers, player, moves
+│   ├── around.py            # what is next to an object
+│   └── tracker.py           # scene and history per game
 ├── ports.py                 # GameEngine, LLMClient, RunObserver, Clock
 ├── player/
 │   ├── player.py            # Player.choose()

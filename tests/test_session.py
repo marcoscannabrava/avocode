@@ -206,3 +206,14 @@ def test_fixture_rebuilds(tmp_path: Path) -> None:
 @pytest.mark.skipif(not FIXTURE.exists(), reason="fixture not built")
 def test_committed_fixture_rebuilds() -> None:
     assert len(rebuild_rounds(FIXTURE, "toy")) == 2
+
+
+def test_session_feeds_tracker_text() -> None:
+    sess, rec = session(["A2", "A4", "A4"], budget=Budget(max_actions=3))
+    sess.run()
+    users = [r.user for r in rec.llm_records]
+    assert all("obj#" in u for u in users)
+    scorer = [r.user for r in rec.llm_records if r.role == "scorer"]
+    assert "first State, no previous State" in scorer[0]
+    assert any(" moved (" in u for u in scorer[1:])
+    assert all("tickers" not in u for u in scorer)
