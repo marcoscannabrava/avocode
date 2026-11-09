@@ -25,6 +25,7 @@ This document records the tuning runs. Each run has a `--tag`. Use `./bench/arca
 | `20261109-215211-a3e81a3` | none, 60 actions | `a3e81a3` | `9b1b97`/`cce6f7` | 1/7 | 27 | not known | not known |
 | `20261109-230247-9b16e07` | `baseline` | `9b16e07` | `9b1b97`/`cce6f7` | 1/7 | 70 | $1.23 | 97% |
 | `20261109-230613-0928398` | `hud-shapes` | `0928398` | `0a37f4`/`f39321` | 1/7 | 27 | $1.58 | 97% |
+| `20261109-232501-630903c` | `turns-norepeat` | `630903c` | `0ad44d`/`f39321` | 1/7 | 26 | $1.57 | 98% |
 
 ## 4. Changes and Results
 
@@ -52,9 +53,15 @@ Changes:
 - The Player prompt says "Last 30 of N actions", not "so far".
 - The Player prompt says: after a Note about a State seen before, do not send the same action again from the same place.
 
-Result: see the table.
+Result:
+
+- Level 1 took 26 steps.
+- After step 11, there was no `repeat_state` warning. The other two runs had 4 and 7 of them. The rule against repeats works.
+- The Model knew the rule of level 2: "Match the bottom-left HUD pattern to the framed target, then enter the target before the resource bar expires."
+- The agent did not find a route to the turn modifier in time. It lost all lives at step 92. The loop sent `RESET`, and level 2 started again with `levels_completed` 1. This agrees with `docs/data-model.md`, section 1.
 
 ## 5. Findings
 
 - The Scorer is 97% of the cost. It uses `gpt-6.1-sol`. The Player uses `gpt-6-luna`. A cheaper Scorer model is the largest cost change. Test it before the next prompt change.
+- Route finding is now the main problem on `ls20`, not the rules. The agent knows the goal but uses too many steps to reach a target. The next perception change: give the shortest path, in actions, from the player guess to each sprite. Use the moves of each action from the Layout and the cells the player can enter.
 - One run per change is not enough. The baseline prompts gave 27 steps and 70 steps for level 1 in two runs. Use two or more runs for each change before you keep it.

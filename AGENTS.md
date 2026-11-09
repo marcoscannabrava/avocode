@@ -19,6 +19,7 @@ Read these documents before a large change:
 | `docs/data-model.md` | Domain types, events, run folder format |
 | `docs/perception.md` | Objects, changes, HUD, surroundings |
 | `docs/viewer.md` | Viewer screens, metrics, charts |
+| `docs/tuning.md` | Tuning runs: score, steps per level, cost |
 
 ## Commands
 
