@@ -40,6 +40,11 @@ test("game metrics on the fixture", () => {
   assert.ok(m.repeatStateRate > 0);
   assert.equal(m.cost, 0);
   assert.equal(m.llm.player.calls, 20);
+  const llm = m.llm;
+  const want = llm.player.in + llm.player.cache + llm.player.out
+    + llm.scorer.in + llm.scorer.cache + llm.scorer.out;
+  assert.equal(m.tokens.total, want);
+  assert.ok(m.tokens.total > 0);
   assert.deepEqual(m.stepsPerLevel, [12, 9]);
   assert.deepEqual(m.roundsPerLevel, [2, 1]);
   assert.equal(m.modelChurn, g.models.length / 2);

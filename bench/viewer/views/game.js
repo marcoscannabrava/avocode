@@ -2,7 +2,7 @@
 import { actionTable, gameMetrics, levelSeries, roundTable } from "../metrics.js";
 import { scatter, stepLine } from "../charts.js";
 import { drawGrid } from "../grid.js";
-import { age, esc, money, pct, secs, shortAction, tile } from "../html.js";
+import { age, esc, money, pct, secs, shortAction, tile, tokens } from "../html.js";
 
 export function liveRefresh() { return false; }
 
@@ -111,6 +111,8 @@ export async function render(ctx, route, el, g) {
     tile("repeat rounds", m.repeatRounds), tile("fallback rate", pct(m.fallbackRate)),
     tile("Model churn", m.modelChurn === null ? "—" : m.modelChurn.toFixed(1)),
     tile("cost", money(m.cost)),
+    tile("tokens", tokens(m.tokens.total)),
+    tile("tokens in / out", `${tokens(m.tokens.in)} / ${tokens(m.tokens.out)}`),
     tile("player p50 / p95", `${secs(m.llm.player.p50)} / ${secs(m.llm.player.p95)}`),
     tile("scorer p50 / p95", `${secs(m.llm.scorer.p50)} / ${secs(m.llm.scorer.p95)}`),
     tile("JSON fail P / S", `${pct(m.llm.player.jsonFailRate)} / ${pct(m.llm.scorer.jsonFailRate)}`),

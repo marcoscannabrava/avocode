@@ -38,6 +38,12 @@ export function shortAction(a) {
   return a.x !== null && a.x !== undefined ? `${n}@${a.x},${a.y}` : n;
 }
 
+export function tokens(n) {
+  if (n === null || n === undefined) return "—";
+  if (n < 1000) return String(n);
+  return n < 1e6 ? `${(n / 1e3).toFixed(1)}k` : `${(n / 1e6).toFixed(2)}M`;
+}
+
 export function tile(k, v) {
   return `<div class="tile"><div class="v">${v}</div><div class="k">${esc(k)}</div></div>`;
 }

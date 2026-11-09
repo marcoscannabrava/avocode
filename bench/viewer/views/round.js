@@ -2,7 +2,7 @@
 import { drawGrid } from "../grid.js";
 import { esc, secs, shortAction } from "../html.js";
 
-const ui = { playing: null, speed: 1, diff: true, before: false, follow: false, frame: null, key: "" };
+const ui = { playing: null, speed: 1, diff: true, before: false, follow: false, frame: null, key: "", model: false };
 
 export function liveRefresh() { return ui.follow; }
 
@@ -88,6 +88,17 @@ function sidePanel(g, r, s, idx) {
   </div>`;
 }
 
+/** Full Model after this step, collapsed. */
+function modelPanel(g, s) {
+  const update = g.models.find((u) => u.step === s.step);
+  const version = update ? update.version : s.model_version;
+  const model = g.modelAt(version);
+  const note = update ? "updated in this step" : "no change in this step";
+  const body = model ? `<pre>${esc(JSON.stringify(model, null, 2))}</pre>` : '<p class="muted">No Model yet.</p>';
+  return `<details class="model-full" id="model-full" ${ui.model ? "open" : ""}>
+    <summary>Full Model v${version} <span class="muted">(${note})</span></summary>${body}</details>`;
+}
+
 function strip(g, r, idx) {
   const repeat = new Set(g.warnings.filter((w) => w.code === "repeat_state").map((w) => w.step));
   const cells = r.steps.map((s, i) => {
@@ -131,7 +142,7 @@ export async function render(ctx, route, el, g) {
           ${cur && cur.count > 1 ? `<button id="fprev">◀</button><span class="mono">frame ${cur.index + 1}/${cur.count}</span><button id="fnext">▶</button>` : ""}
           <button id="follow" class="${ui.follow ? "on" : ""}">follow</button>
         </div></div>
-      <div>${sidePanel(g, r, s, idx)}</div>
+      <div>${sidePanel(g, r, s, idx)}${modelPanel(g, s)}</div>
     </div>
     <div class="controls">
       <button id="first">◀◀</button><button id="back">◀</button>
@@ -148,6 +159,7 @@ export async function render(ctx, route, el, g) {
       click: s.action.name === "ACTION6" ? { x: s.action.x, y: s.action.y } : null,
     });
   }
+  el.querySelector("#model-full").ontoggle = (e) => { ui.model = e.target.open; };
   const on = (id, fn) => { const b = el.querySelector(id); if (b) b.onclick = fn; };
   on("#diff", () => { ui.diff = !ui.diff; ctx.rerender(); });
   on("#before", () => { ui.before = !ui.before; ctx.rerender(); });

@@ -20,6 +20,16 @@ export function sumCost(costs) {
   return Math.round(total * 1e6) / 1e6;
 }
 
+/** Input (with cache reads) and output tokens. */
+export function tokenTotals(llm) {
+  const t = { in: 0, out: 0 };
+  for (const role of ROLES) {
+    t.in += llm[role].in + llm[role].cache;
+    t.out += llm[role].out;
+  }
+  return { ...t, total: t.in + t.out };
+}
+
 export function llmByRole(g) {
   const out = {};
   for (const role of ROLES) {
@@ -93,6 +103,7 @@ export function gameMetrics(g, nowMs = Date.now()) {
     modelVersion: g.models.length ? g.models[g.models.length - 1].version : 0,
     llm,
     cost: sumCost(ROLES.map((r) => llm[r].cost)),
+    tokens: tokenTotals(llm),
     stepRate,
     etaMin: stepRate && maxActions ? Math.max(0, maxActions - n) / stepRate : null,
     lastEventAgeS: Number.isNaN(last) ? null : Math.max(0, (nowMs - last) / 1000),
