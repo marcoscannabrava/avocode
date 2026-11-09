@@ -1,3 +1,4 @@
+import json
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,7 +18,7 @@ from avocode.llm.openai import OpenAIClient
 from avocode.llm.openrouter import OpenRouterClient
 from avocode.ports import LLMRequest
 from avocode.record.jsonl import read_jsonl
-from bench.arcagi3 import summary_table
+from bench.arcagi3 import prompt_hashes, steps_per_level, summary_table
 from bench.games import filter_games
 from bench.runner import Runner
 from tests.make_fixture import scorer_reply
@@ -183,3 +184,14 @@ def test_runner_abort_and_summary(tmp_path: Path) -> None:
         assert events[-1]["type"] == "game_end"
     table = summary_table(summary)
     assert "total" in table and "aborted" in table
+
+
+def test_list_columns(tmp_path: Path) -> None:
+    game = tmp_path / "games" / "g1"
+    game.mkdir(parents=True)
+    lines = [{"type": "level_complete", "steps_in_level": n} for n in (20, 40)]
+    (game / "events.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+    assert steps_per_level(tmp_path) == "30"
+    assert steps_per_level(tmp_path / "none") == "-"
+    assert prompt_hashes({"prompts": {"player": "abcdef123", "scorer": "987654"}}) == \
+        "abcdef/987654"

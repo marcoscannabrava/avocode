@@ -202,7 +202,7 @@ def cmd_list(argv: list[str]) -> int:
     p.add_argument("--out", default=None)
     args = p.parse_args(argv)
     runs_dir = Path(args.out or Settings.load().runs_dir)
-    rows = [["run", "games", "won", "levels", "steps", "cost", "tags"]]
+    rows = [["run", "games", "won", "levels", "steps", "steps/lvl", "cost", "prompts", "tags"]]
     for manifest in sorted(runs_dir.glob("*/manifest.json")):
         if manifest.parent.is_symlink():
             continue
@@ -212,7 +212,8 @@ def cmd_list(argv: list[str]) -> int:
         rows.append([data["run_id"] + status, str(len(data.get("games", []))),
                      str(s.get("games_won", "-")),
                      f"{s.get('levels_total', '-')}/{s.get('win_levels_total', '-')}",
-                     str(s.get("steps", "-")), money(s.get("cost_usd")) if s else "-",
+                     str(s.get("steps", "-")), steps_per_level(manifest.parent),
+                     money(s.get("cost_usd")) if s else "-", prompt_hashes(data),
                      ",".join(data.get("tags", []))])
     if len(rows) == 1:
         print(f"No runs in {runs_dir}")
@@ -221,6 +222,22 @@ def cmd_list(argv: list[str]) -> int:
     for row in rows:
         print("  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip())
     return 0
+
+
+def steps_per_level(run_dir: Path) -> str:
+    """Mean steps per completed level."""
+    steps = []
+    for events in run_dir.glob("games/*/events.jsonl"):
+        for line in events.read_text().splitlines():
+            if '"level_complete"' in line:
+                steps.append(json.loads(line)["steps_in_level"])
+    return f"{sum(steps) / len(steps):.0f}" if steps else "-"
+
+
+def prompt_hashes(manifest: dict[str, Any]) -> str:
+    """Player and Scorer hashes, short."""
+    p = manifest.get("prompts") or {}
+    return f"{p.get('player', '?')[:6]}/{p.get('scorer', '?')[:6]}"
 
 
 def cmd_schema(argv: list[str]) -> int:

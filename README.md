@@ -76,7 +76,7 @@ Other commands:
 ```bash
 ./bench/arcagi3.py view runs/<run_id>   # open the viewer on a run
 ./bench/arcagi3.py view                 # open the viewer on runs/latest
-./bench/arcagi3.py list                 # list past runs with scores
+./bench/arcagi3.py list                 # past runs: score, steps per level, cost, prompt hashes
 ./bench/arcagi3.py schema               # print the event JSON schema
 ```
 
