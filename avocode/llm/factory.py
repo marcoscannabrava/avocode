@@ -5,12 +5,12 @@ from __future__ import annotations
 from avocode.ports import LLMClient
 
 
-def make_client(provider: str) -> LLMClient:
+def make_client(provider: str, effort: str = "") -> LLMClient:
     """Anthropic or OpenAI client."""
     if provider == "openai":
         from avocode.llm.openai import OpenAIClient
 
-        return OpenAIClient()
+        return OpenAIClient(effort=effort)
     if provider == "anthropic":
         from avocode.llm.anthropic import AnthropicClient
 

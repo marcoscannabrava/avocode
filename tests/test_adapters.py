@@ -99,7 +99,11 @@ def test_anthropic_client() -> None:
 
 
 def test_openai_client() -> None:
+    sent: dict[str, Any] = {}
+
     def create(**params: Any) -> Any:
+        sent.clear()
+        sent.update(params)
         usage = SimpleNamespace(prompt_tokens=50, completion_tokens=7,
                                 prompt_tokens_details=SimpleNamespace(cached_tokens=20))
         msg = SimpleNamespace(content='{"action": "A2"}')
@@ -108,6 +112,9 @@ def test_openai_client() -> None:
     sdk = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     reply = OpenAIClient(sdk).complete(request("gpt-x"))
     assert reply.parsed == {"action": "A2"} and reply.in_tokens == 30 and reply.cache_tokens == 20
+    assert "reasoning_effort" not in sent
+    OpenAIClient(sdk, effort="low").complete(request("gpt-x"))
+    assert sent["reasoning_effort"] == "low"
 
 
 def test_settings_env_then_cli() -> None:
@@ -117,6 +124,13 @@ def test_settings_env_then_cli() -> None:
     assert (s.max_actions, s.max_rounds, s.workers, s.skip_noop_scorer) == (50, 3, 1, False)
     assert s.player_model == "claude-sonnet-5-5" and s.scorer_model == "claude-opus-5-5"
     assert Settings.load(env=env, max_actions=7).max_actions == 7
+
+
+def test_settings_openai_defaults() -> None:
+    s = Settings.load(env={"AVOCODE_LLM": "openai", "AVOCODE_SCORER_EFFORT": "high"})
+    assert (s.player_model, s.scorer_model) == ("gpt-6-luna", "gpt-6.1-sol")
+    assert (s.player_effort, s.scorer_effort) == ("low", "high")
+    assert Settings.load(env={}).player_effort == ""
 
 
 def test_filter_games() -> None:

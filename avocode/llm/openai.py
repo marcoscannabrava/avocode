@@ -13,15 +13,18 @@ from avocode.ports import LLMRequest
 class OpenAIClient(JsonClient):
     provider = "openai"
 
-    def __init__(self, client: Any = None) -> None:
+    def __init__(self, client: Any = None, effort: str = "") -> None:
         self.client = client or openai.OpenAI()
+        self.effort = effort
 
     def call(self, req: LLMRequest, user: str) -> RawReply:
+        extra: dict[str, Any] = {"reasoning_effort": self.effort} if self.effort else {}
         response = self.client.chat.completions.create(
             model=req.model,
             messages=[{"role": "system", "content": req.system},
                       {"role": "user", "content": user}],
             response_format={"type": "json_object"},
+            **extra,
         )
         text = response.choices[0].message.content or ""
         usage = response.usage

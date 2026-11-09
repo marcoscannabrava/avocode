@@ -66,6 +66,8 @@ All options:
 | `--llm` | `anthropic` | LLM provider |
 | `--player-model` | from config | Model for the Player |
 | `--scorer-model` | from config | Model for the Scorer |
+| `--player-effort` | `low` (OpenAI) | Reasoning effort for the Player |
+| `--scorer-effort` | `medium` (OpenAI) | Reasoning effort for the Scorer |
 | `--out` | `runs` | Parent folder for run folders |
 | `--tag` | none | Label for the run. You can use it more than one time. |
 | `--serve` | off | Start the viewer during the run |

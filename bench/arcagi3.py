@@ -55,6 +55,8 @@ def run_parser() -> argparse.ArgumentParser:
     p.add_argument("--llm", default=None, choices=["anthropic", "openai"])
     p.add_argument("--player-model", default=None)
     p.add_argument("--scorer-model", default=None)
+    p.add_argument("--player-effort", default=None, help="reasoning effort, OpenAI only")
+    p.add_argument("--scorer-effort", default=None, help="reasoning effort, OpenAI only")
     p.add_argument("--out", default=None, help="parent folder for run folders")
     p.add_argument("--tag", action="append", default=[], help="run label, can repeat")
     p.add_argument("--serve", action="store_true", help="start the viewer")
@@ -62,15 +64,19 @@ def run_parser() -> argparse.ArgumentParser:
     return p
 
 
-def make_llm_factory(provider: str) -> Callable[[Role], LLMClient]:
-    client = make_client(provider)
-    return lambda role: client
+def make_llm_factory(settings: Settings) -> Callable[[Role], LLMClient]:
+    clients = {
+        "player": make_client(settings.llm, settings.player_effort),
+        "scorer": make_client(settings.llm, settings.scorer_effort),
+    }
+    return lambda role: clients[role]
 
 
 def cmd_run(argv: list[str]) -> int:
     args = run_parser().parse_args(argv)
     settings = Settings.load(
         llm=args.llm, player_model=args.player_model, scorer_model=args.scorer_model,
+        player_effort=args.player_effort, scorer_effort=args.scorer_effort,
         max_actions=args.max_actions, max_rounds=args.max_rounds, workers=args.workers,
         runs_dir=args.out, tags=args.tag,
     )
@@ -82,7 +88,7 @@ def cmd_run(argv: list[str]) -> int:
         print(f"No games match: {args.games or 'all'}", file=sys.stderr)
         return 2
     stop = threading.Event()
-    runner = Runner(settings, arcade.make_engine, make_llm_factory(settings.llm),
+    runner = Runner(settings, arcade.make_engine, make_llm_factory(settings),
                     argv=argv, stop=stop)
     card = arcade.open_scorecard(["avocode", *settings.tags])
     log = runner.start(games, scorecard=card)
