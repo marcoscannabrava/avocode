@@ -182,10 +182,23 @@ def test_shape_text_scale_and_mirror() -> None:
     text = shape_text(build_scene(grid))
     assert text.startswith("same shape: ")
     assert "color 9 (2x larger)" in text
-    assert "mirrored left-right" in text
+    assert "turned 90 counterclockwise" in text
     assert "color 8" not in text  # solid blocks are skipped
 
 
 def test_reduce_mask() -> None:
     mask = frozenset({(0, 0), (1, 0), (0, 1), (1, 1), (2, 0), (3, 0), (2, 1), (3, 1)})
     assert reduce_mask(mask) == (frozenset({(0, 0), (1, 0)}), 2)
+
+
+def test_shape_text_mirror_when_no_turn() -> None:
+    # F pentomino and its mirror; no turn maps one to the other.
+    grid = Grid.from_text(
+        """
+        09900099000
+        99000009900
+        09000009000
+        00000000000
+        """
+    )
+    assert "mirrored" in shape_text(build_scene(grid))

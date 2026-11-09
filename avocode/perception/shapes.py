@@ -12,14 +12,14 @@ MAX_LINES = 6
 
 Mask = frozenset[tuple[int, int]]
 
-# Order sets the preferred name.
+# Order sets the preferred name. Turns first.
 TURNS: list[tuple[str, Callable[[int, int, int, int], tuple[int, int]]]] = [
     ("", lambda x, y, w, h: (x, y)),
+    ("turned 90 clockwise", lambda x, y, w, h: (h - 1 - y, x)),
+    ("turned 180", lambda x, y, w, h: (w - 1 - x, h - 1 - y)),
+    ("turned 90 counterclockwise", lambda x, y, w, h: (y, w - 1 - x)),
     ("mirrored left-right", lambda x, y, w, h: (w - 1 - x, y)),
     ("mirrored up-down", lambda x, y, w, h: (x, h - 1 - y)),
-    ("turned 180", lambda x, y, w, h: (w - 1 - x, h - 1 - y)),
-    ("turned 90", lambda x, y, w, h: (h - 1 - y, x)),
-    ("turned 270", lambda x, y, w, h: (y, w - 1 - x)),
     ("mirrored on diagonal", lambda x, y, w, h: (y, x)),
     ("mirrored on other diagonal", lambda x, y, w, h: (h - 1 - y, w - 1 - x)),
 ]

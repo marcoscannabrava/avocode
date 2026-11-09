@@ -6,10 +6,11 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
+# Default models: (player, scorer)
 DEFAULT_MODELS = {
     "anthropic": ("claude-sonnet-5-5", "claude-opus-5-5"),
     "openai": ("gpt-6-luna", "gpt-6.1-sol"),
-    "openrouter": ("anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"),
+    "openrouter": ("deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash"),
     "fake": ("fake", "fake"),
 }
 

@@ -155,11 +155,11 @@ Many games show a pattern in the HUD that a board object must match. In `ls20`, 
 1. For each sprite, it makes one mask for each color.
 2. It skips masks with fewer than 3 cells, and masks that are full rectangles. Full rectangles match too often.
 3. It shrinks each mask: each k-by-k block becomes one cell, if all blocks are full or empty (k is 2 to 4).
-4. It puts masks in one group if one mask is the same as the other after a turn or a mirror.
+4. It puts masks in one group if one mask is the same as the other after a turn or a mirror. The text names a turn first, because in games an object turns more often than it mirrors. It names a mirror only when no turn fits.
 5. It writes one line for each group with two or more objects.
 
 ```
-same shape: obj#3 color 9 (2x larger), obj#7 color 9 (mirrored left-right)
+same shape: obj#3 color 9 (2x larger), obj#7 color 9 (turned 90 clockwise)
 ```
 
 The names of the turns and mirrors compare each object with the first object of the group. When the two shapes are equal, the line has no turn name:
