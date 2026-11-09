@@ -24,6 +24,9 @@ PRICES: dict[str, Price] = {
     "claude-sonnet-5-5": _price(2.0, 10.0, 0.20),
     "claude-sonnet-5": _price(2.0, 10.0),
     "claude-haiku-5-5": _price(0.10, 0.50),
+    # OpenAI list prices, October 2026
+    "gpt-6-luna": _price(0.10, 0.50, 0.01),
+    "gpt-6.1-sol": _price(2.0, 10.0, 0.10),
     "fake": Price(0.0, 0.0, 0.0, 0.0),
 }
 

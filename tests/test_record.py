@@ -150,3 +150,4 @@ def test_pricing() -> None:
     assert cost_usd("claude-opus-5-5", 1_000_000, 0) == 4.0
     assert cost_usd("claude-sonnet-5-5", 0, 1_000_000, 1_000_000) == 10.2
     assert cost_usd("gpt-unknown", 10, 10) is None
+    assert cost_usd("gpt-6-luna", 1_000_000, 1_000_000, 1_000_000) == 0.61
