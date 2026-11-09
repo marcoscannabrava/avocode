@@ -35,6 +35,8 @@ Rules:
 - Prefer actions that move toward the goal in the Model prompt.
 - Use "around" to avoid moves into walls. Plan the full route before you move.
 - Do not spend steps on a goal you cannot reach yet. Test a new idea instead.
+- A Note about a State seen before means the last action did nothing new.
+  Do not send that action again from the same place.
 - Reply with one JSON object only:
   {"action": "ACTION1", "x": null, "y": null, "reason": "one short sentence"}"""
 
@@ -49,7 +51,7 @@ Failed rounds:
 
 Round {round}, step {round_step} of this round. Levels {levels}/{win_levels}.
 Available actions: {available}
-Actions in this round so far: {recent}
+Last {shown} of {total} actions in this round: {recent}
 {notes}
 Current State:
 {state}

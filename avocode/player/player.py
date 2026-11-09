@@ -17,6 +17,8 @@ from avocode.perception.tracker import scene_text
 from avocode.player import prompts
 from avocode.ports import LLMClient, LLMRequest
 
+RECENT = 30  # actions shown to the Player
+
 
 class PlayerReply(BaseModel):
     action: str
@@ -80,7 +82,8 @@ class Player:
             round=round_, round_step=len(recent) + 1,
             levels=state.levels_completed, win_levels=state.win_levels,
             available=", ".join(state.available_actions),
-            recent=" ".join(a.short for a in recent[-30:]) or "none",
+            shown=min(len(recent), RECENT), total=len(recent),
+            recent=" ".join(a.short for a in recent[-RECENT:]) or "none",
             notes="".join(f"Note: {n}\n" for n in notes),
             state=state_header(state) + "\n" + view,
         )
