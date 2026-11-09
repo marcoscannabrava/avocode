@@ -17,7 +17,22 @@ This document gives the data types of avocode and the format of the run folder. 
 
 The tree is: Run → Game → Round → Step. A Level is a second index on steps. One round can pass through many levels. One level can take many rounds.
 
-Open question: after `GAME_OVER`, does `RESET` restart the level or the full game? `FrameData.full_reset` tells this. The agent records `full_reset` on each `round_start` event, so the viewer is correct in both cases. Find the answer in Step 7 of `PLAN.md`.
+### What `RESET` does
+
+We tested this on `ls20` in offline mode (2026-11-09):
+
+| When you send `RESET` | Result | `full_reset` |
+|---|---|---|
+| After `GAME_OVER` | The current level starts again. `levels_completed` stays the same. | `false` |
+| In a level, after one or more actions | The current level starts again. | `false` |
+| Directly after a `RESET`, with no action between | The full game starts again at level 0. | `true` |
+| First call | The game starts at level 0. | `true` |
+
+So a failed round does not lose the levels that the agent completed. But two `RESET` actions in sequence lose all progress. The loop sends one `RESET` after a failed round. The Player must not send `RESET` directly after it.
+
+The agent records `full_reset` on each `round_start` event, so the viewer shows the correct level in all cases.
+
+`ls20` also has lives. When the step meter is empty, the agent loses one life. The player sprite goes back to the level start, and the game continues. `GAME_OVER` comes only when no lives are left.
 
 ## 2. Domain Types
 
