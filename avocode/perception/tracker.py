@@ -7,6 +7,7 @@ from avocode.perception.around import describe_around
 from avocode.perception.changes import Change, describe_changes, scene_changes
 from avocode.perception.layout import Layout
 from avocode.perception.scene import Scene, build_scene, describe_scene
+from avocode.perception.shapes import shape_text
 
 
 class Tracker:
@@ -33,7 +34,10 @@ class Tracker:
         """Objects, history, and player surroundings."""
         if self.scene is None or self.grid is None:
             return "no grid yet"
-        parts = [describe_scene(self.scene), self.layout.describe(self.scene)]
+        parts = [describe_scene(self.scene)]
+        if shapes := shape_text(self.scene):
+            parts.append(shapes)
+        parts.append(self.layout.describe(self.scene))
         pid = self.layout.player_guess()
         if pid is not None and self.scene.get(pid) is not None:
             step = self.layout.step_size(pid)

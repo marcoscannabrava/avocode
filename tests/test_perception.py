@@ -13,6 +13,10 @@ from avocode.perception import (
     scene_changes,
     summarize_state,
 )
+from avocode.perception.shapes import (
+    reduce_mask,
+    shape_text,
+)
 
 # The grid in ARCHITECTURE.md: X=3, G=4, Y=5, A=6.
 ARCH = Grid.from_text(
@@ -158,3 +162,30 @@ def test_describe_around() -> None:
     assert "left: 3 for 3 lines (3 steps), then 4 to the edge" in text
     assert "down: 3 for 1 line (1 step), then 4 for 1 line (1 step), then b for 1 line" in text
     assert describe_around(grid, scene, 999) == "obj#999 not found"
+
+
+def test_shape_text_scale_and_mirror() -> None:
+    # Big L at scale 2 (color 9), small mirrored L (color 9), a solid block.
+    grid = Grid.from_text(
+        """
+        999999000000
+        999999000000
+        000099000999
+        000099000900
+        000099000900
+        000099000000
+        000000000000
+        000000000880
+        000000000880
+        """
+    )
+    text = shape_text(build_scene(grid))
+    assert text.startswith("same shape: ")
+    assert "color 9 (2x larger)" in text
+    assert "mirrored left-right" in text
+    assert "color 8" not in text  # solid blocks are skipped
+
+
+def test_reduce_mask() -> None:
+    mask = frozenset({(0, 0), (1, 0), (0, 1), (1, 1), (2, 0), (3, 0), (2, 1), (3, 1)})
+    assert reduce_mask(mask) == (frozenset({(0, 0), (1, 0)}), 2)

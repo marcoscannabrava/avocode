@@ -16,7 +16,7 @@ The LLM cannot read this text well:
 
 Code finds the objects, tracks them, and writes the result as text. The LLM reads objects and changes, not cells.
 
-There are four parts:
+There are six parts:
 
 | Part | Module | Output |
 |---|---|---|
@@ -24,6 +24,7 @@ There are four parts:
 | Changes | `changes.py` | Object events, such as `obj#7 moved (+0,-5)` |
 | HUD | `layout.py` | History of steps. Objects that change on all steps, and moves for each action |
 | Surroundings | `around.py` | What is next to an object in each of the four directions |
+| Shapes | `shapes.py` | Sprites that have the same shape at another scale, rotation, or color |
 | Tracker | `tracker.py` | Keeps the scene and the history for one game. Writes the prompt text. |
 
 All parts use only `core`. Section 7 tells how the prompts use them.
@@ -145,6 +146,30 @@ around obj#6 at x=19..23 y=25..29 (step 5):
 
 This helps the Player in games where a sprite moves on a floor.
 
+## 6a. Shapes (`shapes.py`)
+
+Many games show a pattern in the HUD that a board object must match. In `ls20`, the HUD shows a key. The door opens only when the key has the same shape as the door. The key is two times larger than the door.
+
+`shape_text(scene)` finds these pairs:
+
+1. For each sprite, it makes one mask for each color.
+2. It skips masks with fewer than 3 cells, and masks that are full rectangles. Full rectangles match too often.
+3. It shrinks each mask: each k-by-k block becomes one cell, if all blocks are full or empty (k is 2 to 4).
+4. It puts masks in one group if one mask is the same as the other after a turn or a mirror.
+5. It writes one line for each group with two or more objects.
+
+```
+same shape: obj#3 color 9 (2x larger), obj#7 color 9 (mirrored left-right)
+```
+
+The names of the turns and mirrors compare each object with the first object of the group. When the two shapes are equal, the line has no turn name:
+
+```
+same shape: obj#3 color 9 (2x larger), obj#8 color 9
+```
+
+On `ls20`, the first line shows at level start. The second line shows after the player touches the `0,1` sprite, one step before the level is complete.
+
 ## 7. Prompts (`tracker.py`)
 
 `GameSession` keeps one `Tracker` for each game:
@@ -157,7 +182,7 @@ This helps the Player in games where a sprite moves on a floor.
 
 The Tracker gives two texts:
 
-- `objects_text()`: the objects, the history, and the surroundings of the player guess.
+- `objects_text()`: the objects, the shape groups, the history, and the surroundings of the player guess.
 - `changes_text()`: the events of the last step, with tickers on one line.
 
 The prompts use them as follows:
