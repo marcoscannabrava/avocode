@@ -44,8 +44,10 @@ class RecordingLLM:
     def _record(self, req: LLMRequest, call_id: str, reply: LLMReply, start: float) -> None:
         latency = int((time.monotonic() - start) * 1000)
         model = reply.model or req.model
-        cost = cost_usd(model, reply.in_tokens, reply.out_tokens, reply.cache_tokens,
-                        reply.cache_write_tokens)
+        cost = reply.cost_usd
+        if cost is None:
+            cost = cost_usd(model, reply.in_tokens, reply.out_tokens, reply.cache_tokens,
+                            reply.cache_write_tokens)
         self.ctx.add_usage(reply.in_tokens + reply.cache_tokens + reply.cache_write_tokens,
                            reply.out_tokens, cost)
         self.observer.llm_call(LLMRecord(

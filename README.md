@@ -8,14 +8,12 @@ avocode is an agent that plays ARC-AGI-3 games. It uses two LLMs and one game en
 
 `ARCHITECTURE.md` gives the full design.
 
-> **Status: M0 to M7 and M9 are done.** M8 (tune on real games) needs API keys. `PLAN.md` gives the build steps.
-
 ## Requirements
 
 - Python 3.12 or later
 - [uv](https://docs.astral.sh/uv/)
 - An ARC-AGI-3 API key from [three.arcprize.org](https://three.arcprize.org/)
-- An LLM API key (Anthropic or OpenAI)
+- An LLM API key (Anthropic, OpenAI, or OpenRouter)
 
 ## Setup
 
@@ -30,8 +28,8 @@ Put your keys in `.env`:
 
 ```bash
 ARC_API_KEY=...
-ANTHROPIC_API_KEY=...     # or OPENAI_API_KEY
-AVOCODE_LLM=anthropic     # or openai
+ANTHROPIC_API_KEY=...     # or OPENAI_API_KEY, OPENROUTER_API_KEY
+AVOCODE_LLM=anthropic     # or openai, openrouter
 ```
 
 ## Run the benchmark
@@ -63,7 +61,7 @@ All options:
 | `--workers` | `1` | Games to play at the same time |
 | `--max-actions` | `400` | Action limit per game |
 | `--max-rounds` | `20` | Round limit per game |
-| `--llm` | `anthropic` | LLM provider |
+| `--llm` | `anthropic` | LLM provider: `anthropic`, `openai`, or `openrouter` |
 | `--player-model` | from config | Model for the Player |
 | `--scorer-model` | from config | Model for the Scorer |
 | `--player-effort` | `low` (OpenAI) | Reasoning effort for the Player |
@@ -135,7 +133,6 @@ uv run python -m tests.make_fixture
 ```
 avocode_v2/
 ├── ARCHITECTURE.md      # agent design
-├── PLAN.md              # build plan
 ├── README.md
 ├── docs/
 │   ├── data-model.md    # domain types and run folder format
@@ -153,7 +150,6 @@ avocode_v2/
 ## Documents
 
 - `ARCHITECTURE.md`: how the agent thinks
-- `PLAN.md`: build steps and milestones
 - `docs/data-model.md`: domain types, events, and run folder format
 - `docs/code-architecture.md`: layers, modules, and dependency rules
 - `docs/perception.md`: objects, changes, HUD, and surroundings for prompts

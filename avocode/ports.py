@@ -44,6 +44,7 @@ class LLMReply:
     out_tokens: int = 0
     cache_tokens: int = 0  # cache reads
     cache_write_tokens: int = 0
+    cost_usd: float | None = None  # cost the provider reports
     provider: str = ""
     model: str = ""
 

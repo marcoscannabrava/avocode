@@ -14,6 +14,7 @@ from avocode.engine.toy import ToyEngine
 from avocode.llm.anthropic import AnthropicClient
 from avocode.llm.fake import FakeLLM
 from avocode.llm.openai import OpenAIClient
+from avocode.llm.openrouter import OpenRouterClient
 from avocode.ports import LLMRequest
 from avocode.record.jsonl import read_jsonl
 from bench.arcagi3 import summary_table
@@ -116,6 +117,26 @@ def test_openai_client() -> None:
     OpenAIClient(sdk, effort="low").complete(request("gpt-x"))
     assert sent["reasoning_effort"] == "low"
 
+
+
+def test_openrouter_client() -> None:
+    sent: dict[str, Any] = {}
+    replies = iter(["not json", '{"action": "A2"}'])
+
+    def create(**params: Any) -> Any:
+        sent.clear()
+        sent.update(params)
+        usage = SimpleNamespace(prompt_tokens=50, completion_tokens=7, cost=0.0015,
+                                prompt_tokens_details=SimpleNamespace(cached_tokens=20))
+        msg = SimpleNamespace(content=next(replies))
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=usage)
+
+    sdk = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    reply = OpenRouterClient(sdk, effort="low").complete(request("anthropic/x"))
+    assert reply.parsed == {"action": "A2"} and reply.provider == "openrouter"
+    assert reply.retries == 1 and reply.cost_usd == 0.003
+    assert sent["extra_body"] == {"reasoning": {"effort": "low"}}
+    assert "reasoning_effort" not in sent
 
 def test_settings_env_then_cli() -> None:
     env = {"AVOCODE_MAX_ACTIONS": "50", "AVOCODE_SKIP_NOOP_SCORER": "false",

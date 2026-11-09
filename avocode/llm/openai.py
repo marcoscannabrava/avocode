@@ -18,13 +18,12 @@ class OpenAIClient(JsonClient):
         self.effort = effort
 
     def call(self, req: LLMRequest, user: str) -> RawReply:
-        extra: dict[str, Any] = {"reasoning_effort": self.effort} if self.effort else {}
         response = self.client.chat.completions.create(
             model=req.model,
             messages=[{"role": "system", "content": req.system},
                       {"role": "user", "content": user}],
             response_format={"type": "json_object"},
-            **extra,
+            **self._effort_params(),
         )
         text = response.choices[0].message.content or ""
         usage = response.usage
@@ -35,4 +34,10 @@ class OpenAIClient(JsonClient):
         prompt = usage.prompt_tokens if usage else 0
         return RawReply(text=text, in_tokens=prompt - cached,
                         out_tokens=usage.completion_tokens if usage else 0,
-                        cache_tokens=cached)
+                        cache_tokens=cached, cost_usd=self._cost(usage))
+
+    def _effort_params(self) -> dict[str, Any]:
+        return {"reasoning_effort": self.effort} if self.effort else {}
+
+    def _cost(self, usage: Any) -> float | None:
+        return None

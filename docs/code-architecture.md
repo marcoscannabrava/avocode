@@ -49,7 +49,7 @@ Import rules:
 | `engine/*`, `llm/*`, `record/*` | `core`, `ports`, and their own SDK |
 | `bench` | all |
 
-Only `engine/arc.py` imports `arc_agi` and `arcengine`. Only `llm/anthropic.py` and `llm/openai.py` import an LLM SDK. A test checks these rules with `import-linter` (see `PLAN.md`).
+Only `engine/arc.py` imports `arc_agi` and `arcengine`. Only `llm/anthropic.py`, `llm/openai.py`, and `llm/openrouter.py` import an LLM SDK. A test checks these rules with `import-linter` (see `PLAN.md`).
 
 ## 3. Module Layout
 
@@ -89,6 +89,7 @@ avocode/
 │   ├── base.py              # JSON parse and retry
 │   ├── anthropic.py
 │   ├── openai.py
+│   ├── openrouter.py        # OpenAI API at OpenRouter
 │   ├── fake.py              # FakeLLM
 │   ├── pricing.py           # cost per token, per model
 │   ├── factory.py           # make_client() by provider

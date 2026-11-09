@@ -25,6 +25,7 @@ class RawReply:
     out_tokens: int = 0
     cache_tokens: int = 0
     cache_write_tokens: int = 0
+    cost_usd: float | None = None  # cost the provider reports
 
 
 class JsonClient(ABC):
@@ -40,6 +41,7 @@ class JsonClient(ABC):
     def complete(self, req: LLMRequest) -> LLMReply:
         user = req.user
         totals = [0, 0, 0, 0]
+        cost: float | None = 0.0
         error: str | None = None
         text = ""
         for attempt in range(self.max_retries + 1):
@@ -47,23 +49,24 @@ class JsonClient(ABC):
             text = raw.text
             usage = (raw.in_tokens, raw.out_tokens, raw.cache_tokens, raw.cache_write_tokens)
             totals = [a + b for a, b in zip(totals, usage, strict=True)]
+            cost = None if cost is None or raw.cost_usd is None else cost + raw.cost_usd
             try:
                 parsed = parse_json(text, req)
             except ValueError as exc:
                 error = str(exc)
                 user = req.user + RETRY_NOTE.format(error=error[:500])
                 continue
-            return self._reply(req, text, parsed, attempt, None, totals)
-        return self._reply(req, text, None, self.max_retries, error, totals)
+            return self._reply(req, text, parsed, attempt, None, totals, cost)
+        return self._reply(req, text, None, self.max_retries, error, totals, cost)
 
     def _reply(
         self, req: LLMRequest, text: str, parsed: dict[str, Any] | None, retries: int,
-        error: str | None, totals: list[int],
+        error: str | None, totals: list[int], cost: float | None,
     ) -> LLMReply:
         return LLMReply(
             text=text, parsed=parsed, ok=parsed is not None, retries=retries, error=error,
             in_tokens=totals[0], out_tokens=totals[1], cache_tokens=totals[2],
-            cache_write_tokens=totals[3],
+            cache_write_tokens=totals[3], cost_usd=cost,
             provider=self.provider, model=req.model,
         )
 

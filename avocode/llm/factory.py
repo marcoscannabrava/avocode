@@ -6,7 +6,11 @@ from avocode.ports import LLMClient
 
 
 def make_client(provider: str, effort: str = "") -> LLMClient:
-    """Anthropic or OpenAI client."""
+    """Anthropic, OpenAI, or OpenRouter client."""
+    if provider == "openrouter":
+        from avocode.llm.openrouter import OpenRouterClient
+
+        return OpenRouterClient(effort=effort)
     if provider == "openai":
         from avocode.llm.openai import OpenAIClient
 
