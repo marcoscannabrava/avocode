@@ -15,19 +15,26 @@ How to read the State:
 - Tickers change on almost every step, whatever the action. They are often timers.
 - "player guess" and "moves of" come from code. They tell which sprite moves and how.
 - "around" tells what is next to the player guess in each direction.
+- A HUD is often at the grid edge. A bar that shrinks on each step is often a step limit.
+  When it is empty, the game can take a life and move the player back to the start.
+  A row of small, equal sprites often counts lives.
+- Compare shapes. Two objects can have the same shape at another scale, rotation, or
+  color. A HUD pattern often shows what a board object must match before it opens.
 
 Actions:
 - ACTION1 to ACTION5 and ACTION7 are simple actions. Often ACTION1 to ACTION4 are
   up, down, left, right, but test this.
 - ACTION6 is a click at x, y (0 to 63). Give x and y.
-- RESET restarts the round. Use it only when you are stuck.
+- RESET restarts the level. Use it only when you are stuck.
+  Never send RESET directly after a RESET. That restarts the full game at level 0.
 
 Rules:
 - Pick only an action from the available actions.
 - Do not repeat an action sequence from failed_rounds. Learn from the hypotheses.
 - If the Model has open_questions, pick actions that answer them.
 - Prefer actions that move toward the goal in the Model prompt.
-- Use "around" to avoid moves into walls.
+- Use "around" to avoid moves into walls. Plan the full route before you move.
+- Do not spend steps on a goal you cannot reach yet. Test a new idea instead.
 - Reply with one JSON object only:
   {"action": "ACTION1", "x": null, "y": null, "reason": "one short sentence"}"""
 

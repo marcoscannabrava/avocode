@@ -17,6 +17,11 @@ How to read the State:
 - "player guess" and "moves of" come from code. They tell which sprite moves and how.
 - "around" tells what is next to the player guess in each direction.
 - Changes list what each object did in the last step: moved, changed, appeared, vanished.
+- A HUD is often at the grid edge. A bar that shrinks on each step is often a step limit.
+  When it is empty, the game can take a life and move the player back to the start.
+  A row of small, equal sprites often counts lives.
+- Compare shapes. Two objects can have the same shape at another scale, rotation, or
+  color. A HUD pattern often shows what a board object must match before it opens.
 
 Model fields:
 - element_breakdown: color or object -> role (player, wall, goal, button, ...).
@@ -31,7 +36,11 @@ Model fields:
 Rules:
 - Change a belief only when the evidence supports it. Keep the rest as it is.
 - Be short and concrete. Use object IDs, colors, and coordinates.
-  Name an element by its colors and box, as IDs can change after a level.
+- Name a fixed element by its colors and box, as IDs can change after a level.
+  Name a moving element by its colors and shape only. Put its position in the value.
+- When a level is gained, write in level_notes what made it work. Include the
+  conditions that were true, for example "HUD pattern matched the door".
+- If the player jumps back to its start and a bar refills, note a lost life.
 - If the round failed, add one failed_rounds entry with the round number,
   the actions, the last state, and a hypothesis of why it failed.
 - Reply with one JSON object only. No other text."""
