@@ -7,6 +7,7 @@ import * as gameView from "./views/game.js";
 import * as roundView from "./views/round.js";
 import * as modelView from "./views/model.js";
 import * as llmView from "./views/llm.js";
+import * as runsView from "./views/runs.js";
 
 const POLL_MS = 2000;
 const app = document.getElementById("app");
@@ -38,6 +39,7 @@ class LineFile {
 }
 
 const ctx = {
+  config: null,
   runId: null,
   run: null,
   manifest: null,
@@ -68,6 +70,7 @@ const ctx = {
 function parseRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   const route = { view: "run", parts };
+  if (parts[0] === "runs") route.view = "runs";
   if (parts[0] === "game" && parts[1]) {
     route.game = parts[1];
     route.view = "game";
@@ -86,7 +89,7 @@ function parseRoute() {
   return route;
 }
 
-const VIEWS = { run: runView, game: gameView, round: roundView, model: modelView, llm: llmView };
+const VIEWS = { run: runView, game: gameView, round: roundView, model: modelView, llm: llmView, runs: runsView };
 let lastKey = "";
 let current = null;
 
@@ -96,6 +99,7 @@ function renderCrumbs(route, game) {
   if (route.view === "round") parts.push(`round ${route.round}`);
   if (route.view === "model") parts.push("Model");
   if (route.view === "llm") parts.push(`call ${esc(route.callId)}`);
+  if (route.view === "runs") parts.push("runs");
   crumbs.innerHTML = parts.join(" › ");
 }
 
@@ -157,6 +161,23 @@ async function pickRun(config) {
   return params.get("run") || config.run || config.runs[0] || null;
 }
 
+/** Picker text: id, tags, hashes, levels. */
+async function runLabel(id) {
+  try {
+    const resp = await fetch(`/runs/${encodeURIComponent(id)}/manifest.json`, { cache: "no-store" });
+    if (!resp.ok) return id;
+    const m = await resp.json();
+    const sum = m.summary;
+    const parts = [id];
+    if (m.tags?.length) parts.push(m.tags.join(","));
+    parts.push(`P ${m.prompts?.player ?? "?"} S ${m.prompts?.scorer ?? "?"}`);
+    parts.push(sum ? `${sum.levels_total}/${sum.win_levels_total} lvl` : "live");
+    return parts.join(" · ");
+  } catch {
+    return id;
+  }
+}
+
 async function main() {
   const config = await (await fetch("/api/config", { cache: "no-store" })).json();
   ctx.runId = await pickRun(config);
@@ -164,8 +185,10 @@ async function main() {
     app.innerHTML = "<p>No runs found.</p>";
     return;
   }
+  ctx.config = config;
   if (config.runs.length > 1) {
-    const opts = config.runs.map((r) => `<option ${r === ctx.runId ? "selected" : ""}>${esc(r)}</option>`).join("");
+    const labels = await Promise.all(config.runs.map(runLabel));
+    const opts = config.runs.map((r, i) => `<option value="${esc(r)}" ${r === ctx.runId ? "selected" : ""}>${esc(labels[i])}</option>`).join("");
     status.insertAdjacentHTML("beforebegin", `<select id="runpick" class="mono">${opts}</select>`);
     document.getElementById("runpick").onchange = (e) => {
       location.href = `/?run=${encodeURIComponent(e.target.value)}`;

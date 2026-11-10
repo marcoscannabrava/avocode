@@ -109,7 +109,11 @@ export function gameMetrics(g, nowMs = Date.now()) {
     lastEventAgeS: Number.isNaN(last) ? null : Math.max(0, (nowMs - last) / 1000),
     openCall: open.length ? open[open.length - 1] : null,
     stepsPerLevel: g.levels.map((l) => l.steps_in_level),
+    openLevelSteps: openLevelSteps(g, levels, winLevels),
     roundsPerLevel: g.levels.map((l) => l.rounds_in_level),
+    costPerLevel: costPerLevel(g),
+    modelPerStep: n ? g.models.filter((u) => u.step > 0).length / n : null,
+    lostSteps: lostSteps(g),
     warnings: g.warnings.length,
     errors: g.errors.length,
   };
@@ -222,4 +226,170 @@ export function churnByRound(g) {
     byRound.set(round, (byRound.get(round) ?? 0) + 1);
   }
   return [...byRound.entries()].map(([round, count]) => ({ round, count }));
+}
+
+/** True when a step gained a level. */
+export function isLevelUp(s) {
+  return s.after.levels_completed > s.before.levels_completed;
+}
+
+/** Steps on the level not yet done. */
+function openLevelSteps(g, levels, winLevels) {
+  if (winLevels && levels >= winLevels) return null;
+  const last = g.levels.length ? g.levels[g.levels.length - 1].step : 0;
+  const n = g.steps.filter((s) => s.step > last).length;
+  return n || null;
+}
+
+/** LLM cost of each level, in order. */
+export function costPerLevel(g) {
+  const ends = g.levels.map((l) => l.step);
+  const buckets = ends.map(() => []);
+  buckets.push([]);
+  for (const [id, end] of g.llmEnd) {
+    const start = g.llmStart.get(id);
+    if (!start) continue;
+    buckets[ends.filter((e) => e < start.step).length].push(end.cost_usd);
+  }
+  if (!buckets[buckets.length - 1].length) buckets.pop();
+  return buckets.map(sumCost);
+}
+
+/** Problems of each step, keyed by step. */
+export function stepProblems(g) {
+  const codes = new Map();
+  for (const w of g.warnings) {
+    if (!codes.has(w.step)) codes.set(w.step, []);
+    codes.get(w.step).push(w.code);
+  }
+  const out = new Map();
+  for (const s of g.steps) {
+    const c = codes.get(s.step) ?? [];
+    const p = {
+      noop: s.diff.noop,
+      repeat: c.includes("repeat_state"),
+      fallback: c.includes("bad_action"),
+      skipped: s.flags.includes("scorer_skipped"),
+      codes: c,
+    };
+    p.lost = p.noop || p.repeat;
+    p.any = p.lost || p.fallback || p.skipped;
+    out.set(s.step, p);
+  }
+  return out;
+}
+
+/** Short words for a step's problems. */
+export function problemWords(p) {
+  if (!p) return [];
+  const out = [];
+  if (p.noop) out.push("no-op");
+  for (const c of p.codes) if (!out.includes(c)) out.push(c);
+  if (p.skipped) out.push("scorer_skipped");
+  return out;
+}
+
+/** No-op or repeat-state steps, no double count. */
+export function lostSteps(g) {
+  let n = 0;
+  for (const p of stepProblems(g).values()) if (p.lost) n++;
+  return n;
+}
+
+/** Runs of 3+ same lost actions. */
+export function loopRuns(g, min = 3) {
+  const probs = stepProblems(g);
+  const out = [];
+  let cur = null;
+  const key = (s) => `${s.round}|${s.action.name}|${s.action.x}|${s.action.y}`;
+  const close = () => { if (cur && cur.count >= min) out.push(cur); cur = null; };
+  for (const s of g.steps) {
+    if (!probs.get(s.step).lost) { close(); continue; }
+    if (cur && cur.key === key(s) && cur.last === s.step - 1) {
+      cur.last = s.step;
+      cur.count++;
+    } else {
+      close();
+      cur = { key: key(s), round: s.round, action: s.action.name, first: s.step, last: s.step, count: 1 };
+    }
+  }
+  close();
+  return out.map(({ key: _k, ...r }) => r);
+}
+
+function lastGrid(line) {
+  return line ? { w: line.w, h: line.h, hex: line.frames[line.frames.length - 1] } : null;
+}
+
+/** Changed-cell counts on one level. */
+export function changeCounts(steps, frameOf, level, action = null) {
+  const inLevel = steps.filter((s) => s.before.levels_completed === level);
+  const up = steps.find((s) => isLevelUp(s) && s.after.levels_completed === level);
+  const baseStep = inLevel.length ? inLevel[0].step - 1 : up ? up.step : 0;
+  const base = lastGrid(frameOf(baseStep));
+  const counts = new Map();
+  let used = 0;
+  for (const s of inLevel) {
+    if (isLevelUp(s)) continue;
+    if (action ? s.action.name !== action : s.action.name === "RESET") continue;
+    const a = lastGrid(frameOf(s.step - 1)), b = lastGrid(frameOf(s.step));
+    if (!a || !b || a.w !== b.w || a.h !== b.h) continue;
+    used++;
+    for (let i = 0; i < b.hex.length; i++) if (a.hex[i] !== b.hex[i]) counts.set(i, (counts.get(i) ?? 0) + 1);
+  }
+  return { base, counts, steps: used };
+}
+
+/** Level numbers seen in a game. */
+export function levelsSeen(g) {
+  let max = 0;
+  for (const s of g.steps) max = Math.max(max, s.after.levels_completed);
+  return [...Array(max + 1).keys()];
+}
+
+/** "model/effort" for one role. */
+export function modelLabel(config, role) {
+  const m = config?.[`${role}_model`];
+  if (!m) return "?";
+  const e = config[`${role}_effort`];
+  return e ? `${m}/${e}` : m;
+}
+
+/** One compare row per run and game. */
+export function compareRow(runId, manifest, g, nowMs = Date.now()) {
+  const m = gameMetrics(g, nowMs);
+  const cfg = manifest?.config ?? {};
+  return {
+    run: runId,
+    game: g.id,
+    tags: manifest?.tags ?? [],
+    player: manifest?.prompts?.player ?? "?",
+    scorer: manifest?.prompts?.scorer ?? "?",
+    models: `${modelLabel(cfg, "player")} · ${modelLabel(cfg, "scorer")}`,
+    levels: m.levels,
+    winLevels: m.winLevels,
+    steps: m.steps,
+    stepsPerLevel: m.stepsPerLevel,
+    openLevelSteps: m.openLevelSteps,
+    noopRate: m.noopRate,
+    repeatStateRate: m.repeatStateRate,
+    lostSteps: m.lostSteps,
+    cost: m.cost,
+    costPerLevel: m.levels && m.cost !== null ? m.cost / m.levels : null,
+  };
+}
+
+/** Rows for many runs, in run order. */
+export function compareRows(runs, nowMs = Date.now()) {
+  const rows = [];
+  const sorted = [...runs].sort((a, b) => a.runId.localeCompare(b.runId));
+  for (const { runId, manifest, run } of sorted) {
+    for (const g of run.games.values()) rows.push(compareRow(runId, manifest, g, nowMs));
+  }
+  rows.forEach((r, i) => {
+    const prev = rows[i - 1];
+    r.newPlayer = !!prev && prev.player !== r.player;
+    r.newScorer = !!prev && prev.scorer !== r.scorer;
+  });
+  return rows;
 }

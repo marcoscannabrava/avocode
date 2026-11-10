@@ -1,36 +1,61 @@
 // Game view: progress, rounds, actions, maps.
-import { actionTable, gameMetrics, levelSeries, roundTable } from "../metrics.js";
+import {
+  actionTable, changeCounts, gameMetrics, isLevelUp, levelSeries, levelsSeen, loopRuns, problemWords,
+  roundTable, stepProblems,
+} from "../metrics.js";
 import { scatter, stepLine } from "../charts.js";
 import { drawGrid } from "../grid.js";
-import { age, esc, money, pct, secs, shortAction, tile, tokens } from "../html.js";
+import { age, esc, money, pct, secs, stepTip, tile, tokens } from "../html.js";
+
+const ui = { mapLevel: null, mapAction: "", game: null };
 
 export function liveRefresh() { return false; }
 
 function gameLink(g, rest = "") { return `#/game/${encodeURIComponent(g.id)}${rest}`; }
 
-function timeline(g, m) {
+function stepLink(g, s) { return gameLink(g, `/round/${s.round}/step/${s.step}`); }
+
+function timeline(g, m, probs) {
   const rounds = roundTable(g);
   const lastStep = g.steps.length ? g.steps[g.steps.length - 1].step : 1;
   const bands = rounds.map((r) => ({
     x0: Math.max(0, (r.firstStep ?? 1) - 1), x1: r.lastStep ?? lastStep, cls: r.outcome,
     title: `round ${r.round}: ${r.outcome}`, href: gameLink(g, `/round/${r.round}`),
   }));
-  const pts = levelSeries(g);
-  const marks = g.models.map((u) => {
-    const lv = g.byStep.get(u.step)?.after.levels_completed ?? 0;
-    return { x: u.step, y: lv, title: `v${u.version}: ${u.summary || u.changes.join(", ")}` };
-  });
+  const models = g.models.filter((u) => u.step > 0).map((u) => ({
+    x: u.step, cls: "scorer", title: `v${u.version}: ${u.summary || u.changes.join(", ")}`,
+    href: gameLink(g, `/model/${u.version}`),
+  }));
+  const events = [];
+  for (const s of g.steps) {
+    const p = probs.get(s.step);
+    if (isLevelUp(s)) {
+      events.push({ x: s.step, cls: "won", title: `step ${s.step}: level complete`, href: stepLink(g, s) });
+    } else if (p.codes.length) {
+      events.push({ x: s.step, cls: "failed", title: `step ${s.step}: ${p.codes.join(", ")}`, href: stepLink(g, s) });
+    }
+  }
   return stepLine({
-    series: [{ name: "levels", color: "var(--won)", pts, xEnd: lastStep }],
-    bands, marks, xMax: lastStep, yMax: Math.max(1, m.winLevels), width: 1200, height: 240,
+    series: [{ name: "levels", color: "var(--won)", pts: levelSeries(g), xEnd: lastStep }],
+    bands, xMax: lastStep, yMax: Math.max(1, m.winLevels), width: 1200, height: 220,
+    lanes: [{ label: "Model", items: models }, { label: "events", items: events }],
   });
 }
 
-function roundRows(g) {
-  return roundTable(g).map((r) => `<tr class="click" data-href="${gameLink(g, `/round/${r.round}`)}">
+function outcomeDot(o) {
+  return { won: "won", failed: "stalled", playing: "playing" }[o] ?? "done";
+}
+
+function roundsTable(g) {
+  const rows = roundTable(g);
+  const hyp = rows.some((r) => r.hypothesis);
+  const body = rows.map((r) => `<tr class="click" data-href="${gameLink(g, `/round/${r.round}`)}">
     <td class="num">${r.round}</td><td class="num">${r.startLevel}</td><td class="num">${r.endLevel}</td>
-    <td class="num">${r.steps}</td><td><span class="dot h-${r.outcome === "won" ? "won" : r.outcome === "failed" ? "stalled" : r.outcome === "playing" ? "playing" : "done"}"></span>${esc(r.outcome)}</td>
-    <td>${esc(r.hypothesis)}</td><td class="num">${pct(r.noopRate)}</td><td class="num">${money(r.cost)}</td></tr>`).join("");
+    <td class="num">${r.steps}</td><td><span class="dot h-${outcomeDot(r.outcome)}"></span>${esc(r.outcome)}</td>
+    ${hyp ? `<td>${esc(r.hypothesis)}</td>` : ""}<td class="num">${pct(r.noopRate)}</td><td class="num">${money(r.cost)}</td></tr>`).join("");
+  return `<table><thead><tr><th class="num">round</th><th class="num">start lvl</th><th class="num">end lvl</th>
+    <th class="num">steps</th><th>outcome</th>${hyp ? "<th>Scorer hypothesis</th>" : ""}<th class="num">no-op</th>
+    <th class="num">cost</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function actionRows(g) {
@@ -38,23 +63,36 @@ function actionRows(g) {
     <td class="num">${pct(r.noopRate)}</td><td class="num">${r.levelsAfter}</td><td>${esc(r.modelSays)}</td></tr>`).join("");
 }
 
-function actionStrip(g) {
-  const repeat = new Set(g.warnings.filter((w) => w.code === "repeat_state").map((w) => w.step));
+/** Strip cells for one round. */
+export function stripCells(g, r, probs, href, cur = -1) {
+  return r.steps.map((s, i) => {
+    const p = probs.get(s.step);
+    const cls = [`act-${s.action.name}`, p?.noop ? "hollow" : "", p?.repeat ? "rep" : "",
+      isLevelUp(s) ? "lvl" : "", i === cur ? "cur" : ""].join(" ");
+    return `<a class="${cls}" href="${href(s)}" title="${esc(stepTip(s, problemWords(p)))}"></a>`;
+  }).join("");
+}
+
+function actionStrip(g, probs) {
   return g.roundList().map((r) => {
-    const cells = r.steps.map((s) => {
-      const cls = [`act-${s.action.name}`, s.diff.noop ? "hollow" : "", repeat.has(s.step) ? "rep" : ""].join(" ");
-      return `<a class="${cls}" href="${gameLink(g, `/round/${r.round}/step/${s.step}`)}" title="${s.step}: ${esc(shortAction(s.action))}"></a>`;
-    }).join("");
+    const cells = stripCells(g, r, probs, (s) => stepLink(g, s));
     const end = `<span class="end-${r.end?.outcome ?? "playing"}" title="${esc(r.end?.outcome ?? "playing")}"></span>`;
     return `<div class="strip-row"><span class="lbl">round ${r.round}</span><div class="strip" style="margin:0">${cells}${end}</div></div>`;
   }).join("");
 }
 
-function legendActions() {
-  const names = ["RESET", "ACTION1", "ACTION2", "ACTION3", "ACTION4", "ACTION5", "ACTION6", "ACTION7"];
+export function legendActions(names) {
   return names.map((n) => `<span><i class="act-${n}"></i>${n === "RESET" ? n : "A" + n.slice(-1)}</span>`).join("")
-    + '<span><i class="hollow" style="box-shadow:inset 0 0 0 2px var(--c0)"></i>no-op</span>'
-    + '<span><i style="box-shadow:inset 0 0 0 2px var(--failed)"></i>repeat state</span>';
+    + '<span><i style="box-shadow:inset 0 0 0 2px var(--c0)"></i>no-op</span>'
+    + '<span><i style="box-shadow:inset 0 0 0 2px var(--failed)"></i>repeat state</span>'
+    + '<span><i style="box-shadow:inset 0 -3px 0 var(--won)"></i>level complete</span>';
+}
+
+function loopsList(g) {
+  const loops = loopRuns(g);
+  if (!loops.length) return '<p class="muted">No loops of 3 or more lost steps.</p>';
+  return `<ul class="loops">${loops.map((l) => `<li><a href="${gameLink(g, `/round/${l.round}/step/${l.first}`)}">steps ${l.first}–${l.last}</a>,
+    <span class="mono">${esc(l.action)}</span> ×${l.count} <span class="muted">(round ${l.round})</span></li>`).join("")}</ul>`;
 }
 
 function latency(g) {
@@ -76,40 +114,66 @@ function badCalls(g) {
     <td class="num">${e.retries}</td><td>${e.ok ? "yes" : "no"}</td><td>${esc((e.error || "").slice(0, 120))}</td></tr>`).join("")}</table>`;
 }
 
+function usesClicks(g) {
+  const avail = g.start?.available_actions ?? [];
+  return avail.includes("ACTION6") || g.steps.some((s) => s.action.name === "ACTION6");
+}
+
+function mapControls(g) {
+  const levels = levelsSeen(g);
+  const names = [...new Set(g.steps.map((s) => s.action.name))].sort();
+  const lvl = levels.map((l) => `<option value="${l}" ${l === ui.mapLevel ? "selected" : ""}>level ${l + 1}</option>`).join("");
+  const act = ['<option value="">all actions</option>', ...names.map((n) =>
+    `<option ${n === ui.mapAction ? "selected" : ""}>${esc(n)}</option>`)].join("");
+  return `<div class="controls" style="margin:0 0 8px"><select id="maplevel">${lvl}</select><select id="mapaction">${act}</select></div>`;
+}
+
 async function drawMaps(ctx, g, el) {
-  if (!g.steps.length) { el.querySelector("#clicknote").textContent = "No steps yet."; return; }
+  const note = el.querySelector("#changenote");
+  if (!g.steps.length) { note.textContent = "No steps yet."; return; }
   const frames = await ctx.need(g.id, "frames.jsonl");
-  const last = g.steps[g.steps.length - 1].step;
-  const lastLine = frames.get(last) ?? frames.get(0);
-  if (!lastLine) return;
-  const frame = { w: lastLine.w, h: lastLine.h, hex: lastLine.frames[lastLine.frames.length - 1] };
+  const map = changeCounts(g.steps, (s) => frames.get(s), ui.mapLevel, ui.mapAction || null);
+  if (map.base) drawGrid(el.querySelector("#changemap"), map.base, { size: 360, fade: true, heat: map.counts });
+  note.textContent = `${map.steps} steps on level ${ui.mapLevel + 1}. Level changes and resets are skipped.`;
+  const clickmap = el.querySelector("#clickmap");
+  if (!clickmap) return;
   const clicks = new Map();
-  const changes = new Map();
   for (const s of g.steps) {
-    if (s.action.name === "ACTION6" && s.action.x !== null) {
-      const i = s.action.y * frame.w + s.action.x;
-      clicks.set(i, (clicks.get(i) ?? 0) + 1);
-    }
-    const a = frames.get(s.step - 1), b = frames.get(s.step);
-    if (!a || !b || a.w !== b.w || a.h !== b.h) continue;
-    const ha = a.frames[a.frames.length - 1], hb = b.frames[b.frames.length - 1];
-    for (let i = 0; i < hb.length; i++) if (ha[i] !== hb[i]) changes.set(i, (changes.get(i) ?? 0) + 1);
+    if (s.action.name !== "ACTION6" || s.action.x === null || s.before.levels_completed !== ui.mapLevel) continue;
+    const i = s.action.y * map.base.w + s.action.x;
+    clicks.set(i, (clicks.get(i) ?? 0) + 1);
   }
-  drawGrid(el.querySelector("#clickmap"), frame, { size: 320, fade: true, heat: clicks });
-  drawGrid(el.querySelector("#changemap"), frame, { size: 320, fade: true, heat: changes });
-  el.querySelector("#clicknote").textContent = clicks.size ? `${[...clicks.values()].reduce((a, b) => a + b, 0)} clicks` : "no clicks";
+  if (map.base) drawGrid(clickmap, map.base, { size: 360, fade: true, heat: clicks });
+  el.querySelector("#clicknote").textContent = clicks.size
+    ? `${[...clicks.values()].reduce((a, b) => a + b, 0)} clicks on level ${ui.mapLevel + 1}` : "no clicks";
+}
+
+function levelList(done, open) {
+  const parts = done.map((v) => String(v));
+  if (open !== null && open !== undefined) parts.push(`${open}+`);
+  return parts.join(", ") || "—";
 }
 
 export async function render(ctx, route, el, g) {
   const m = gameMetrics(g, ctx.now());
+  const probs = stepProblems(g);
+  if (ui.game !== g.id) { ui.game = g.id; ui.mapLevel = null; ui.mapAction = ""; }
+  const levels = levelsSeen(g);
+  if (ui.mapLevel === null || !levels.includes(ui.mapLevel)) ui.mapLevel = levels[0];
+  const churn = m.rounds > 1
+    ? tile("Model churn / round", m.modelChurn === null ? "—" : m.modelChurn.toFixed(1)) : "";
   const tiles = [
     tile("levels", `${m.levels}/${m.winLevels}`), tile("outcome", esc(m.outcome ?? m.health)),
     tile("steps", `${m.steps}/${m.maxActions ?? "?"}`), tile("rounds", m.rounds),
-    tile("steps per level", m.stepsPerLevel.join(", ") || "—"),
+    tile("steps per level", levelList(m.stepsPerLevel, m.openLevelSteps)),
     tile("rounds per level", m.roundsPerLevel.join(", ") || "—"),
+    tile("cost per level", levelList(m.costPerLevel.slice(0, m.stepsPerLevel.length).map(money),
+      m.costPerLevel.length > m.stepsPerLevel.length ? money(m.costPerLevel[m.costPerLevel.length - 1]) : null)),
+    tile("lost steps", `${m.lostSteps} <span class="muted" style="font-size:12px">${pct(m.steps ? m.lostSteps / m.steps : null)}</span>`),
     tile("no-op rate", pct(m.noopRate)), tile("repeat-state rate", pct(m.repeatStateRate)),
     tile("repeat rounds", m.repeatRounds), tile("fallback rate", pct(m.fallbackRate)),
-    tile("Model churn", m.modelChurn === null ? "—" : m.modelChurn.toFixed(1)),
+    tile("Model updates / step", m.modelPerStep === null ? "—" : `${m.modelPerStep.toFixed(2)}`),
+    churn,
     tile("cost", money(m.cost)),
     tile("tokens", tokens(m.tokens.total)),
     tile("tokens in / out", `${tokens(m.tokens.in)} / ${tokens(m.tokens.out)}`),
@@ -117,35 +181,41 @@ export async function render(ctx, route, el, g) {
     tile("scorer p50 / p95", `${secs(m.llm.scorer.p50)} / ${secs(m.llm.scorer.p95)}`),
     tile("JSON fail P / S", `${pct(m.llm.player.jsonFailRate)} / ${pct(m.llm.scorer.jsonFailRate)}`),
     tile("cache rate P / S", `${pct(m.llm.player.cacheRate)} / ${pct(m.llm.scorer.cacheRate)}`),
-    tile("step rate", m.stepRate ? `${m.stepRate.toFixed(1)}/min` : "—"),
+    tile("step rate", m.stepRate && !m.outcome ? `${m.stepRate.toFixed(1)}/min` : "—"),
     tile("time to finish", m.outcome ? "—" : m.etaMin ? `${Math.round(m.etaMin)} min` : "—"),
-    tile("last event", age(m.lastEventAgeS)),
+    tile("last event", m.outcome ? "—" : age(m.lastEventAgeS)),
   ];
   const errors = g.errors.map((e) => `<div class="banner"><b>error in ${esc(e.where)}</b> at step ${e.step}: ${esc(e.message)}<pre>${esc(e.traceback)}</pre></div>`).join("");
+  const names = [...new Set(["RESET", ...(g.start?.available_actions ?? []), ...g.steps.map((s) => s.action.name)])].sort();
+  const clicks = usesClicks(g);
+  const changePanel = `<div><h2>Change map</h2><div class="panel">${mapControls(g)}<canvas class="grid" id="changemap"></canvas>
+    <div class="muted" id="changenote"></div></div></div>`;
+  const clickPanel = clicks ? `<div><h2>Click map</h2><div class="panel"><canvas class="grid" id="clickmap"></canvas>
+    <div class="muted" id="clicknote"></div></div></div>` : "";
   el.innerHTML = `${errors}
     <div class="flex"><h1 class="mono">${esc(g.id)}</h1>
       <a href="${gameLink(g, "/model")}">Model history (v${m.modelVersion})</a>
       ${g.rounds.size ? `<a href="${gameLink(g, `/round/${Math.max(...g.rounds.keys())}`)}">latest round</a>` : ""}</div>
     <div class="tiles" style="margin-top:10px">${tiles.join("")}</div>
-    <h2>Progress</h2><div class="panel">${timeline(g, m)}
+    <h2>Progress</h2><div class="panel">${timeline(g, m, probs)}
       <div class="legend"><span><i style="background:var(--won)"></i>levels</span>
-      <span><i style="background:var(--scorer);border-radius:50%"></i>Model update</span>
+      <span><i style="background:var(--scorer)"></i>Model update</span>
+      <span><i style="background:var(--failed)"></i>warning</span>
+      <span><i style="background:var(--won)"></i>level complete</span>
       <span>bands: round outcome (click to open)</span></div></div>
-    <h2>Rounds</h2><table><thead><tr><th class="num">round</th><th class="num">start lvl</th><th class="num">end lvl</th>
-      <th class="num">steps</th><th>outcome</th><th>Scorer hypothesis</th><th class="num">no-op</th><th class="num">cost</th></tr></thead>
-      <tbody>${roundRows(g)}</tbody></table>
+    <h2>Rounds</h2>${roundsTable(g)}
     <h2>Actions</h2><table><thead><tr><th>action</th><th class="num">uses</th><th class="num">no-op %</th>
       <th class="num">levels gained after</th><th>Model says</th></tr></thead><tbody>${actionRows(g)}</tbody></table>
-    <h2>Action strip</h2><div class="panel">${actionStrip(g)}<div class="legend" style="margin-top:8px">${legendActions()}</div></div>
-    <div class="grid2"><div><h2>Click map</h2><div class="panel"><canvas class="grid" id="clickmap"></canvas>
-        <div class="muted" id="clicknote"></div></div></div>
-      <div><h2>Change map</h2><div class="panel"><canvas class="grid" id="changemap"></canvas>
-        <div class="muted">Cells that changed most</div></div></div></div>
+    <h2>Action strip</h2><div class="panel">${actionStrip(g, probs)}<div class="legend" style="margin-top:8px">${legendActions(names)}</div></div>
+    <h2>Loops</h2><div class="panel">${loopsList(g)}</div>
+    <div class="${clicks ? "grid2" : ""}">${changePanel}${clickPanel}</div>
     <div class="grid2"><div><h2>LLM latency</h2><div class="panel">${latency(g)}
       <div class="legend"><span><i style="background:var(--player)"></i>player</span><span><i style="background:var(--scorer)"></i>scorer</span></div></div></div>
       <div><h2>Calls with errors or retries</h2>${badCalls(g)}</div></div>`;
   for (const tr of el.querySelectorAll("tr[data-href]")) tr.onclick = () => ctx.go(tr.dataset.href);
+  el.querySelector("#maplevel").onchange = (e) => { ui.mapLevel = Number(e.target.value); ctx.rerender(); };
+  el.querySelector("#mapaction").onchange = (e) => { ui.mapAction = e.target.value; ctx.rerender(); };
   drawMaps(ctx, g, el).catch((err) => {
-    el.querySelector("#clicknote").textContent = `Could not load frames: ${err.message}`;
+    el.querySelector("#changenote").textContent = `Could not load frames: ${err.message}`;
   });
 }

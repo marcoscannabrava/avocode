@@ -6,7 +6,11 @@ export function esc(v) {
 }
 
 export function money(v) {
-  return v === null || v === undefined ? "$?" : `$${v.toFixed(v < 1 ? 3 : 2)}`;
+  if (v === null || v === undefined) return "$?";
+  if (v === 0) return "$0";
+  if (v < 0.0001) return "<$0.0001";
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  return `$${v.toFixed(v < 1 ? 3 : 2)}`;
 }
 
 export function pct(v) {
@@ -27,8 +31,9 @@ export function age(s) {
 
 export function duration(s) {
   if (s === null || s === undefined) return "—";
-  const m = Math.floor(s / 60);
-  return m ? `${m}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
+  const t = Math.round(s);
+  const m = Math.floor(t / 60);
+  return m ? `${m}m ${t % 60}s` : `${t}s`;
 }
 
 export function shortAction(a) {
@@ -36,6 +41,14 @@ export function shortAction(a) {
   if (a.name === "RESET") return "RESET";
   const n = "A" + a.name.slice(-1);
   return a.x !== null && a.x !== undefined ? `${n}@${a.x},${a.y}` : n;
+}
+
+/** Tooltip text for one step cell. */
+export function stepTip(s, words = []) {
+  const parts = [`${s.step}: ${shortAction(s.action)}`, `diff ${s.diff.cells}`];
+  if (s.after.levels_completed > s.before.levels_completed) parts.push("level complete");
+  if (words.length) parts.push(words.join(", "));
+  return parts.join(" · ") + (s.reason ? `\n${s.reason}` : "");
 }
 
 export function tokens(n) {

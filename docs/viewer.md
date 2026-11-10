@@ -37,6 +37,7 @@ The URL hash holds the position. You can copy a link to one step:
 #/game/ls20/round/3/step/31          round player at step 31
 #/game/ls20/model/7                  Model history at version 7
 #/game/ls20/llm/s-31                 one LLM call
+#/runs                               all runs, one row per run and game
 ```
 
 ### 2.1 Run overview (Q1, Q2, Q7)

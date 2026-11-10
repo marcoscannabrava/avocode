@@ -49,6 +49,7 @@ export function drawGrid(canvas, frame, opts = {}) {
     ctx.strokeRect(opts.click.x * cell, opts.click.y * cell, cell, cell);
   }
   if (opts.heat) drawHeat(ctx, opts.heat, w, cell);
+  if (opts.box) drawBox(ctx, opts.box, cell);
   return cell;
 }
 
@@ -60,4 +61,12 @@ function drawHeat(ctx, counts, w, cell) {
     ctx.fillStyle = `rgba(220, 38, 38, ${0.15 + 0.75 * (n / max)})`;
     ctx.fillRect((i % w) * cell, Math.floor(i / w) * cell, cell, cell);
   }
+}
+
+function drawBox(ctx, b, cell) {
+  const x = b.x0 * cell, y = b.y0 * cell;
+  const w = (b.x1 - b.x0 + 1) * cell, h = (b.y1 - b.y0 + 1) * cell;
+  ctx.lineWidth = Math.max(2, cell / 3);
+  ctx.strokeStyle = "#ff00ff";
+  ctx.strokeRect(x - ctx.lineWidth / 2, y - ctx.lineWidth / 2, w + ctx.lineWidth, h + ctx.lineWidth);
 }
