@@ -17,7 +17,7 @@ from avocode.ports import LLMRequest, StepContext
 from avocode.record.jsonl import read_jsonl
 from avocode.record.memory import MemoryRecorder
 from avocode.scorer.scorer import Scorer
-from avocode.session import GameSession
+from avocode.session import GameSession, SharedRules
 from tests import make_fixture
 from tests.helpers import scorer_reply
 
@@ -217,3 +217,42 @@ def test_session_feeds_tracker_text() -> None:
     assert "first State, no previous State" in scorer[0]
     assert any(" moved (" in u for u in scorer[1:])
     assert all("tickers" not in u for u in scorer)
+
+
+def rules_reply(req: LLMRequest) -> dict[str, Any]:
+    if req.user.startswith("Old rules from"):
+        n = int(req.user.split()[3])
+        return {"rules": [f"rule after {n + 1} games"], "summary": "merged"}
+    return scorer_default(req)
+
+
+def test_rules_survive_between_games() -> None:
+    shared = SharedRules()
+    users: list[str] = []
+    for _ in range(2):
+        rec = MemoryRecorder()
+        ctx = StepContext()
+        player_llm = FakeLLM(moves(*SOLUTIONS[0], *SOLUTIONS[1]))
+        player = Player(RecordingLLM(player_llm, rec, ctx), "fake")
+        scorer = Scorer(RecordingLLM(FakeLLM(default=rules_reply), rec, ctx), "fake")
+        result = GameSession(ToyEngine(), player, scorer, rec, ctx=ctx, rules=shared).run()
+        assert result.outcome is Outcome.WON
+        users.append(player_llm.users[0])
+        update = rec.of_type("rules_update")[0]
+        assert update.rules == shared.text and update.games == shared.games
+        assert [e.type for e in rec.events][-1] == "game_end"
+    assert "Rules from past games:\nnone" in users[0]
+    assert "- rule after 1 games" in users[1]
+    assert shared.text == "- rule after 2 games" and shared.games == 2
+
+
+def test_rules_kept_on_bad_reply() -> None:
+    shared = SharedRules(text="- old rule", games=1)
+    rec = MemoryRecorder()
+    ctx = StepContext()
+    player = Player(RecordingLLM(FakeLLM(moves(*SOLUTIONS[0], *SOLUTIONS[1])), rec, ctx))
+    scorer = Scorer(RecordingLLM(FakeLLM(default=scorer_default), rec, ctx))
+    GameSession(ToyEngine(), player, scorer, rec, ctx=ctx, rules=shared).run()
+    assert shared.text == "- old rule" and shared.games == 1
+    assert [w.code for w in rec.of_type("warning")] == ["rules_kept"]
+    assert not rec.of_type("rules_update")

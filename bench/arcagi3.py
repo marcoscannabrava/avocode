@@ -58,6 +58,8 @@ def run_parser() -> argparse.ArgumentParser:
     p.add_argument("--player-effort", default=None, help="reasoning effort, OpenAI and OpenRouter")
     p.add_argument("--scorer-effort", default=None,
                    help="reasoning effort, OpenAI and OpenRouter")
+    p.add_argument("--no-carry-rules", dest="carry_rules", action="store_false", default=None,
+                   help="do not pass rules between games")
     p.add_argument("--out", default=None, help="parent folder for run folders")
     p.add_argument("--tag", action="append", default=[], help="run label, can repeat")
     p.add_argument("--serve", action="store_true", help="start the viewer")
@@ -79,7 +81,7 @@ def cmd_run(argv: list[str]) -> int:
         llm=args.llm, player_model=args.player_model, scorer_model=args.scorer_model,
         player_effort=args.player_effort, scorer_effort=args.scorer_effort,
         max_actions=args.max_actions, max_rounds=args.max_rounds, workers=args.workers,
-        runs_dir=args.out, tags=args.tag,
+        runs_dir=args.out, tags=args.tag, carry_rules=args.carry_rules,
     )
     from avocode.engine.arc import ArcArcade
 

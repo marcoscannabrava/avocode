@@ -186,7 +186,7 @@ The viewer finds games from `run.jsonl`. It does not list folders.
 
 | Type | When | Fields |
 |---|---|---|
-| `game_start` | first | `win_levels`, `available_actions`, `budget` (`max_actions`, `max_rounds`) |
+| `game_start` | first | `win_levels`, `available_actions`, `budget` (`max_actions`, `max_rounds`), `rules` (rules from past games, can be empty) |
 | `round_start` | after each `RESET` | `round`, `level`, `full_reset`, `reason` (`initial`, `failed`, `retry`) |
 | `llm_start` | before each LLM call | `call_id`, `role` (`player`, `scorer`), `round`, `step` |
 | `llm_end` | after each LLM call | `call_id`, `role`, `ok`, `retries`, `in_tokens`, `out_tokens`, `cache_tokens`, `latency_ms`, `cost_usd`, `error` |
@@ -194,6 +194,7 @@ The viewer finds games from `run.jsonl`. It does not list folders.
 | `model_update` | when the Scorer changes the Model | `version`, `parent`, `step`, `model` (full), `changes` (list of changed field paths), `summary` |
 | `level_complete` | when `levels_completed` goes up | `level`, `round`, `step`, `steps_in_level`, `rounds_in_level` |
 | `round_end` | before the next `RESET` or at game end | `round`, `outcome` (`failed`, `won`, `budget`, `error`), `steps`, `levels_gained`, `hypothesis` |
+| `rules_update` | at game end, before `game_end`, when rules carry over | `step`, `games` (games merged into the rules), `rules` (text, one `- rule` per line), `summary` |
 | `warning` | a recoverable problem | `code`, `message`, `step` |
 | `error` | an exception | `where`, `message`, `traceback`, `step` |
 | `game_end` | last | `outcome`, `levels_completed`, `steps`, `rounds`, `in_tokens`, `out_tokens`, `cost_usd`, `duration_s` |
@@ -209,6 +210,7 @@ Warning codes:
 | `model_kept` | The Scorer failed twice. The loop kept the old Model. |
 | `repeat_state` | The State is the same as an earlier State in this round. |
 | `repeat_round` | The first actions of this round are the same as a failed round. |
+| `rules_kept` | The rules update failed. The loop kept the old rules. |
 
 ### 4.6 The `step` event
 
@@ -285,13 +287,13 @@ One line per LLM call. The line is written when the call ends.
   "argv": ["--games", "ls20"],
   "config": {"llm": "anthropic", "player_model": "...", "scorer_model": "...",
              "max_actions": 400, "max_rounds": 20, "workers": 1},
-  "prompts": {"player": "<hash>", "scorer": "<hash>"},
+  "prompts": {"player": "<hash>", "scorer": "<hash>", "rules": "<hash>"},
   "games": ["ls20-016295f7601e"],
   "summary": null
 }
 ```
 
-The writer fills `ended` and `summary` at the end. If `ended` is `null` and no event came for 60 s, the run probably crashed.
+The writer fills `ended` and `summary` at the end. `summary.rules` holds the last rules text, or `null` when rules do not carry over. If `ended` is `null` and no event came for 60 s, the run probably crashed.
 
 ## 5. How to Rebuild a Round
 

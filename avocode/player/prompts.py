@@ -32,6 +32,8 @@ Rules:
 - Pick only an action from the available actions.
 - Do not repeat an action sequence from failed_rounds. Learn from the hypotheses.
 - If the Model has open_questions, pick actions that answer them.
+- Rules from past games come from other games. Use them as first guesses.
+  When they do not agree with the Model of this game, trust the Model.
 - Prefer actions that move toward the goal in the Model prompt.
 - Use "around" to avoid moves into walls. Plan the full route before you move.
 - Do not spend steps on a goal you cannot reach yet. Test a new idea instead.
@@ -40,7 +42,10 @@ Rules:
 - Reply with one JSON object only:
   {"action": "ACTION1", "x": null, "y": null, "reason": "one short sentence"}"""
 
-USER = """Model (version {version}):
+USER = """Rules from past games:
+{past_rules}
+
+Model (version {version}):
 Goal hypothesis: {goal}
 Elements: {elements}
 Actions seen: {actions_seen}

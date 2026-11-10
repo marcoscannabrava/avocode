@@ -18,6 +18,8 @@ from avocode.scorer import prompts
 from avocode.scorer.status import status_from_state
 
 NOOP_NOTE = "no-op: grid did not change"
+MAX_RULES = 12
+MAX_RULE_CHARS = 300
 
 
 class ScorerReply(BaseModel):
@@ -28,6 +30,22 @@ class ScorerReply(BaseModel):
     failed_rounds: list[FailedRound] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     summary: str = ""
+
+
+class RulesReply(BaseModel):
+    rules: list[str]
+    summary: str = ""
+
+
+@dataclass
+class RulesResult:
+    text: str  # one "- rule" per line
+    summary: str = ""
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 
 @dataclass
@@ -89,6 +107,26 @@ class Scorer:
             _ensure_failed(new, old, inp)
         new.failed_rounds = new.failed_rounds[-MAX_FAILED_ROUNDS:]
         return self._finish(old, new, status, summary, flags, warnings)
+
+    def learn_rules(
+        self, previous: str, games: int, model: GameModel, game: str, outcome: str,
+        levels: int, win_levels: int,
+    ) -> RulesResult:
+        """Merge one game's Model into the rules."""
+        user = prompts.RULES_USER.format(
+            games=games, rules=previous or "none", game=game, outcome=outcome,
+            levels=levels, win_levels=win_levels,
+            model=model.model_dump_json(indent=1, exclude={"version"}),
+        )
+        reply = self.llm.complete(LLMRequest(
+            role="scorer", system=prompts.RULES_SYSTEM, user=user, schema=RulesReply,
+            model=self.model_name, prompt_hash=prompts.RULES_HASH,
+        ))
+        if reply.parsed is None:
+            return RulesResult(previous, error=reply.error or "no reply")
+        data = RulesReply.model_validate(reply.parsed)
+        rules = [r.strip()[:MAX_RULE_CHARS] for r in data.rules if r.strip()][:MAX_RULES]
+        return RulesResult("\n".join(f"- {r}" for r in rules), data.summary)
 
     def _noop(self, inp: ScoreInput, status: Status) -> ScoreResult:
         old = inp.model

@@ -22,7 +22,7 @@ from avocode.record.jsonl import JsonlRecorder, utc_stamp
 from avocode.record.run_log import RunLog, make_run_id
 from avocode.scorer import prompts as scorer_prompts
 from avocode.scorer.scorer import Scorer
-from avocode.session import GameResult, GameSession
+from avocode.session import GameResult, GameSession, SharedRules
 
 EngineFactory = Callable[[str], GameEngine]
 LLMFactory = Callable[[Role], LLMClient]
@@ -73,6 +73,7 @@ class Runner:
         self.argv = argv or []
         self.log: RunLog | None = None
         self.manifest: Manifest | None = None
+        self.rules = SharedRules() if settings.carry_rules else None
 
     def start(self, games: list[str], scorecard: str | None = None) -> RunLog:
         log = RunLog(Path(self.settings.runs_dir), self.run_id)
@@ -81,7 +82,8 @@ class Runner:
         self.manifest = Manifest(
             run_id=self.run_id, started=utc_stamp(), git=self.git, argv=self.argv,
             config=self.settings.to_dict(), games=games, tags=self.settings.tags,
-            prompts={"player": player_prompts.PROMPT_HASH, "scorer": scorer_prompts.PROMPT_HASH},
+            prompts={"player": player_prompts.PROMPT_HASH, "scorer": scorer_prompts.PROMPT_HASH,
+                     "rules": scorer_prompts.RULES_HASH},
             scorecard=scorecard,
         )
         log.write_manifest(self.manifest)
@@ -134,7 +136,8 @@ class Runner:
                         skip_noop=s.skip_noop_scorer)
         engine = self.make_engine(game)
         return GameSession(engine, player, scorer, recorder,
-                           Budget(s.max_actions, s.max_rounds), ctx=ctx, stop=self.stop)
+                           Budget(s.max_actions, s.max_rounds), ctx=ctx, stop=self.stop,
+                           rules=self.rules)
 
     def finish(self, summary: RunSummary) -> None:
         assert self.log is not None and self.manifest is not None
@@ -149,6 +152,7 @@ class Runner:
             "levels_total": levels,
             "win_levels_total": sum(r.win_levels for r in results),
             "steps": sum(r.steps for r in results), "cost_usd": summary.cost_usd,
+            "rules": self.rules.text if self.rules else None,
             "games": {r.game: {"outcome": r.outcome.value, "levels": r.levels_completed,
                                "win_levels": r.win_levels, "steps": r.steps,
                                "rounds": r.rounds, "cost_usd": r.cost_usd} for r in results},

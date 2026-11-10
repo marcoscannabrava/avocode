@@ -71,6 +71,7 @@ class GameStart(Envelope):
     win_levels: int
     available_actions: list[str]
     budget: Budget
+    rules: str = ""  # rules from past games
 
 
 class RoundStart(Envelope):
@@ -173,7 +174,17 @@ class RoundEnd(Envelope):
     hypothesis: str = ""
 
 
-WarningCode = Literal["bad_action", "bad_json", "model_kept", "repeat_state", "repeat_round"]
+class RulesUpdate(Envelope):
+    type: Literal["rules_update"] = "rules_update"
+    step: int
+    games: int  # games behind these rules
+    rules: str
+    summary: str = ""
+
+
+WarningCode = Literal[
+    "bad_action", "bad_json", "model_kept", "repeat_state", "repeat_round", "rules_kept",
+]
 
 
 class WarningEvent(Envelope):
@@ -205,7 +216,7 @@ class GameEnd(Envelope):
 
 GameEvent = Annotated[
     GameStart | RoundStart | LLMStart | LLMEnd | Step | ModelUpdate | LevelComplete
-    | RoundEnd | WarningEvent | Error | GameEnd,
+    | RoundEnd | RulesUpdate | WarningEvent | Error | GameEnd,
     Field(discriminator="type"),
 ]
 

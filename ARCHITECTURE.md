@@ -59,3 +59,16 @@ Architecture:
 Repeat until: `status == 'success'`
 Scorer should determine if current State hits a success condition
 A memory of failed runs and hypothesis for the reasons should be kept in the Model.
+
+## 4. Rules between games
+
+Each game starts with an empty Model. Some ideas apply to many games.
+
+- At the end of a game, the Scorer reads the final Model and the old rules.
+- The Scorer returns a new list of rules: at most 12 short sentences.
+- The rules tell how games often work. They do not tell facts about one game.
+- The next game gets the rules at its start. The Player sees them in its prompt.
+- The Player uses the rules as first guesses. The Model of the game wins.
+- The runner keeps one list for the run. A lock lets one game update it at a time.
+- Games that end in `aborted` or `error` do not update the rules.
+- Use `--no-carry-rules` or `AVOCODE_CARRY_RULES=0` to stop this.

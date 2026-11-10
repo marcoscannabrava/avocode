@@ -42,11 +42,13 @@ class Player:
     def choose(
         self, model: GameModel, state: State, recent: list[Action] | None = None,
         round_: int = 1, notes: list[str] | None = None, view: str | None = None,
+        previous_games_rules_summary: str = "",
     ) -> Choice:
         """View: objects text from a Tracker."""
         recent = recent or []
         view = view or scene_text(state.grid)
-        reply = self.llm.complete(self._request(model, state, recent, round_, notes or [], view))
+        reply = self.llm.complete(self._request(model, state, recent, round_, notes or [], view,
+                                                previous_games_rules_summary))
         flags = ["json_retry"] if reply.retries else []
         problem = reply.error or "no reply"
         if reply.parsed is not None:
@@ -65,13 +67,14 @@ class Player:
 
     def _request(
         self, model: GameModel, state: State, recent: list[Action], round_: int,
-        notes: list[str], view: str,
+        notes: list[str], view: str, past_rules: str = "",
     ) -> LLMRequest:
         failed = "\n".join(
             f"- round {f.round}: actions {' '.join(f.actions[-30:])}; why: {f.hypothesis}"
             for f in model.failed_rounds
         ) or "none"
         user = prompts.USER.format(
+            past_rules=past_rules or "none",
             version=model.version,
             goal=model.prompt or "unknown",
             elements=json.dumps(model.element_breakdown) if model.element_breakdown else "unknown",

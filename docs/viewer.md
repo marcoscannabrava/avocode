@@ -98,6 +98,7 @@ Below the timeline:
 
   A high no-op rate with a confident "Model says" text is a strong sign of a wrong belief.
 - **Action strip** (Q5). One row per round. One small colored cell per step, colored by action. Repeated patterns are easy to see. Cells for `repeat_state` steps have a red border.
+- **Rules.** Two panels: the rules from past games at game start, and the rules after this game. The panels show only when the run carries rules.
 - **Click map.** The last grid of the game, with a heat layer of all `ACTION6` click points. It shows if the agent clicks the same place again and again.
 - **Change map.** A heat layer of how often each cell changed. It shows which parts of the board respond to actions.
 - **LLM cost and latency.** A scatter plot. X: step. Y: latency. Color: role. A list of calls with errors or retries.

@@ -67,4 +67,34 @@ This round FAILED (game over). Add a failed_rounds entry:
 round={round}, actions={actions_json}, last_state (short), and your hypothesis.
 """
 
+RULES_SYSTEM = """You keep a short list of rules that help an agent play unknown grid games.
+Each game has different rules, but games often share ideas.
+The agent played one more game. You get the old rules and the final Model of that game.
+The final Model tells what the agent believed at the end of the game.
+You return the new list of rules for the next game.
+
+Rules:
+- Keep only rules that can help in a different game.
+- Do not keep facts about one game only, such as object IDs, coordinates, or a route.
+- Good rules tell how games often work, or how to learn a new game fast.
+  Examples: "ACTION1 to ACTION4 often move a sprite up, down, left, right."
+  "A bar that shrinks on each step is often a step limit."
+- Merge the new evidence with the old rules. Do not drop an old rule without a reason.
+- Remove or change a rule that this game proved wrong.
+- Write how many games support a rule, for example "(3 games)".
+- A lost game can also teach a rule, for example what wasted steps.
+- Keep at most 12 rules. Each rule is one short sentence.
+- summary: one short line that tells what you changed.
+- Reply with one JSON object only: {"rules": ["..."], "summary": "..."}"""
+
+RULES_USER = """Old rules from {games} past games:
+{rules}
+
+Game just played: {game}. Outcome: {outcome}. Levels {levels}/{win_levels}.
+Final Model of this game:
+{model}
+
+Return the new rules as JSON with these keys: rules, summary."""
+
 PROMPT_HASH = hashlib.sha256((SYSTEM + USER + FAILED_NOTE).encode()).hexdigest()[:12]
+RULES_HASH = hashlib.sha256((RULES_SYSTEM + RULES_USER).encode()).hexdigest()[:12]

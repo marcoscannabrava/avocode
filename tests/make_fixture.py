@@ -36,6 +36,10 @@ def player_script() -> list[dict[str, Any]]:
 
 
 def scorer_reply(req: LLMRequest) -> dict[str, Any]:
+    if req.user.startswith("Old rules from"):
+        return {"rules": ["ACTION1 to ACTION4 move the player up, down, left, right (1 games).",
+                          "Walls can end the round; test a wall touch once (1 games)."],
+                "summary": "first rules"}
     failed = "This round FAILED" in req.user
     reply: dict[str, Any] = {
         "element_breakdown": {"6": "player", "5": "wall", "4": "goal", "3": "button",

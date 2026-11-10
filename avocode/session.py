@@ -37,6 +37,15 @@ class GameResult:
 
 
 @dataclass
+class SharedRules:
+    """Rules that survive between games."""
+
+    text: str = ""
+    games: int = 0  # games merged into text
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+@dataclass
 class _Round:
     number: int
     start_step: int
@@ -51,6 +60,7 @@ class GameSession:
         self, engine: GameEngine, player: Player, scorer: Scorer, observer: RunObserver,
         budget: Budget | None = None, clock: Clock | None = None,
         ctx: StepContext | None = None, stop: threading.Event | None = None,
+        rules: SharedRules | None = None,
     ) -> None:
         self.engine = engine
         self.player = player
@@ -60,6 +70,8 @@ class GameSession:
         self.clock = clock or SystemClock()
         self.ctx = ctx or StepContext()
         self.stop = stop or threading.Event()
+        self.rules = rules
+        self.previous_games_rules_summary = ""
         self.model = GameModel()
         self.state: State | None = None
         self.status = Status.ONGOING
@@ -96,11 +108,15 @@ class GameSession:
         self._start = self.clock.now()
         self.ctx.begin(1, 0)
         self.state = state
+        if self.rules is not None:
+            with self.rules.lock:
+                self.previous_games_rules_summary = self.rules.text
         self.obs.frames(0, state)
         self.obs.emit(ev.GameStart(
             win_levels=state.win_levels, available_actions=list(state.available_actions),
             budget=ev.Budget(max_actions=self.budget.max_actions,
                              max_rounds=self.budget.max_rounds),
+            rules=self.previous_games_rules_summary,
         ))
         self._open_round(state, "initial")
         self.tracker.update(state.grid)
@@ -137,8 +153,11 @@ class GameSession:
         assert rnd is not None and self.state is not None
         self.ctx.begin(rnd.number, self.step)
         self._where = "player"
-        self._choice = self.player.choose(self.model, self.state, list(rnd.actions),
-                                          rnd.number, self.notes, self.tracker.objects_text())
+        self._choice = self.player.choose(
+            self.model, self.state, list(rnd.actions), rnd.number, self.notes,
+            self.tracker.objects_text(),
+            previous_games_rules_summary=self.previous_games_rules_summary,
+        )
         self._where = "session"
         self._t.append(self.clock.now())
         for code, message in self._choice.warnings:
@@ -292,6 +311,7 @@ class GameSession:
         if self.round is not None:
             round_outcome = "won" if outcome is Outcome.WON else outcome.value
             self._close_round(round_outcome)
+        self._learn_rules(outcome)
         state = self.state
         duration = round(self.clock.now() - self._start, 3)
         result = GameResult(
@@ -308,6 +328,36 @@ class GameSession:
             cost_usd=result.cost_usd, duration_s=duration,
         ))
         return result
+
+    def _learn_rules(self, outcome: Outcome) -> None:
+        """Merge this game into the shared rules."""
+        shared, state = self.rules, self.state
+        if shared is None or state is None or self.step == 0:
+            return
+        if outcome in (Outcome.ABORTED, Outcome.ERROR):
+            return
+        self.ctx.begin(self.rounds, self.step)
+        self._where = "scorer"
+        try:
+            with shared.lock:
+                result = self.scorer.learn_rules(
+                    shared.text, shared.games, self.model, self.engine.game_id,
+                    outcome.value, state.levels_completed, state.win_levels,
+                )
+                if result.ok:
+                    shared.text = result.text
+                    shared.games += 1
+                games = shared.games
+        except Exception as exc:  # noqa: BLE001 - keep the game result
+            self._warn("rules_kept", f"Rules update failed: {type(exc).__name__}: {exc}"[:300])
+            return
+        finally:
+            self._where = "session"
+        if not result.ok:
+            self._warn("rules_kept", f"Rules update failed: {result.error}"[:300])
+            return
+        self.obs.emit(ev.RulesUpdate(step=self.step, games=games, rules=result.text,
+                                     summary=result.summary))
 
 
 def _key(state: State) -> tuple[object, ...]:

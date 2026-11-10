@@ -66,6 +66,7 @@ All options:
 | `--scorer-model` | from config | Model for the Scorer |
 | `--player-effort` | `low` (OpenAI) | Reasoning effort for the Player |
 | `--scorer-effort` | `medium` (OpenAI) | Reasoning effort for the Scorer |
+| `--no-carry-rules` | off | Do not pass rules from past games to the next game |
 | `--out` | `runs` | Parent folder for run folders |
 | `--tag` | none | Label for the run. You can use it more than one time. |
 | `--serve` | off | Start the viewer during the run |

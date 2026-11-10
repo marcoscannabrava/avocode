@@ -23,6 +23,7 @@ export class GameStore {
     this.warnings = [];
     this.errors = [];
     this.levels = [];             // level_complete events
+    this.rulesUpdate = null;      // rules_update event
     this.lastTs = null;
     this.badVersion = null;
     this.changed = 0;             // bump on each add
@@ -64,6 +65,7 @@ export class GameStore {
       case "warning": this.warnings.push(e); break;
       case "error": this.errors.push(e); break;
       case "level_complete": this.levels.push(e); break;
+      case "rules_update": this.rulesUpdate = e; break;
       default: break;
     }
   }

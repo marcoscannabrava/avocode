@@ -13,6 +13,18 @@ export function liveRefresh() { return false; }
 
 function gameLink(g, rest = "") { return `#/game/${encodeURIComponent(g.id)}${rest}`; }
 
+/** Rules in at start, rules out at end. */
+function rulesPanel(g) {
+  const before = g.start?.rules ?? "";
+  const after = g.rulesUpdate;
+  if (!before && !after) return "";
+  const out = after
+    ? `<pre>${esc(after.rules || "none")}</pre><div class="muted">${after.games} games. ${esc(after.summary)}</div>`
+    : `<div class="muted">no update</div>`;
+  return `<div class="grid2"><div><h2>Rules from past games</h2><div class="panel"><pre>${esc(before || "none")}</pre></div></div>
+    <div><h2>Rules after this game</h2><div class="panel">${out}</div></div></div>`;
+}
+
 function stepLink(g, s) { return gameLink(g, `/round/${s.round}/step/${s.step}`); }
 
 function timeline(g, m, probs) {
@@ -235,6 +247,7 @@ export async function render(ctx, route, el, g) {
       <th class="num">levels gained after</th><th>Model says</th></tr></thead><tbody>${actionRows(g)}</tbody></table>
     <h2>Action strip</h2><div class="panel">${actionStrip(g, probs)}<div class="legend" style="margin-top:8px">${legendActions(names)}</div></div>
     <h2>Loops</h2><div class="panel">${loopsList(g)}</div>
+    ${rulesPanel(g)}
     <div class="${clicks ? "grid2" : ""}">${changePanel}${clickPanel}</div>
     <div class="grid2"><div><h2>LLM latency</h2><div class="panel">${latency(g)}
       <div class="legend"><span><i style="background:var(--player)"></i>player</span><span><i style="background:var(--scorer)"></i>scorer</span></div></div></div>

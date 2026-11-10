@@ -30,6 +30,7 @@ ENV = {
     "workers": "AVOCODE_WORKERS",
     "runs_dir": "AVOCODE_RUNS_DIR",
     "skip_noop_scorer": "AVOCODE_SKIP_NOOP_SCORER",
+    "carry_rules": "AVOCODE_CARRY_RULES",
 }
 
 
@@ -45,6 +46,7 @@ class Settings:
     workers: int = 1
     runs_dir: str = "runs"
     skip_noop_scorer: bool = True
+    carry_rules: bool = True  # rules survive between games
     tags: list[str] = field(default_factory=list)
 
     @classmethod
