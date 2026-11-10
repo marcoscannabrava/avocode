@@ -17,6 +17,7 @@ DEFAULT_MODELS = {
 # Reasoning effort: (player, scorer)
 DEFAULT_EFFORTS = {
     "openai": ("low", "medium"),
+    "openrouter": ("low", "medium"),
 }
 
 ENV = {

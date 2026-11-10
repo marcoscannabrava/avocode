@@ -155,6 +155,11 @@ def test_settings_openai_defaults() -> None:
     assert Settings.load(env={}).player_effort == ""
 
 
+def test_settings_openrouter_efforts() -> None:
+    s = Settings.load(env={"AVOCODE_LLM": "openrouter"})
+    assert (s.player_effort, s.scorer_effort) == ("low", "medium")
+
+
 def test_filter_games() -> None:
     games = ["ls20-016295f7601e", "ft09-1", "vc33-2"]
     assert filter_games(games, "ls20,ft") == ["ls20-016295f7601e", "ft09-1"]
