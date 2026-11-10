@@ -1,6 +1,6 @@
 // One LLM call: prompt, reply, diff, grid.
 import { drawGrid } from "../grid.js";
-import { esc, money, secs } from "../html.js";
+import { esc, money, secs, tile } from "../html.js";
 import { objBox, promptSections } from "../prompt.js";
 import { diffHtml, diffLines, foldSame } from "../textdiff.js";
 
@@ -111,15 +111,15 @@ export async function render(ctx, route, el, g) {
       <button id="copy">Copy as JSON</button><span class="nav-links">${links}</span>
       <span class="muted">← → prev / next call</span></div>
     <div class="tiles" style="margin-top:10px">
-      <div class="tile"><div class="v mono" style="font-size:13px">${esc(rec.provider)} / ${esc(rec.model)}</div><div class="k">model</div></div>
-      <div class="tile"><div class="v">${rec.in_tokens}</div><div class="k">tokens in</div></div>
-      <div class="tile"><div class="v">${rec.out_tokens}</div><div class="k">tokens out</div></div>
-      <div class="tile"><div class="v">${rec.cache_tokens}</div><div class="k">cache tokens</div></div>
-      <div class="tile"><div class="v">${secs(rec.latency_ms)}</div><div class="k">latency</div></div>
-      <div class="tile"><div class="v">${money(rec.cost_usd)}</div><div class="k">cost</div></div>
-      <div class="tile"><div class="v">${rec.retries}</div><div class="k">retries</div></div>
-      <div class="tile"><div class="v">${rec.ok ? "ok" : "failed"}</div><div class="k">result</div></div>
-      <div class="tile"><div class="v mono" style="font-size:13px">${esc(rec.prompt_hash)}</div><div class="k">prompt hash</div></div>
+      ${tile("model", `<span class="mono" style="font-size:13px">${esc(rec.provider)} / ${esc(rec.model)}</span>`, "Provider and model of this call.")}
+      ${tile("tokens in", rec.in_tokens, "Input tokens not read from the cache, all tries.")}
+      ${tile("tokens out", rec.out_tokens, "Reply tokens, all tries.")}
+      ${tile("cache tokens", rec.cache_tokens, "Input tokens read from the prompt cache. They cost less.")}
+      ${tile("latency", secs(rec.latency_ms), "Time from request to parsed reply, all tries.")}
+      ${tile("cost", money(rec.cost_usd), "Cost of this call, all tries.")}
+      ${tile("retries", rec.retries, "Extra tries after a reply that was not valid JSON.")}
+      ${tile("result", rec.ok ? "ok" : "failed", "ok: the reply parsed. failed: no valid JSON after all tries.")}
+      ${tile("prompt hash", `<span class="mono" style="font-size:13px">${esc(rec.prompt_hash)}</span>`, "Hash of the prompt text. Same hash, same prompt version.")}
     </div>
     ${rec.error ? `<div class="banner" style="margin-top:10px">${esc(rec.error)}</div>` : ""}
     <div class="tabs">${Object.keys(tabs).map((t) => `<button data-tab="${t}" class="${t === ui.tab ? "on" : ""}">${names[t]}</button>`).join("")}</div>

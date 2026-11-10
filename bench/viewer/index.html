@@ -52,6 +52,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--panel); b
 .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-width: 110px; }
 .tile .v { font-size: 18px; font-weight: 600; }
 .tile .k { font-size: 12px; color: var(--muted); }
+.tile[title] { cursor: help; }
+.tile[title] .k { text-decoration: underline dotted; text-underline-offset: 2px; }
 table { border-collapse: collapse; width: 100%; background: var(--panel); }
 th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-weight: 600; font-size: 12px; color: var(--muted); }

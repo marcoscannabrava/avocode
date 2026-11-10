@@ -57,6 +57,7 @@ export function tokens(n) {
   return n < 1e6 ? `${(n / 1e3).toFixed(1)}k` : `${(n / 1e6).toFixed(2)}M`;
 }
 
-export function tile(k, v) {
-  return `<div class="tile"><div class="v">${v}</div><div class="k">${esc(k)}</div></div>`;
+export function tile(k, v, tip = "") {
+  const t = tip ? ` title="${esc(tip)}"` : "";
+  return `<div class="tile"${t}><div class="v">${v}</div><div class="k">${esc(k)}</div></div>`;
 }

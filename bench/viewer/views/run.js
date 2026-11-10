@@ -43,13 +43,18 @@ export function render(ctx, route, el) {
 
   let html = `<div class="flex"><h1 class="mono">run ${esc(run.runId)}</h1>
     <span>${rm.live ? '<span class="dot h-playing"></span>live' : "finished"}</span>
-    <span>${duration(rm.durationS)}</span><span>${money(rm.cost)}</span>
+    <span>${duration(rm.durationS)}</span>
     <span class="muted mono">${git}</span>${tags}<a href="#/runs">compare runs</a></div>
     <div class="muted" style="margin-top:4px">${settings}</div>`;
   html += `<div class="tiles" style="margin-top:10px">
-    ${tile("levels", `${rm.levels}/${rm.winLevels}`)}${tile("games won", `${rm.gamesWon}/${rm.games}`)}
-    ${tile("steps", rm.steps)}${tile("errors", rm.errors)}${tile("warnings", rm.warnings)}
-    ${tile("cost", money(rm.cost))}${tile("prompts", `<span class="mono" style="font-size:12px">P ${esc(man.prompts?.player ?? "?")}<br>S ${esc(man.prompts?.scorer ?? "?")}</span>`)}
+    ${tile("levels", `${rm.levels}/${rm.winLevels}`, "Levels completed / levels in all games. This is the score.")}
+    ${tile("games won", `${rm.gamesWon}/${rm.games}`, "Games with all levels completed / games in the run.")}
+    ${tile("steps", rm.steps, "Actions sent to the game, all games.")}
+    ${tile("errors", rm.errors, "Crashes in a step. Each one ends its game.")}
+    ${tile("warnings", rm.warnings, "Warning events in all games, such as bad action or repeat state.")}
+    ${tile("cost", money(rm.cost), "Total LLM cost of the run, Player and Scorer. '$?' means a price is unknown.")}
+    ${tile("prompts", `<span class="mono" style="font-size:12px">P ${esc(man.prompts?.player ?? "?")}<br>S ${esc(man.prompts?.scorer ?? "?")}</span>`,
+      "Hash of the Player (P) and Scorer (S) prompt text. A new hash means the prompt changed.")}
   </div>`;
 
   html += `<h2>Games</h2><table><thead><tr><th>game</th><th>state</th><th>levels</th>
