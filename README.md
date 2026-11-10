@@ -35,7 +35,7 @@ AVOCODE_LLM=anthropic     # or openai, openrouter
 ## Run the benchmark
 
 ```bash
-./bench/arcagi3.py
+./bench/arcagi3.py --max-actions 200 --serve
 ```
 
 This command plays all available ARC-AGI-3 games. It writes one run folder to `runs/<run_id>/`. It prints a summary table at the end.
