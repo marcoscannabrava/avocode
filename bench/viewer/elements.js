@@ -33,3 +33,12 @@ export function elementBoxes(model) {
 export function elementsAt(boxes, x, y) {
   return boxes.filter((b) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
 }
+
+/** Model element keys that name a color. */
+export function colorElements(model, color) {
+  const digit = color.toString(16);
+  return Object.keys(model?.element_breakdown ?? {}).filter((key) => {
+    const bare = key.replace(/obj#[\d,#.]+/g, "").replace(/[xy]=[\d.]+/g, "");
+    return bare.toLowerCase().split(/[^0-9a-z]+/).some((t) => t === digit && !(t === "a" && /\ba\s+[a-z]/i.test(bare)));
+  });
+}

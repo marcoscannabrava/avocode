@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { elementBoxes, elementName, elementsAt } from "../elements.js";
+import { colorElements, elementBoxes, elementName, elementsAt } from "../elements.js";
 
 test("element name drops coordinates", () => {
   assert.equal(elementName("0/1 at x=20..22, y=31..33"), "0/1");
@@ -21,4 +21,19 @@ test("element boxes need x and y", () => {
   assert.equal(elementsAt(boxes, 20, 26)[0].text, "player");
   assert.equal(elementsAt(boxes, 0, 0).length, 0);
   assert.deepEqual(elementBoxes(null), []);
+});
+
+test("color elements match color digits", () => {
+  const model = { element_breakdown: {
+    "3 region x=14..53 y=8..49 (obj#0)": "",
+    "9,c sprite (obj#6)": "",
+    "5/b/8 bar at x=12..63": "",
+    "color 4 background": "",
+    "a big wall": "",
+  } };
+  assert.deepEqual(colorElements(model, 3), ["3 region x=14..53 y=8..49 (obj#0)"]);
+  assert.deepEqual(colorElements(model, 12), ["9,c sprite (obj#6)"]);
+  assert.deepEqual(colorElements(model, 11), ["5/b/8 bar at x=12..63"]);
+  assert.deepEqual(colorElements(model, 0), []);
+  assert.deepEqual(colorElements(model, 10), []);
 });

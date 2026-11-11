@@ -8,6 +8,13 @@ export function cellsOf(hex) {
   return out;
 }
 
+/** Cell count per color, most first. */
+export function colorCounts(frame) {
+  const n = new Map();
+  for (const c of cellsOf(frame.hex)) n.set(c, (n.get(c) ?? 0) + 1);
+  return [...n].sort((a, b) => b[1] - a[1]);
+}
+
 /** Draw a frame, with diff and click marks. */
 export function drawGrid(canvas, frame, opts = {}) {
   const { w, h } = frame;

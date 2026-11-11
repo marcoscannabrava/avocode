@@ -1,9 +1,10 @@
 // Round player: grid, diff, step controls.
-import { elementBoxes, elementsAt } from "../elements.js";
-import { drawGrid } from "../grid.js";
+import { colorElements, elementBoxes, elementsAt } from "../elements.js";
+import { colorCounts, drawGrid } from "../grid.js";
+import { ARC_COLORS } from "../palette.js";
 import { actionText, esc, secs } from "../html.js";
 import { isLevelUp, problemWords, stepProblems } from "../metrics.js";
-import { stripCells } from "./game.js";
+import { legendActions, stripCells } from "./game.js";
 
 const ui = {
   playing: null, speed: 1, diff: true, before: false, follow: false, frame: null, key: "", model: false,
@@ -137,6 +138,32 @@ function strip(g, r, idx, probs) {
   return `<div class="strip">${cells}<span class="end-${out}" title="${esc(out)}">${out === "failed" ? "✗" : ""}</span></div>`;
 }
 
+/** Grid colors and marks for this step. */
+function gridLegend(frame, s, model, boxes, diffOn) {
+  if (!frame) return "";
+  const total = frame.w * frame.h;
+  const colors = colorCounts(frame).map(([c, n]) => {
+    const tip = [`color ${c.toString(16)}: ${n} cells (${Math.round((100 * n) / total)}%)`,
+      ...colorElements(model, c)].join("\n");
+    return `<span title="${esc(tip)}"><i style="background:${ARC_COLORS[c]};box-shadow:inset 0 0 0 1px var(--line)"></i>${c.toString(16)}</span>`;
+  }).join("");
+  const marks = [
+    diffOn ? '<span><i style="box-shadow:inset 0 0 0 2px #000"></i>changed cell</span>' : "",
+    s.action.name === "ACTION6" ? '<span><i style="background:#ff00ff"></i>click point</span>' : "",
+    boxes ? '<span><i style="border:1px dashed #ff00ff"></i>Model element</span>' : "",
+  ].join("");
+  return `<div class="legend" style="margin-top:6px"><span>grid colors:</span>${colors}</div>
+    ${marks ? `<div class="legend" style="margin-top:4px"><span>marks:</span>${marks}</div>` : ""}`;
+}
+
+/** Strip colors: action, flags, outcome. */
+function stripLegend(g, r) {
+  const names = [...new Set(r.steps.map((s) => s.action.name))].sort();
+  return `<div class="legend" style="margin-top:6px">${legendActions(g, names)}
+    <span><i style="outline:2px solid var(--text)"></i>this step</span>
+    <span>last cell: round outcome</span></div>`;
+}
+
 /** One row per step, with problems. */
 function stepLog(g, r, idx, probs) {
   const rows = r.steps.map((s, i) => {
@@ -180,6 +207,10 @@ export async function render(ctx, route, el, g) {
   const shown = ui.before ? prev : cur;
   const rounds = g.roundList();
   const pos = rounds.findIndex((x) => x.round === r.round);
+  // Model after the step names the after grid.
+  const update = g.models.find((u) => u.step === s.step);
+  const elemModel = g.modelAt(ui.before || !update ? s.model_version : update.version);
+  const boxes = elementBoxes(elemModel);
   el.innerHTML = `<div class="flex"><h1>Round ${r.round}</h1>
       <span class="muted">${r.steps.length} steps · ${esc(r.end?.outcome ?? "playing")} · start level ${r.start.level}${r.start.full_reset ? " · full reset" : ""}</span>
       ${pos > 0 ? `<a href="${link(g, rounds[pos - 1].round)}">◀ round ${rounds[pos - 1].round}</a>` : ""}
@@ -193,7 +224,7 @@ export async function render(ctx, route, el, g) {
           ${cur && cur.count > 1 ? `<button id="fprev">◀</button><span class="mono">frame ${cur.index + 1}/${cur.count}</span><button id="fnext">▶</button>` : ""}
           <button id="follow" class="${ui.follow ? "on" : ""}">follow</button>
           ${levelUp && ui.diff && !ui.before ? '<span class="muted">new level, diff hidden</span>' : ""}
-        </div></div>
+        </div>${gridLegend(shown, s, elemModel, ui.labels && boxes.length ? boxes : null, ui.diff && !ui.before && !levelUp)}</div>
       <div>${sidePanel(g, r, s, idx, probs)}${modelPanel(g, s)}</div>
     </div>
     <div class="controls">
@@ -204,11 +235,9 @@ export async function render(ctx, route, el, g) {
       <span class="mono">${idx + 1} / ${r.steps.length}</span>
     </div>
     ${strip(g, r, idx, probs)}
+    ${stripLegend(g, r)}
     <p class="muted">Keys: ← → step · space play · [ ] round · d diff · b before/after · l labels · m Model</p>
     ${stepLog(g, r, idx, probs)}`;
-  // Model after the step names the after grid.
-  const update = g.models.find((u) => u.step === s.step);
-  const boxes = elementBoxes(g.modelAt(ui.before || !update ? s.model_version : update.version));
   if (shown) {
     const canvas = el.querySelector("#grid");
     const cell = drawGrid(canvas, shown, {
