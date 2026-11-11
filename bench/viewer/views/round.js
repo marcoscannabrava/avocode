@@ -1,6 +1,6 @@
 // Round player: grid, diff, step controls.
 import { drawGrid } from "../grid.js";
-import { esc, secs, shortAction } from "../html.js";
+import { actionText, esc, secs } from "../html.js";
 import { isLevelUp, problemWords, stepProblems } from "../metrics.js";
 import { stripCells } from "./game.js";
 
@@ -106,7 +106,7 @@ function sidePanel(g, r, s, idx, probs) {
   return `<div class="panel kv">
     <b>step</b><span>${s.step} <span class="muted">(round ${s.round}, step ${s.round_step})</span></span>
     <b>level</b><span>${levelText(s)}</span>
-    <b>action</b><span class="mono">${esc(s.action.name)}${s.action.x !== null && s.action.x !== undefined ? ` @ (${s.action.x}, ${s.action.y})` : ""}</span>
+    <b>action</b><span class="mono" title="${esc(g.modelAt(s.model_version)?.allowable_actions?.[s.action.name] ?? "")}">${esc(actionText(s.action, g.modelAt(s.model_version)))}</span>
     <b>reason</b><span>${esc(s.reason) || "—"}</span>
     <b>status</b><span>${status} · diff ${s.diff.cells} cells${s.diff.noop ? " (no-op)" : ""}</span>
     <b>Model</b><span>${mv}</span>
@@ -143,7 +143,7 @@ function stepLog(g, r, idx, probs) {
     const words = problemWords(p);
     const cls = ["click", i === idx ? "cur" : "", isLevelUp(s) ? "lvl-row" : ""].join(" ");
     return `<tr class="${cls}" data-href="${link(g, r.round, s.step)}">
-      <td class="num">${s.step}</td><td class="mono">${esc(shortAction(s.action))}</td>
+      <td class="num">${s.step}</td><td class="mono">${esc(actionText(s.action, g.modelAt(s.model_version)))}</td>
       <td class="num">${s.diff.cells}</td>
       <td>${isLevelUp(s) ? '<span class="lvl-up">level complete</span> ' : ""}${words.map((w) => `<code>${esc(w)}</code>`).join(" ")}</td>
       <td class="num">v${s.model_version}</td><td>${esc(s.reason)}</td></tr>`;

@@ -36,16 +36,31 @@ export function duration(s) {
   return m ? `${m}m ${t % 60}s` : `${t}s`;
 }
 
-export function shortAction(a) {
+const DIRS = /\b(up|down|left|right)\b/;
+const COLORS = /^[0-9a-f]([,/][0-9a-f])*$/;
+const FILLER = new Set(["moves", "move", "the", "player", "a", "an", "it", "piece"]);
+
+/** Short label from Model action text. */
+export function actionLabel(text) {
+  if (!text || text === "unknown") return "";
+  const clause = text.split(/[.;:(]|,\s/)[0].toLowerCase().trim();
+  const dir = clause.match(DIRS);
+  if (dir) return dir[1];
+  const words = clause.split(/\s+/).filter((w) => w && !FILLER.has(w) && !w.startsWith("obj#") && !COLORS.test(w));
+  return words.slice(0, 3).join(" ");
+}
+
+/** Action name, point, and Model label. */
+export function actionText(a, model = null) {
   if (!a) return "";
-  if (a.name === "RESET") return "RESET";
-  const n = "A" + a.name.slice(-1);
-  return a.x !== null && a.x !== undefined ? `${n}@${a.x},${a.y}` : n;
+  const pt = a.x !== null && a.x !== undefined ? ` @ (${a.x}, ${a.y})` : "";
+  const label = actionLabel(model?.allowable_actions?.[a.name]);
+  return `${a.name}${pt}${label ? `: ${label}` : ""}`;
 }
 
 /** Tooltip text for one step cell. */
-export function stepTip(s, words = []) {
-  const parts = [`${s.step}: ${shortAction(s.action)}`, `diff ${s.diff.cells}`];
+export function stepTip(s, words = [], model = null) {
+  const parts = [`${s.step}: ${actionText(s.action, model)}`, `diff ${s.diff.cells}`];
   if (s.after.levels_completed > s.before.levels_completed) parts.push("level complete");
   if (words.length) parts.push(words.join(", "));
   return parts.join(" · ") + (s.reason ? `\n${s.reason}` : "");

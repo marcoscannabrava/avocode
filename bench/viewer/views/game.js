@@ -5,13 +5,18 @@ import {
 } from "../metrics.js";
 import { scatter, stepLine } from "../charts.js";
 import { drawGrid } from "../grid.js";
-import { age, esc, money, pct, secs, stepTip, tile, tokens } from "../html.js";
+import { actionText, age, esc, money, pct, secs, stepTip, tile, tokens } from "../html.js";
 
 const ui = { mapLevel: null, mapAction: "", game: null };
 
 export function liveRefresh() { return false; }
 
 function gameLink(g, rest = "") { return `#/game/${encodeURIComponent(g.id)}${rest}`; }
+
+function lastModel(g) { return g.models.length ? g.models[g.models.length - 1].model : null; }
+
+/** Action name with latest Model label. */
+function nameText(g, name) { return actionText({ name }, lastModel(g)); }
 
 /** Rules in at start, rules out at end. */
 function rulesPanel(g) {
@@ -71,7 +76,7 @@ function roundsTable(g) {
 }
 
 function actionRows(g) {
-  return actionTable(g).map((r) => `<tr><td class="mono">${esc(r.action)}</td><td class="num">${r.uses}</td>
+  return actionTable(g).map((r) => `<tr><td class="mono">${esc(nameText(g, r.action))}</td><td class="num">${r.uses}</td>
     <td class="num">${pct(r.noopRate)}</td><td class="num">${r.levelsAfter}</td><td>${esc(r.modelSays)}</td></tr>`).join("");
 }
 
@@ -81,7 +86,7 @@ export function stripCells(g, r, probs, href, cur = -1) {
     const p = probs.get(s.step);
     const cls = [`act-${s.action.name}`, p?.noop ? "hollow" : "", p?.repeat ? "rep" : "",
       isLevelUp(s) ? "lvl" : "", i === cur ? "cur" : ""].join(" ");
-    return `<a class="${cls}" href="${href(s)}" title="${esc(stepTip(s, problemWords(p)))}"></a>`;
+    return `<a class="${cls}" href="${href(s)}" title="${esc(stepTip(s, problemWords(p), g.modelAt(s.model_version)))}"></a>`;
   }).join("");
 }
 
@@ -93,8 +98,8 @@ function actionStrip(g, probs) {
   }).join("");
 }
 
-export function legendActions(names) {
-  return names.map((n) => `<span><i class="act-${n}"></i>${n === "RESET" ? n : "A" + n.slice(-1)}</span>`).join("")
+export function legendActions(g, names) {
+  return names.map((n) => `<span><i class="act-${n}"></i>${esc(nameText(g, n))}</span>`).join("")
     + '<span><i style="box-shadow:inset 0 0 0 2px var(--c0)"></i>no-op</span>'
     + '<span><i style="box-shadow:inset 0 0 0 2px var(--failed)"></i>repeat state</span>'
     + '<span><i style="box-shadow:inset 0 -3px 0 var(--won)"></i>level complete</span>';
@@ -104,7 +109,7 @@ function loopsList(g) {
   const loops = loopRuns(g);
   if (!loops.length) return '<p class="muted">No loops of 3 or more lost steps.</p>';
   return `<ul class="loops">${loops.map((l) => `<li><a href="${gameLink(g, `/round/${l.round}/step/${l.first}`)}">steps ${l.first}–${l.last}</a>,
-    <span class="mono">${esc(l.action)}</span> ×${l.count} <span class="muted">(round ${l.round})</span></li>`).join("")}</ul>`;
+    <span class="mono">${esc(nameText(g, l.action))}</span> ×${l.count} <span class="muted">(round ${l.round})</span></li>`).join("")}</ul>`;
 }
 
 function latency(g) {
@@ -136,7 +141,7 @@ function mapControls(g) {
   const names = [...new Set(g.steps.map((s) => s.action.name))].sort();
   const lvl = levels.map((l) => `<option value="${l}" ${l === ui.mapLevel ? "selected" : ""}>level ${l + 1}</option>`).join("");
   const act = ['<option value="">all actions</option>', ...names.map((n) =>
-    `<option ${n === ui.mapAction ? "selected" : ""}>${esc(n)}</option>`)].join("");
+    `<option value="${esc(n)}" ${n === ui.mapAction ? "selected" : ""}>${esc(nameText(g, n))}</option>`)].join("");
   return `<div class="controls" style="margin:0 0 8px"><select id="maplevel">${lvl}</select><select id="mapaction">${act}</select></div>`;
 }
 
@@ -245,7 +250,7 @@ export async function render(ctx, route, el, g) {
     <h2>Rounds</h2>${roundsTable(g)}
     <h2>Actions</h2><table><thead><tr><th>action</th><th class="num">uses</th><th class="num">no-op %</th>
       <th class="num">levels gained after</th><th>Model says</th></tr></thead><tbody>${actionRows(g)}</tbody></table>
-    <h2>Action strip</h2><div class="panel">${actionStrip(g, probs)}<div class="legend" style="margin-top:8px">${legendActions(names)}</div></div>
+    <h2>Action strip</h2><div class="panel">${actionStrip(g, probs)}<div class="legend" style="margin-top:8px">${legendActions(g, names)}</div></div>
     <h2>Loops</h2><div class="panel">${loopsList(g)}</div>
     ${rulesPanel(g)}
     <div class="${clicks ? "grid2" : ""}">${changePanel}${clickPanel}</div>

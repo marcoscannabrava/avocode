@@ -40,6 +40,8 @@ The URL hash holds the position. You can copy a link to one step:
 #/runs                               all runs, one row per run and game
 ```
 
+Each action shows with its Model label, for example `ACTION1: up`. The label comes from the first words of the `allowable_actions` text. A step uses the Model that the Player saw. Game tables use the last Model. Hover the action in the side panel to see the full text.
+
 ### 2.1 Run overview (Q1, Q2, Q7)
 
 ```
