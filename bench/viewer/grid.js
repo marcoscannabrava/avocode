@@ -50,7 +50,29 @@ export function drawGrid(canvas, frame, opts = {}) {
   }
   if (opts.heat) drawHeat(ctx, opts.heat, w, cell);
   if (opts.box) drawBox(ctx, opts.box, cell);
+  if (opts.labels) drawLabels(ctx, opts.labels, cell);
   return cell;
+}
+
+/** Dashed box and name per element. */
+function drawLabels(ctx, boxes, cell) {
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.textBaseline = "top";
+  for (const b of boxes) {
+    const x = b.x0 * cell, y = b.y0 * cell;
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#ff00ff";
+    ctx.strokeRect(x + 0.5, y + 0.5, (b.x1 - b.x0 + 1) * cell - 1, (b.y1 - b.y0 + 1) * cell - 1);
+    ctx.setLineDash([]);
+    const tw = ctx.measureText(b.name).width + 6;
+    const ty = y >= 14 ? y - 14 : y;
+    const tx = Math.min(x, ctx.canvas.width - tw);
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.fillRect(tx, ty, tw, 14);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(b.name, tx + 3, ty + 1);
+  }
 }
 
 function drawHeat(ctx, counts, w, cell) {

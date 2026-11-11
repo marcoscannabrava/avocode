@@ -124,10 +124,11 @@ Below the timeline:
 ```
 
 - **Grid.** Canvas with the 16 ARC colors. Changed cells have an outline. The `ACTION6` point has a crosshair. A toggle shows the previous grid ("before / after").
+- **Labels.** The grid shows a dashed box and a name for each Model element. The Model element key must give `x=` and `y=`. Hover a cell to see its position, its color, and the Model text for each element on it. The labels come from the Model after the step. In "before" mode, they come from the Model before the step.
 - **Frames.** If a step has more than one frame, a small control plays them. Some games animate.
 - **Step strip.** One cell per step. Hollow cells are no-ops. The last cell shows the round outcome.
 - **Side panel.** The action, the Player reason, the status, and the Model version. Links open the Model at that version and each LLM call.
-- **Keys.** `←` `→` step. `space` play or pause. `[` `]` previous or next round. `d` toggle diff. `m` open Model.
+- **Keys.** `←` `→` step. `space` play or pause. `[` `]` previous or next round. `d` toggle diff. `b` toggle before or after. `l` toggle labels. `m` open Model.
 - **End of round.** At the last step, the panel shows the Scorer hypothesis from `round_end`.
 
 ### 2.4 Model history (Q3, Q6)

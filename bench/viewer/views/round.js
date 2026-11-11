@@ -1,4 +1,5 @@
 // Round player: grid, diff, step controls.
+import { elementBoxes, elementsAt } from "../elements.js";
 import { drawGrid } from "../grid.js";
 import { actionText, esc, secs } from "../html.js";
 import { isLevelUp, problemWords, stepProblems } from "../metrics.js";
@@ -6,7 +7,7 @@ import { stripCells } from "./game.js";
 
 const ui = {
   playing: null, speed: 1, diff: true, before: false, follow: false, frame: null, key: "", model: false,
-  problems: false,
+  problems: false, labels: true,
 };
 
 export function liveRefresh() { return ui.follow; }
@@ -60,6 +61,7 @@ export function onKey(e, ctx) {
     "[": () => goRound(-1), "]": () => goRound(1),
     d: () => { ui.diff = !ui.diff; ctx.rerender(); },
     b: () => { ui.before = !ui.before; ctx.rerender(); },
+    l: () => { ui.labels = !ui.labels; ctx.rerender(); },
     m: () => { if (state) ctx.go(`#/game/${encodeURIComponent(state.g.id)}/model/${state.step?.model_version ?? ""}`); },
   };
   const fn = keys[e.key];
@@ -187,6 +189,7 @@ export async function render(ctx, route, el, g) {
         <div class="controls">
           <button id="diff" class="${ui.diff ? "on" : ""}" title="d">diff</button>
           <button id="before" class="${ui.before ? "on" : ""}" title="b">${ui.before ? "before" : "after"}</button>
+          <button id="labels" class="${ui.labels ? "on" : ""}" title="l">labels</button>
           ${cur && cur.count > 1 ? `<button id="fprev">◀</button><span class="mono">frame ${cur.index + 1}/${cur.count}</span><button id="fnext">▶</button>` : ""}
           <button id="follow" class="${ui.follow ? "on" : ""}">follow</button>
           ${levelUp && ui.diff && !ui.before ? '<span class="muted">new level, diff hidden</span>' : ""}
@@ -201,13 +204,24 @@ export async function render(ctx, route, el, g) {
       <span class="mono">${idx + 1} / ${r.steps.length}</span>
     </div>
     ${strip(g, r, idx, probs)}
-    <p class="muted">Keys: ← → step · space play · [ ] round · d diff · b before/after · m Model</p>
+    <p class="muted">Keys: ← → step · space play · [ ] round · d diff · b before/after · l labels · m Model</p>
     ${stepLog(g, r, idx, probs)}`;
+  // Model after the step names the after grid.
+  const update = g.models.find((u) => u.step === s.step);
+  const boxes = elementBoxes(g.modelAt(ui.before || !update ? s.model_version : update.version));
   if (shown) {
-    drawGrid(el.querySelector("#grid"), shown, {
+    const canvas = el.querySelector("#grid");
+    const cell = drawGrid(canvas, shown, {
+      labels: ui.labels ? boxes : null,
       prev: ui.diff && !ui.before && !levelUp ? prev : null,
       click: s.action.name === "ACTION6" ? { x: s.action.x, y: s.action.y } : null,
     });
+    canvas.onmousemove = (e) => {
+      const k = canvas.width / canvas.getBoundingClientRect().width;
+      const x = Math.floor((e.offsetX * k) / cell), y = Math.floor((e.offsetY * k) / cell);
+      const hits = elementsAt(boxes, x, y).map((b) => `${b.key}: ${b.text}`);
+      canvas.title = [`x=${x} y=${y} color ${shown.hex[y * shown.w + x] ?? "?"}`, ...hits].join("\n");
+    };
   }
   for (const tr of el.querySelectorAll("#steplog tr[data-href]")) tr.onclick = () => ctx.go(tr.dataset.href);
   el.querySelector("#problems").onchange = (e) => { ui.problems = e.target.checked; ctx.rerender(); };
@@ -217,6 +231,7 @@ export async function render(ctx, route, el, g) {
   const on = (id, fn) => { const b = el.querySelector(id); if (b) b.onclick = fn; };
   on("#diff", () => { ui.diff = !ui.diff; ctx.rerender(); });
   on("#before", () => { ui.before = !ui.before; ctx.rerender(); });
+  on("#labels", () => { ui.labels = !ui.labels; ctx.rerender(); });
   on("#follow", () => { ui.follow = !ui.follow; ctx.rerender(); });
   on("#fprev", () => { ui.frame = Math.max(0, cur.index - 1); ctx.rerender(); });
   on("#fnext", () => { ui.frame = Math.min(cur.count - 1, cur.index + 1); ctx.rerender(); });
