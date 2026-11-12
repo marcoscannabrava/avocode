@@ -157,7 +157,12 @@ def test_settings_openai_defaults() -> None:
 
 def test_settings_openrouter_efforts() -> None:
     s = Settings.load(env={"AVOCODE_LLM": "openrouter"})
-    assert (s.player_effort, s.scorer_effort) == ("low", "medium")
+    assert (s.player_effort, s.scorer_effort) == ("none", "medium")
+
+
+def test_openrouter_effort_none() -> None:
+    client = OpenRouterClient(SimpleNamespace(), effort="none")
+    assert client._effort_params() == {"extra_body": {"reasoning": {"enabled": False}}}
 
 
 def test_filter_games() -> None:

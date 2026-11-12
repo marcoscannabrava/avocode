@@ -64,7 +64,7 @@ All options:
 | `--llm` | `anthropic` | LLM provider: `anthropic`, `openai`, or `openrouter` |
 | `--player-model` | from config | Model for the Player |
 | `--scorer-model` | from config | Model for the Scorer |
-| `--player-effort` | `low` (OpenAI, OpenRouter) | Reasoning effort for the Player |
+| `--player-effort` | `low` (OpenAI), `none` (OpenRouter) | Reasoning effort for the Player. `none` turns reasoning off. |
 | `--scorer-effort` | `medium` (OpenAI, OpenRouter) | Reasoning effort for the Scorer |
 | `--no-carry-rules` | off | Do not pass rules from past games to the next game |
 | `--out` | `runs` | Parent folder for run folders |

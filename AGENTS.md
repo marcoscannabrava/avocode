@@ -80,7 +80,11 @@ bench/
 └── viewer/        # static HTML + JS modules, no build step
 tests/             # pytest; FakeLLM and ToyEngine, no network
 ARC-AGI-3-Agents/  # official harness, git submodule
+scratch/           # dev artifacts, not in git
 ```
+
+Put plans, temporary benchmarks, and troubleshooting notes in `scratch/<topic>/`.
+Git ignores this folder.
 
 ## Import rules
 

@@ -23,6 +23,9 @@ class OpenRouterClient(OpenAIClient):
     def _effort_params(self) -> dict[str, Any]:
         if not self.effort:
             return {}
+        if self.effort == "none":
+            # Some hosts reason unless told not to
+            return {"extra_body": {"reasoning": {"enabled": False}}}
         return {"extra_body": {"reasoning": {"effort": self.effort}}}
 
     def _cost(self, usage: Any) -> float | None:

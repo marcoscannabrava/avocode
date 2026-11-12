@@ -9,3 +9,5 @@ __pycache__/
 environment_files/
 recordings/
 .claude/worktrees
+# dev artifacts: plans, temp benchmarks, notes
+scratch/
